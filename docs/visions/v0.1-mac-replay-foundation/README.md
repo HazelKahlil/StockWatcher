@@ -1,6 +1,6 @@
 # v0.1-mac-replay-foundation：在 Mac 建立可回放工程基础
 
-> 状态：计划中
+> 状态：进行中
 > 创建：2026-07-22 ｜ 计划 tag：`v0.1.0`
 
 ## 目标与范围
@@ -14,9 +14,9 @@
 
 ## 开工门
 
-- [ ] 创建并关联执行 issue，明确本版只做 Mac 可验证基础，不把模拟结果当实时行情。
-- [ ] 本版本在 `docs/visions/README.md` 登记为活跃并写入本地 `main`。
-- [ ] 记录 macOS、芯片、Python 和包管理器版本；读取 `rules/data.md`、`rules/storage.md`、`rules/security.md` 与 `boundaries.md`。
+- [x] 创建并关联 Stage 2 执行 issue：`HAZ-384`（仅做 Mac 可验证基础，不把模拟结果当实时行情）。
+- [x] 本版本在 `docs/visions/README.md` 登记为活跃并写入本地 `main`。
+- [x] 已记录环境并读取 `rules/data.md`、`rules/storage.md`、`rules/security.md` 与 `boundaries.md`：macOS 27.0（26A5388g）、arm64、Python 3.14.6、uv 0.9.26。
 - [ ] 从本地 `main` 建实现分支；本版不要求先操作 GitHub。
 
 ## 验收标准（必须可检查）
@@ -35,6 +35,7 @@
 | 日期 | 进展 | 状态 |
 | --- | --- | --- |
 | 2026-07-22 | 根据实际只有 Mac 的环境重排首版；尚未启动产品实现 | 计划中 |
+| 2026-07-22 | 已激活为进行中版本；开工门已完成，Stage 2 执行 issue 为 `HAZ-384` | 完成 |
 
 ## 决策与风险
 

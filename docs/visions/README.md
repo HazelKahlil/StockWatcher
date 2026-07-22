@@ -5,12 +5,11 @@
 
 ## 活跃版本
 
-- 无。local-first 与新路线已登记；产品实现尚未启动。
+- **[v0.1-mac-replay-foundation](v0.1-mac-replay-foundation/README.md)** — 在 Mac 建立跨平台工程、Provider 协议、Mock/Replay/Synthetic 和确定性验证骨架（状态：进行中）。
 
 ## 下一目标版本
 
-- **[v0.1-mac-replay-foundation](v0.1-mac-replay-foundation/README.md)** — 在 Mac 建立跨平台工程、Provider 协议、Mock/Replay/Synthetic 和确定性验证骨架（状态：计划中）。
-- 首个实现 issue 进入 `todo/in_progress` 前，必须先把本节目标移入“活跃版本”，同步版本 README 为“进行中”，并写入本地 `main`。
+- **[v0.2-mac-local-alpha](v0.2-mac-local-alpha/README.md)** — 在 v0.1 完成后交付基于 Mock/Replay 的 Mac 本地 Alpha（状态：计划中）。
 
 ## 同步状态
 
@@ -23,7 +22,7 @@
 | 版本 | 目标 | 状态 | 封版日期 |
 | --- | --- | --- | --- |
 | [v0.0-project-bootstrap](v0.0-project-bootstrap/README.md) | 建立仓库、治理骨架、版本路线并迁入 V2.0 交接基线 | 已封版 | 2026-07-22 |
-| [v0.1-mac-replay-foundation](v0.1-mac-replay-foundation/README.md) | 在 Mac 建立可复现的跨平台工程与 Replay 基础 | 计划中 | |
+| [v0.1-mac-replay-foundation](v0.1-mac-replay-foundation/README.md) | 在 Mac 建立可复现的跨平台工程与 Replay 基础 | 进行中 | |
 | [v0.2-mac-local-alpha](v0.2-mac-local-alpha/README.md) | 交付基于 Mock/Replay 的 Mac 本地 Alpha | 计划中 | |
 | [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 取得 Windows/通达信或经确认替代路线的真实数据结论 | 计划中（环境待定） | |
 | [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | 在真实数据路线基础上接入完整 V1 功能 | 计划中 | |
