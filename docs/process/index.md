@@ -15,6 +15,8 @@
 | 股票池、评分、排名、强中近、提醒状态机、回放 | `rules/ranking.md`、`rules/data.md` |
 | 主窗口、弹窗、托盘、声音、iPhone 通知 | `rules/ui.md`、`rules/security.md` |
 | SQLite、缓存、Schema、备份、保留和导出 | `rules/storage.md`、`rules/security.md` |
+| 运行日志、脱敏、滚动和保留 | `rules/storage.md`、`rules/security.md` |
+| 新增或升级 Python 依赖 | `rules/security.md`、`dependencies.md` |
 | 账户、凭证、网络、第三方授权、LLM | `rules/security.md`、`boundaries.md` |
 | 版本、Changelog、tag、封版 | `release.md`、目标版本 README |
 | 仅治理/文档改动 | `AGENTS.md`、本文件、目标版本 README |

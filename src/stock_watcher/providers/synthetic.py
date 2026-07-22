@@ -3,15 +3,22 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from random import Random
 
-from stock_watcher.domain import HealthState, MarketEvent, ProviderHealth, Security, Snapshot
+from stock_watcher.domain import (
+    SHANGHAI,
+    HealthState,
+    MarketEvent,
+    ProviderHealth,
+    Security,
+    Snapshot,
+)
 
 
 class SyntheticScenarioBuilder:
     """Creates deterministic, explicitly-labelled simulated events for tests and demos."""
 
     def __init__(self, now: datetime, seed: int = 7) -> None:
-        if now.tzinfo is None:
-            raise ValueError("now must be timezone-aware")
+        if now.tzinfo is None or getattr(now.tzinfo, "key", None) != SHANGHAI.key:
+            raise ValueError("now must use the Asia/Shanghai timezone")
         self.now = now
         self._random = Random(seed)
         self._events: list[MarketEvent] = []
@@ -35,12 +42,21 @@ class SyntheticScenarioBuilder:
             raise ValueError("a preceding snapshot is required")
         previous = self._events[-1].snapshot
         assert previous is not None
-        health = ProviderHealth(HealthState.HEALTHY, self.now, "simulated duplicate")
+        health = ProviderHealth(
+            HealthState.HEALTHY,
+            previous.source_ts,
+            previous.received_ts,
+            previous.provider_version,
+            previous.config_version,
+            "simulated duplicate",
+        )
         self._events.append(MarketEvent(previous, health))
         return self
 
     def reconnect(self) -> SyntheticScenarioBuilder:
         self.stopped()
+        for _ in range(3):
+            self.warming()
         return self.normal()
 
     def build(self) -> tuple[MarketEvent, ...]:
@@ -49,7 +65,16 @@ class SyntheticScenarioBuilder:
     def _append(self, state: HealthState, price: float) -> SyntheticScenarioBuilder:
         index = len(self._events)
         moment = self.now + timedelta(seconds=index)
-        health = ProviderHealth(state, moment, f"simulated {state.lower()}")
-        snapshot = Snapshot(self._security, price, moment, moment, "synthetic-v0.1", "v0.1")
+        provider_version = "synthetic-v0.1"
+        config_version = "v0.1"
+        health = ProviderHealth(
+            state,
+            moment,
+            moment,
+            provider_version,
+            config_version,
+            f"simulated {state.lower()}",
+        )
+        snapshot = Snapshot(self._security, price, moment, moment, provider_version, config_version)
         self._events.append(MarketEvent(snapshot, health))
         return self

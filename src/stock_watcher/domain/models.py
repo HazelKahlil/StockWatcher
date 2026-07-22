@@ -8,6 +8,11 @@ from zoneinfo import ZoneInfo
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
+def _require_shanghai(timestamp: datetime, field_name: str) -> None:
+    if timestamp.tzinfo is None or getattr(timestamp.tzinfo, "key", None) != SHANGHAI.key:
+        raise ValueError(f"{field_name} must use the Asia/Shanghai timezone")
+
+
 class HealthState(StrEnum):
     WARMING = "WARMING"
     HEALTHY = "HEALTHY"
@@ -32,8 +37,8 @@ class Snapshot:
     config_version: str
 
     def __post_init__(self) -> None:
-        if self.source_ts.tzinfo is None or self.received_ts.tzinfo is None:
-            raise ValueError("snapshot timestamps must be timezone-aware")
+        _require_shanghai(self.source_ts, "snapshot source_ts")
+        _require_shanghai(self.received_ts, "snapshot received_ts")
         if self.price < 0:
             raise ValueError("price cannot be negative")
 
@@ -41,12 +46,20 @@ class Snapshot:
 @dataclass(frozen=True, slots=True)
 class ProviderHealth:
     state: HealthState
-    observed_at: datetime
+    source_ts: datetime
+    received_ts: datetime
+    provider_version: str
+    config_version: str
     detail: str = ""
 
     def __post_init__(self) -> None:
-        if self.observed_at.tzinfo is None:
-            raise ValueError("health timestamp must be timezone-aware")
+        _require_shanghai(self.source_ts, "health source_ts")
+        _require_shanghai(self.received_ts, "health received_ts")
+
+    @property
+    def observed_at(self) -> datetime:
+        """Compatibility alias; storage must use source and received timestamps."""
+        return self.received_ts
 
 
 @dataclass(frozen=True, slots=True)

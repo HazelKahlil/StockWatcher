@@ -1,3 +1,3 @@
-from .models import HealthState, MarketEvent, ProviderHealth, Security, Snapshot
+from .models import SHANGHAI, HealthState, MarketEvent, ProviderHealth, Security, Snapshot
 
-__all__ = ["HealthState", "MarketEvent", "ProviderHealth", "Security", "Snapshot"]
+__all__ = ["SHANGHAI", "HealthState", "MarketEvent", "ProviderHealth", "Security", "Snapshot"]

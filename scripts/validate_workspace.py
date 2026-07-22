@@ -17,6 +17,7 @@ REQUIRED_PATHS = (
     ROOT / "docs" / "project" / "index.md",
     ROOT / "docs" / "process" / "index.md",
     ROOT / "docs" / "process" / "boundaries.md",
+    ROOT / "docs" / "process" / "dependencies.md",
     ROOT / "docs" / "visions" / "README.md",
     ROOT / "docs" / "visions" / "v0.1-mac-replay-foundation" / "README.md",
     ROOT / "docs" / "visions" / "v0.2-mac-local-alpha" / "README.md",

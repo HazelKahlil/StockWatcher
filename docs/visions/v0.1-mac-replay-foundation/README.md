@@ -23,10 +23,12 @@
 
 - [x] 全新本地虚拟环境可按锁定依赖安装，启动命令和验证命令写入 `README.md` 与 `AGENTS.md`。
 - [x] domain 对象与 Provider Protocol 不引用通达信专有字典键或 Windows 专有路径。
-- [x] Mock/Replay/Synthetic 覆盖正常、stale、STOPPED、WARMING、重复时间戳和重连基线场景。
+- [x] Mock/Replay/Synthetic 覆盖正常、stale、STOPPED、WARMING、重复时间戳和重连基线场景；STOPPED 不受 `code + source_ts` 去重影响，重连须完成 3 个新鲜 WARMING 样本后才可回到 HEALTHY。
 - [x] 相同输入、配置、时钟和随机种子得到完全相同的输出。
 - [x] SQLite/配置版本基础可创建、读写和回滚测试，不保存密钥或交易账户信息。
-- [x] pytest、lint、类型检查和 workspace validation 全部通过。
+- [x] pytest、lint、类型检查、锁文件检查和 workspace validation 全部通过。
+- [x] 统一日志初始化提供脱敏与滚动入口；日志不记录密钥、交易账户或真实用户数据。
+- [x] 直接与开发依赖均已登记用途、许可证与安全影响，`uv.lock` 可复现。
 - [ ] 若包含 PySide6 smoke，能在当前 Mac 启动并明确显示“模拟数据”；无界面也不能阻塞本版核心验收。
 - [ ] 文档明确列出未验证项：真实行情、紫黄线、Windows 通知/多屏/托盘、Windows 打包和供应商授权。
 
@@ -37,6 +39,7 @@
 | 2026-07-22 | 根据实际只有 Mac 的环境重排首版；尚未启动产品实现 | 计划中 |
 | 2026-07-22 | 已激活为进行中版本；开工门已完成，Stage 2 执行 issue 为 `HAZ-384` | 完成 |
 | 2026-07-22 | HAZ-384 在 `feat/HAZ-384-mac-replay-foundation` 建立 Python、Mock/Replay/Synthetic、SQLite WAL 与确定性测试；Mac 本地全套校验通过 | 完成 |
+| 2026-07-22 | HAZ-388 修复 STOPPED/重连与 Shanghai 时间契约，补日志脱敏滚动和依赖审计；仅 Mac Mock/Replay 回归 | 完成 |
 
 ## 决策与风险
 
@@ -52,6 +55,6 @@
 
 ## 封版记录
 
-- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups`、`uv run pytest`（5 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过。
+- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（8 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过。
 - 遗留问题：未验证真实行情、通达信紫黄线、供应商授权、Windows 通知/多屏/托盘、Windows 打包；真实数据与目标环境由 v0.3 承接，Mac 本地 Alpha 由 v0.2 承接。
 - 终态对账：关联 issue 待创建；必需子任务/stage 待登记；本地/远端同步状态待填写。
