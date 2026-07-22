@@ -19,6 +19,11 @@ REQUIRED_PATHS = (
     ROOT / "docs" / "process" / "index.md",
     ROOT / "docs" / "process" / "boundaries.md",
     ROOT / "docs" / "visions" / "README.md",
+    ROOT / "docs" / "visions" / "v0.1-mac-replay-foundation" / "README.md",
+    ROOT / "docs" / "visions" / "v0.2-mac-local-alpha" / "README.md",
+    ROOT / "docs" / "visions" / "v0.3-windows-data-gate" / "README.md",
+    ROOT / "docs" / "visions" / "v0.4-v1-feature-complete" / "README.md",
+    ROOT / "docs" / "visions" / "v0.5-stabilization" / "README.md",
     REFERENCE / "README.md",
     REFERENCE / "requirements.lock.json",
     REFERENCE / "SPEC_V2.0_AGENT.md",
@@ -35,6 +40,13 @@ EXPECTED_IMAGES = tuple(
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 
+RETIRED_VERSION_PATHS = (
+    ROOT / "docs" / "visions" / "v0.1-m0-data-gate",
+    ROOT / "docs" / "visions" / "v0.2-alpha-core",
+    ROOT / "docs" / "visions" / "v0.3-v1-feature-complete",
+    ROOT / "docs" / "visions" / "v0.4-stabilization",
+)
+
 
 def main() -> int:
     errors: list[str] = []
@@ -42,6 +54,12 @@ def main() -> int:
     for path in (*REQUIRED_PATHS, *EXPECTED_IMAGES):
         if not path.is_file():
             errors.append(f"missing required file: {path.relative_to(ROOT)}")
+
+    for path in RETIRED_VERSION_PATHS:
+        if path.exists():
+            errors.append(
+                f"retired pre-local-first version path still exists: {path.relative_to(ROOT)}"
+            )
 
     lock_path = REFERENCE / "requirements.lock.json"
     if lock_path.is_file():

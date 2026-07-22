@@ -4,9 +4,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 开发方式调整为 Mac 本地优先，GitHub 仅在版本节点或明确备份/交接需求时同步。
+- 版本路线重排：先完成 Mac Replay 基础和本地 Alpha，再进入 Windows/通达信真实数据闸门。
+
 ### Planned
 
-- v0.1 M0 数据可行性闸门：验证通达信字段、紫黄线、板块、历史、性能、稳定性与授权。
+- v0.1 Mac Replay 基础版：建立跨平台工程、Provider 协议、Mock/Replay/Synthetic、SQLite/配置骨架和确定性测试。
 
 ## [0.0.0] - 2026-07-22
 
