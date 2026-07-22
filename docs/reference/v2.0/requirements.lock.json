@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "as_of": "2026-07-22",
+  "product": {
+    "name": "A股候选观察与异动提醒工具",
+    "type": "candidate_watchlist_and_anomaly_alert",
+    "internal_use_only": true,
+    "auto_trading": false,
+    "reads_trading_passwords": false
+  },
+  "owner": "张新玲",
+  "users": "2-3 internal users",
+  "runtime": {
+    "primary": "Windows desktop",
+    "phone": "iPhone auxiliary notification",
+    "computer_must_be_on": true
+  },
+  "data_reference": {
+    "primary_software": "通达信最新正式版",
+    "secondary_software": "东方财富",
+    "purple_line": "超大单",
+    "yellow_line": "大单",
+    "fund_data_gate": "M0 must verify legal, stable, real-time, batch access and UI consistency"
+  },
+  "universe": {
+    "include": ["沪市主板", "深市主板", "创业板", "科创板"],
+    "exclude": ["北交所", "ST", "*ST", "退市整理", "停牌", "一字涨停", "数据不完整的新股/复牌/除权当日"]
+  },
+  "ranking_priority": [
+    "个股涨幅/涨速",
+    "行业/概念板块强度",
+    "紫色超大单",
+    "黄色大单",
+    "最近三个交易日趋势",
+    "稳定性与防假拉升"
+  ],
+  "output": {
+    "visible_count": 3,
+    "labels": ["强", "中", "近"],
+    "fill_nearest_when_insufficient": true,
+    "show_overall_weak_when_needed": true
+  },
+  "alerts": {
+    "morning": "09:45",
+    "tail": "14:50",
+    "auction_preview_0925_default": false,
+    "refresh_1000_default": false,
+    "intraday_latency_seconds": 10,
+    "intraday_max_per_day": 3,
+    "same_stock_cooldown_minutes": 5,
+    "do_not_repeat_unchanged_top3": true,
+    "popup": "bottom-right, persistent, light sound"
+  },
+  "retention": {
+    "history_days": 31,
+    "daily_backup": true
+  },
+  "postponed_first_enhancement": "持仓/关注股涨停后封单额快速下降至稳定封板后参考峰值约2/3的独立风险提醒"
+}

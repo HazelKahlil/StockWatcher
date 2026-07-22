@@ -1,0 +1,22 @@
+name: Governance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  workspace-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate workspace baseline
+        run: python scripts/validate_workspace.py
+      - name: Check whitespace errors
+        run: git show --check --format= HEAD

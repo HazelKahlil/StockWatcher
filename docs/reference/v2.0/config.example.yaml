@@ -1,0 +1,106 @@
+app:
+  version: "2.0.0"
+  timezone: "Asia/Shanghai"
+  single_instance: true
+
+provider:
+  type: "tdx"
+  tdx_install_path: "C:/TDX"
+  python_sdk_path: ""
+  snapshot_stale_seconds: 5
+  fund_stale_seconds: 15
+  reconnect_warmup_seconds: 30
+  reconnect_min_fresh_samples: 3
+
+universe:
+  boards: ["SH_MAIN", "SZ_MAIN", "CHINEXT", "STAR"]
+  include_bse: false
+  exclude_st: true
+  exclude_delisting: true
+  exclude_suspended: true
+  exclude_one_price_limit_up: true
+  exclude_listed_less_than_days: 3
+  exclude_ex_right_date: true
+  exclude_resume_date: true
+
+schedule:
+  morning: "09:45:00"
+  tail: "14:50:00"
+  auction_preview_enabled: false
+  auction_preview: "09:25:00"
+  extra_refresh_enabled: false
+  extra_refresh: "10:00:00"
+  intraday_max_batches: 3
+
+price:
+  abs_floor_1m: 0.003
+  abs_floor_3m: 0.006
+  abs_floor_5m: 0.010
+  shortlist_percentile: 0.90
+  strong_percentile: 0.98
+  amount_ratio_floor: 1.20
+  weight: 35
+
+sector:
+  pass_breadth: 0.50
+  strong_breadth: 0.667
+  small_sector_min_active: 3
+  normal_sector_min_active: 5
+  large_sector_min_active_ratio: 0.10
+  candidate_rank_percentile: 0.70
+  industry_priority: 1
+  concept_priority: 2
+  weight: 30
+
+fund:
+  sync_window_seconds: 60
+  jump_zscore: 2.0
+  jump_percentile: 0.95
+  conflict_observe_seconds: 120
+  stale_seconds: 15
+  weight: 25
+  purple_weight: 7
+  yellow_weight: 5
+  sync_weight: 6
+
+trend3d:
+  day_weights: [0.60, 0.25, 0.15]
+  weight: 10
+
+ranking:
+  strong_score: 80
+  medium_score: 65
+  intraday_strong_score: 82
+  replacement_margin: 3.0
+  replacement_cycles: 2
+  priority_list_bonus_max: 1.0
+
+alert:
+  stock_cooldown_minutes: 5
+  same_batch_window_minutes: 5
+  popup_position: "bottom_right"
+  popup_persistent: true
+  light_sound: true
+
+phone:
+  enabled: true
+  channel: "bark"
+  endpoint: "https://api.day.app"
+  device_key_env: "STOCK_ALERT_BARK_KEY"
+  timeout_seconds: 3
+  retry_count: 1
+
+storage:
+  sqlite_path: "data/app.db"
+  minute_cache_dir: "data/minute"
+  alert_retention_days: 31
+  feature_retention_days: 14
+  backup_dir: "backup"
+  backup_keep_days: 30
+
+adaptive:
+  enabled: false
+  minimum_trading_days: 20
+  minimum_visible_alert_batches: 100
+  max_single_weight_change_pct: 0.10
+  shadow_days: 5

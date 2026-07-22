@@ -1,0 +1,61 @@
+# StockWatcher Agent 工作纪律
+
+> 本文件是项目级规则入口，不频繁改动。事实以 workspace 为准，不以聊天记忆为准。
+
+## 项目
+
+- 本地路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`
+- GitHub：`https://github.com/HazelKahlil/StockWatcher`（private）
+- 当前状态：治理 Bootstrap 已建立；产品实现尚未开始。
+- 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
+- 当前验证命令：`python3 scripts/validate_workspace.py`、`git diff --check`。
+- 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
+
+## 项目工作流
+
+- 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
+- 产品实现未启动时，目标版本是 `docs/visions/v0.1-m0-data-gate/README.md`；首个实现 issue 进入执行前，必须先把它登记为活跃版本并合入 `main`。
+- 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
+- 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
+- 长任务跨 session 时按 `kahlil-project-workflow` 的 handoff 规则交接；小改动优先更新目标版本 README，不滥建 session log。
+- 文档去向：长期事实 → `docs/project/`；规则、边界、决策和踩坑 → `docs/process/`；范围、验收、封版 → `docs/visions/`；原始交接基线 → `docs/reference/`。
+
+## 规格与材料规则
+
+- `docs/reference/v2.0/requirements.lock.json` 是 V2.0 锁定业务项。不得在实现中静默覆盖；业务变更必须由业务负责人确认并形成新版本记录。
+- `docs/reference/v2.0/SPEC_V2.0_AGENT.md` 是当前可检索规格基线。交接包中的 DOCX 与 ZIP 因内容重复未入库，选择依据和源哈希见同目录 `README.md`。
+- 不把 `docs/reference/` 里的示例配置或 SQL 直接视为已验证生产配置；先在目标版本中确认、测试，再提升到正式工程路径。
+- 不迁移 Downloads 中的重复副本，也不把运行数据、密钥、数据库、日志或安装包提交到 Git。
+
+## 不可突破的边界
+
+- 只做候选观察与异动提醒；禁止读取交易密码、连接交易账户、调用下单接口或生成自动交易行为。
+- 实时筛选必须是确定性、可回放的规则；大语言模型不得进入盘中主链路。
+- 紫黄线、供应商字段、批量能力与授权必须通过 M0。未通过时只能明确标记“资金模块未就绪”，不得用替代字段冒充。
+- 数据健康为 `STOPPED/RED` 时停止产生新候选；不得把旧数据包装成新结果。
+- 高风险区和人类确认门见 `docs/process/boundaries.md`。命中时先停、说明影响并取得确认。
+
+## 领域规则
+
+涉及代码修改时，先查 `docs/process/index.md` 的规则路由表并阅读命中文件。违反领域硬规则按 review P1 处理。若规则与 `requirements.lock.json` 冲突，以锁定业务项为准并记录冲突，不自行改需求。
+
+## Git、PR 与发布
+
+- Bootstrap 初始提交可直接建立 `main`；此后功能、修复和治理改动都从短分支发 PR，不直接推送 `main`。
+- 分支名：`feat/<issue>-<slug>`、`fix/<issue>-<slug>`、`docs/<issue>-<slug>`、`chore/<issue>-<slug>`。
+- PR 必须写清版本范围、验证证据、数据/安全影响和文档更新；模板见 `.github/pull_request_template.md`。
+- 采用 SemVer；版本路线、封版门和 tag 规则见 `docs/process/release.md`，变更同步 `CHANGELOG.md`。
+
+## 开发前后检查
+
+- 动手前：读活跃版本 README 和规则路由表；确认任务在版本范围内、依赖已满足。
+- 提交前：跑目标版本要求的测试、lint、类型检查和回放；执行 `git diff --check`，review diff，确认无秘密、运行数据和无关改动。
+- 收尾时：更新版本进度、验证证据和风险；新决策或复发坑写回 `docs/process/`。
+- 把 issue、父工作包或版本推到终态前，逐项核对 Done when、必需子任务/stage 与版本验收。仍有必要项未完成或无 owner 的欠账时保持 `in_progress` 或 `blocked`；代码合并不等于版本完成。
+- 治理规则只有合入默认分支并能从 fresh checkout 回读才算生效。
+
+## Review 规则
+
+- 文档和局部低风险改动：自检 + 可复现验证证据。
+- 数据源、排名、提醒状态机、持久化、接口契约、权限或封版：结构化 review（P0/P1/P2），并明确回放/真实环境证据。
+- 任何自动交易、凭证泄露、未来数据泄漏、数据中断仍发候选，均为 P0，必须阻断合入。
