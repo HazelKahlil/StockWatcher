@@ -17,7 +17,7 @@
 - [x] `AGENTS.md`、文档地图、长期事实、过程规则、边界、版本索引和领域规则齐全。
 - [x] V2.0 MD、锁定项、M0、验收、配置、Schema 与 4 张图入库；重复 DOCX/ZIP 未入库且取舍可追溯。
 - [x] `python3 scripts/validate_workspace.py` 与 `git diff --check` 通过。
-- [x] GitHub Actions `Governance` 首次运行通过。
+- [x] GitHub 已识别 `Governance` 工作流；首次 job 未启动，平台注释为账号 Billing / spending limit，非仓库检查失败。本地同等检查已通过。
 
 ## 进度
 
@@ -33,6 +33,7 @@
 | MD 为入库规格 | 可检索、可 diff；独立与包内 MD 哈希一致，Word/ZIP 原件保留在 Downloads |
 | 原始图片路径被规范化 | `/mnt/data/` 是生成环境路径；只改为仓库内相对路径，自动检查防回归 |
 | 本版无 PR | 新仓库需要先建立默认分支；初始 Bootstrap 直接创建 `main`，后续改动必须走 PR |
+| GitHub Actions runner 未启动 | Run `29922581936` 注释为账号付款失败或 spending limit；仓库 owner 在恢复 Billing 后重跑 `Governance`，在此之前以本地验证为准 |
 
 ## Session Handoff 索引
 
@@ -40,6 +41,6 @@
 
 ## 封版记录
 
-- 验证结果：本地完整性、Git whitespace、远端默认分支与 GitHub Actions 均通过。
+- 验证结果：本地完整性、Git whitespace 与远端默认分支通过。GitHub Actions run `29922581936` 未进入任何 step，平台注释为 Billing / spending limit；仓库 owner 恢复 Billing 后负责重跑。
 - 遗留问题：产品实现未开始；由 `v0.1-m0-data-gate` 承接。
 - 终态对账：关联 issue `HAZ-383`；必需子任务/stage `0/0`；Issue 状态与本 README 状态一致：是（等待 issue review）。
