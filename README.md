@@ -7,7 +7,7 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 ## 当前状态
 
 - 项目治理与 V2.0 交接基线已建立。
-- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；产品代码尚未开始。
+- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1 的 Mock/Replay 基础已开始实现。
 - 下一目标是 `v0.1-mac-replay-foundation`：先完成跨平台工程骨架、Mock/Replay 和确定性测试。
 - Windows/通达信真实数据 M0 延后到 `v0.3-windows-data-gate`。在该版本通过前，不得声称紫黄线、Windows 通知或安装包已经验证。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
@@ -46,7 +46,18 @@ python3 scripts/validate_workspace.py
 git diff --check
 ```
 
-产品实现开始后，测试、lint 和打包命令必须在 `AGENTS.md` 与目标版本 README 中补齐，未配置的命令不得被宣称为已验证。
+v0.1 的可复现本地验证（仅 Mac + Mock/Replay）如下：
+
+```bash
+uv sync --all-groups
+uv run pytest
+uv run ruff check .
+uv run mypy src tests
+python3 scripts/validate_workspace.py
+git diff --check
+```
+
+Python 3.11+ 均可用；`uv.lock` 锁定当前开发环境的依赖解析。不得将上述结果表述为 Windows、通达信、紫黄线或真实行情验证。
 
 ## 版本路线
 

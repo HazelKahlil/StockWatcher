@@ -17,16 +17,16 @@
 - [x] 创建并关联 Stage 2 执行 issue：`HAZ-384`（仅做 Mac 可验证基础，不把模拟结果当实时行情）。
 - [x] 本版本在 `docs/visions/README.md` 登记为活跃并写入本地 `main`。
 - [x] 已记录环境并读取 `rules/data.md`、`rules/storage.md`、`rules/security.md` 与 `boundaries.md`：macOS 27.0（26A5388g）、arm64、Python 3.14.6、uv 0.9.26。
-- [ ] 从本地 `main` 建实现分支；本版不要求先操作 GitHub。
+- [x] 从本地 `main` 建实现分支；本版不要求先操作 GitHub。
 
 ## 验收标准（必须可检查）
 
-- [ ] 全新本地虚拟环境可按锁定依赖安装，启动命令和验证命令写入 `README.md` 与 `AGENTS.md`。
-- [ ] domain 对象与 Provider Protocol 不引用通达信专有字典键或 Windows 专有路径。
-- [ ] Mock/Replay/Synthetic 覆盖正常、stale、STOPPED、WARMING、重复时间戳和重连基线场景。
-- [ ] 相同输入、配置、时钟和随机种子得到完全相同的输出。
-- [ ] SQLite/配置版本基础可创建、读写和回滚测试，不保存密钥或交易账户信息。
-- [ ] pytest、lint、类型检查和 workspace validation 全部通过。
+- [x] 全新本地虚拟环境可按锁定依赖安装，启动命令和验证命令写入 `README.md` 与 `AGENTS.md`。
+- [x] domain 对象与 Provider Protocol 不引用通达信专有字典键或 Windows 专有路径。
+- [x] Mock/Replay/Synthetic 覆盖正常、stale、STOPPED、WARMING、重复时间戳和重连基线场景。
+- [x] 相同输入、配置、时钟和随机种子得到完全相同的输出。
+- [x] SQLite/配置版本基础可创建、读写和回滚测试，不保存密钥或交易账户信息。
+- [x] pytest、lint、类型检查和 workspace validation 全部通过。
 - [ ] 若包含 PySide6 smoke，能在当前 Mac 启动并明确显示“模拟数据”；无界面也不能阻塞本版核心验收。
 - [ ] 文档明确列出未验证项：真实行情、紫黄线、Windows 通知/多屏/托盘、Windows 打包和供应商授权。
 
@@ -36,6 +36,7 @@
 | --- | --- | --- |
 | 2026-07-22 | 根据实际只有 Mac 的环境重排首版；尚未启动产品实现 | 计划中 |
 | 2026-07-22 | 已激活为进行中版本；开工门已完成，Stage 2 执行 issue 为 `HAZ-384` | 完成 |
+| 2026-07-22 | HAZ-384 在 `feat/HAZ-384-mac-replay-foundation` 建立 Python、Mock/Replay/Synthetic、SQLite WAL 与确定性测试；Mac 本地全套校验通过 | 完成 |
 
 ## 决策与风险
 
@@ -51,6 +52,6 @@
 
 ## 封版记录
 
-- 验证结果：待执行。
-- 遗留问题：真实数据与目标环境由 v0.3 承接；Mac 本地 Alpha 由 v0.2 承接。
+- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups`、`uv run pytest`（5 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过。
+- 遗留问题：未验证真实行情、通达信紫黄线、供应商授权、Windows 通知/多屏/托盘、Windows 打包；真实数据与目标环境由 v0.3 承接，Mac 本地 Alpha 由 v0.2 承接。
 - 终态对账：关联 issue 待创建；必需子任务/stage 待登记；本地/远端同步状态待填写。

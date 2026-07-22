@@ -6,7 +6,6 @@ import json
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "docs" / "reference" / "v2.0"
 
@@ -34,8 +33,7 @@ REQUIRED_PATHS = (
 )
 
 EXPECTED_IMAGES = tuple(
-    REFERENCE / "assets" / "media" / f"image{number}.png"
-    for number in range(1, 5)
+    REFERENCE / "assets" / "media" / f"image{number}.png" for number in range(1, 5)
 )
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -74,9 +72,7 @@ def main() -> int:
             if product.get("auto_trading") is not False:
                 errors.append("locked safety boundary auto_trading=false was changed")
             if product.get("reads_trading_passwords") is not False:
-                errors.append(
-                    "locked safety boundary reads_trading_passwords=false was changed"
-                )
+                errors.append("locked safety boundary reads_trading_passwords=false was changed")
 
     spec_path = REFERENCE / "SPEC_V2.0_AGENT.md"
     if spec_path.is_file():
@@ -92,24 +88,19 @@ def main() -> int:
         body = markdown_path.read_text(encoding="utf-8")
         for raw_target in MARKDOWN_LINK.findall(body):
             target = raw_target.strip().strip("<>")
-            if (
-                not target
-                or target.startswith(("#", "http://", "https://", "mailto:"))
-            ):
+            if not target or target.startswith(("#", "http://", "https://", "mailto:")):
                 continue
             target = target.split("#", 1)[0]
             resolved = (markdown_path.parent / target).resolve()
             if not resolved.exists():
                 errors.append(
-                    "broken local Markdown link: "
-                    f"{markdown_path.relative_to(ROOT)} -> {target}"
+                    f"broken local Markdown link: {markdown_path.relative_to(ROOT)} -> {target}"
                 )
 
     forbidden = tuple(ROOT.rglob("*.docx")) + tuple(ROOT.rglob("*.zip"))
     for path in forbidden:
         errors.append(
-            "duplicate binary handoff artifact must not be committed: "
-            f"{path.relative_to(ROOT)}"
+            f"duplicate binary handoff artifact must not be committed: {path.relative_to(ROOT)}"
         )
 
     if errors:
