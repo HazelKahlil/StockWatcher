@@ -40,6 +40,7 @@
 | 2026-07-22 | 已激活为进行中版本；开工门已完成，Stage 2 执行 issue 为 `HAZ-384` | 完成 |
 | 2026-07-22 | HAZ-384 在 `feat/HAZ-384-mac-replay-foundation` 建立 Python、Mock/Replay/Synthetic、SQLite WAL 与确定性测试；Mac 本地全套校验通过 | 完成 |
 | 2026-07-22 | HAZ-388 修复 STOPPED/重连与 Shanghai 时间契约，补日志脱敏滚动和依赖审计；仅 Mac Mock/Replay 回归 | 完成 |
+| 2026-07-23 | HAZ-391 将 STOPPED 的 `source_ts` 设为恢复截止线；拒绝并计数所有不晚于截止线的延迟样本，Mac Mock/Replay 回归通过（workspace 校验受既有 AGENTS 运行时链接阻塞） | 完成 |
 
 ## 决策与风险
 
@@ -55,6 +56,7 @@
 
 ## 封版记录
 
-- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（8 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过。
+- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（10 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过。
+- HAZ-391 验证补充：上述依赖、pytest、Ruff、Mypy 与 diff 检查在本轮通过；`python3 scripts/validate_workspace.py` 因本轮开始前已存在的 `AGENTS.md` 平台运行时 `mention://`/示例本地路径链接失败，未改动该文件。
 - 遗留问题：未验证真实行情、通达信紫黄线、供应商授权、Windows 通知/多屏/托盘、Windows 打包；真实数据与目标环境由 v0.3 承接，Mac 本地 Alpha 由 v0.2 承接。
 - 终态对账：关联 issue 待创建；必需子任务/stage 待登记；本地/远端同步状态待填写。

@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from stock_watcher.config import ConfigRepository, VersionedConfig
-from stock_watcher.domain import HealthState, MarketEvent, ProviderHealth
+from stock_watcher.domain import HealthState, MarketEvent, ProviderHealth, Security, Snapshot
 from stock_watcher.logging_config import configure_logging
 from stock_watcher.providers import MockProvider, ReplayProvider, SyntheticScenarioBuilder
 from stock_watcher.storage import SQLiteStore
@@ -13,6 +13,18 @@ from stock_watcher.storage import SQLiteStore
 
 def builder() -> SyntheticScenarioBuilder:
     return SyntheticScenarioBuilder(datetime(2026, 7, 22, 9, 30, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+
+def event_at(
+    state: HealthState, source_minute: int, received_minute: int
+) -> MarketEvent:
+    timezone = ZoneInfo("Asia/Shanghai")
+    source_ts = datetime(2026, 7, 22, 9, source_minute, tzinfo=timezone)
+    received_ts = datetime(2026, 7, 22, 9, received_minute, tzinfo=timezone)
+    security = Security(code="600000", name="模拟样本", market="SH")
+    snapshot = Snapshot(security, 10.0, source_ts, received_ts, "test", "v0.1")
+    health = ProviderHealth(state, source_ts, received_ts, "test", "v0.1")
+    return MarketEvent(snapshot, health)
 
 
 def test_synthetic_is_deterministic_and_covers_health_states() -> None:
@@ -84,6 +96,49 @@ def test_stopped_event_survives_duplicate_source_timestamp_with_full_provenance(
     assert replayed[-1].health.received_ts == normal_snapshot.received_ts
     assert replayed[-1].health.provider_version == normal_snapshot.provider_version
     assert replayed[-1].health.config_version == normal_snapshot.config_version
+
+
+def test_replay_rejects_late_old_source_samples_after_stopped() -> None:
+    events = (
+        event_at(HealthState.STOPPED, 40, 40),
+        event_at(HealthState.WARMING, 31, 41),
+        event_at(HealthState.WARMING, 32, 42),
+        event_at(HealthState.WARMING, 33, 43),
+        event_at(HealthState.HEALTHY, 34, 44),
+    )
+    replay = ReplayProvider(events)
+
+    replayed = tuple(replay.events())
+
+    assert [event.health.state for event in replayed] == [HealthState.STOPPED]
+    assert not any(event.is_candidate_safe for event in replayed)
+    assert replay.recovery_cutoff_source_ts == events[0].health.source_ts
+    assert replay.rejected_recovery_samples == 4
+
+
+def test_replay_recovers_only_after_samples_newer_than_stopped_cutoff() -> None:
+    events = (
+        event_at(HealthState.STOPPED, 40, 40),
+        event_at(HealthState.WARMING, 41, 41),
+        event_at(HealthState.WARMING, 42, 42),
+        event_at(HealthState.WARMING, 43, 43),
+        event_at(HealthState.HEALTHY, 44, 44),
+    )
+    replay = ReplayProvider(events)
+
+    replayed = tuple(replay.events())
+
+    assert [event.health.state for event in replayed] == [
+        HealthState.STOPPED,
+        HealthState.WARMING,
+        HealthState.WARMING,
+        HealthState.WARMING,
+        HealthState.HEALTHY,
+    ]
+    assert not any(event.is_candidate_safe for event in replayed[:-1])
+    assert replayed[-1].is_candidate_safe
+    assert replay.recovery_cutoff_source_ts == events[0].health.source_ts
+    assert replay.rejected_recovery_samples == 0
 
 
 def test_domain_rejects_non_shanghai_timestamps() -> None:
