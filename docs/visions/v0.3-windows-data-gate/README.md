@@ -85,13 +85,15 @@ Tushare 字段不得命名或展示为通达信紫黄线，也不得据此声称
 
 FAIL 不使用网页抓取、OCR、鼠标脚本、未获支持的 HTTP 入口或替代资金字段绕过。
 
-## 进度
+## 进度与依赖
 
 | 日期 | 进展 | 状态 |
 | --- | --- | --- |
 | 2026-07-22 | 因当前只有 Mac，将真实 Windows/通达信 M0 从首版延后 | 计划中（环境待定） |
 | 2026-07-23 | HAZ-406 完成 Mac 可移植性预检：共享核心回归、Provider readiness 降级契约与 [Windows 迁移清单](mac-portability-preflight.md) 已记录；Windows/TdxQuant 仍未验证 | PASS_WITH_LIMITS |
 | 2026-07-23 | Human Owner 批准激活双路线真实数据闸门；HAZ-403 确认 Tushare Pro 仅为首个 Mac M0 候选，正式 HTTPS、授权和真实环境证据未齐 | `PASS_WITH_LIMITS`；真实接入 NO-GO |
+| 2026-07-23 | HAZ-409 落盘 v0.3 治理激活与双路线验收口径；只有以不改写历史的方式合入本地 `main` 并从新 worktree 回读后，才对日常开发生效 | 文档分支已提交，待本地 `main` 合入门 |
+| 待启动 | HAZ-410 已登记为 backlog，承接 Mac Tushare 真实行情 M0；依赖 HAZ-409 合入本地 `main`，且 Mac 路线的正式 HTTPS、书面授权和受控真实环境前置条件全部满足 | `backlog`；仅为未来 M0，不构成生产接入许可 |
 
 ## 决策与风险
 
