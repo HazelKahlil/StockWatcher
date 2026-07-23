@@ -1,6 +1,6 @@
 # v0.1-mac-replay-foundation：在 Mac 建立可回放工程基础
 
-> 状态：进行中
+> 状态：本地完成，待同步
 > 创建：2026-07-22 ｜ 计划 tag：`v0.1.0`
 
 ## 目标与范围
@@ -30,7 +30,7 @@
 - [x] 统一日志初始化提供脱敏与滚动入口；日志不记录密钥、交易账户或真实用户数据。
 - [x] 直接与开发依赖均已登记用途、许可证与安全影响，`uv.lock` 可复现。
 - [ ] 若包含 PySide6 smoke，能在当前 Mac 启动并明确显示“模拟数据”；无界面也不能阻塞本版核心验收。
-- [ ] 文档明确列出未验证项：真实行情、紫黄线、Windows 通知/多屏/托盘、Windows 打包和供应商授权。
+- [x] 文档明确列出未验证项：真实行情、紫黄线、Windows 通知/多屏/托盘、Windows 打包和供应商授权。
 
 ## 进度
 
@@ -41,6 +41,7 @@
 | 2026-07-22 | HAZ-384 在 `feat/HAZ-384-mac-replay-foundation` 建立 Python、Mock/Replay/Synthetic、SQLite WAL 与确定性测试；Mac 本地全套校验通过 | 完成 |
 | 2026-07-22 | HAZ-388 修复 STOPPED/重连与 Shanghai 时间契约，补日志脱敏滚动和依赖审计；仅 Mac Mock/Replay 回归 | 完成 |
 | 2026-07-23 | HAZ-391 将 STOPPED 的 `source_ts` 设为恢复截止线；拒绝并计数所有不晚于截止线的延迟样本，Mac Mock/Replay 回归通过（workspace 校验受既有 AGENTS 运行时链接阻塞） | 完成 |
+| 2026-07-23 | Stage 7 PASS 后，本地 `main` 快进合入审定提交 `0083e39`；全套门禁与新 worktree 回读通过 | 本地完成，待同步 |
 
 ## 决策与风险
 
@@ -56,7 +57,8 @@
 
 ## 封版记录
 
-- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（10 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过。
-- HAZ-391 验证补充：上述依赖、pytest、Ruff、Mypy 与 diff 检查在本轮通过；`python3 scripts/validate_workspace.py` 因本轮开始前已存在的 `AGENTS.md` 平台运行时 `mention://`/示例本地路径链接失败，未改动该文件。
-- 遗留问题：未验证真实行情、通达信紫黄线、供应商授权、Windows 通知/多屏/托盘、Windows 打包；真实数据与目标环境由 v0.3 承接，Mac 本地 Alpha 由 v0.2 承接。
-- 终态对账：关联 issue 待创建；必需子任务/stage 待登记；本地/远端同步状态待填写。
+- 关联与门禁：Stage 2 `HAZ-384` 实现，Stage 4 `HAZ-388` 定向修复，Stage 6 `HAZ-391` STOPPED 时间门修复，Stage 7 `HAZ-390` 对 `0083e39bea124f8b854192cff34c7c579cf8a532` 给出 PASS，Stage 8 `HAZ-387` 本地合入。
+- 本地终态：`main` 包含审定提交 `0083e39bea124f8b854192cff34c7c579cf8a532` 与本封版文档提交；GitHub `origin/main` 仍停在 `7ec5c6b`，尚未同步，未创建 tag 或 PR。
+- 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过，并已在新本地 worktree 回读后复跑核心 pytest。
+- 环境与未验证项：只证明 Mac + Mock/Replay；未验证真实行情、通达信紫黄线、供应商授权、Windows 通知/多屏/托盘、Windows 打包。真实数据与目标环境由 v0.3 承接，Mac 本地 Alpha 由 v0.2 承接。
+- 同步差异：完成封版文档后以 `git rev-list --left-right --count main...origin/main` 记录本地/远端差异；仅可在用户要求的版本节点创建 `publish/v0.1.0` 并同步，当前不 push。

@@ -26,4 +26,5 @@
 - 高风险区：[process/boundaries.md](process/boundaries.md)
 - 发布流程：[process/release.md](process/release.md)
 - 版本索引：[visions/README.md](visions/README.md)
-- 下一目标：[visions/v0.1-mac-replay-foundation/README.md](visions/v0.1-mac-replay-foundation/README.md)
+- 已完成（本地待同步）：[visions/v0.1-mac-replay-foundation/README.md](visions/v0.1-mac-replay-foundation/README.md)
+- 下一目标：[visions/v0.2-mac-local-alpha/README.md](visions/v0.2-mac-local-alpha/README.md)

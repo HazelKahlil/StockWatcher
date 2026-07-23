@@ -1,6 +1,6 @@
 # 项目长期事实索引
 
-> 最后更新：2026-07-22
+> 最后更新：2026-07-23
 > 这里只放长期为真的事实。单次改动进版本文档，规则和踩坑进 `docs/process/`。
 
 ## 项目是什么
@@ -36,7 +36,7 @@
 | 测试 | pytest + ReplayProvider + SyntheticScenarioBuilder；真实数据另做 M0/影子验证 |
 | 打包 | v0.1/v0.2 不做正式安装包；最终平台与 Windows 打包方案在 v0.3 后确认 |
 | 部署 | 当前只有 Mac 本地开发环境，无生产部署；最终运行平台仍待真实数据路线确认 |
-| 当前验证 | `python3 scripts/validate_workspace.py`、`git diff --check` |
+| 当前验证 | v0.1 已在 Mac + Mock/Replay 下通过锁文件、pytest、Ruff、Mypy、workspace validation 与 diff 检查；真实 Windows/通达信验证仍未进行 |
 
 ## 计划模块表
 
@@ -51,7 +51,7 @@
 | jobs / health | 总结、备份、看门狗、恢复与指标 | `src/stock_watcher/jobs/`、`health/` | providers、storage | UI、运维 |
 | tools | M0 探针、回放工具 | `tools/` | providers、domain | 开发与测试 |
 
-以上是规格建议的依赖方向，不代表代码目录已经存在。首次建立代码结构时必须在活跃版本中验证后更新本表。
+以上是规格建议的依赖方向。v0.1 已实现 `domain`、`providers`、`storage` 和 `config` 的最小可回放基础；engine、desktop、notifications 与 jobs/health 仍由后续版本承接。
 
 ## 相关文档
 

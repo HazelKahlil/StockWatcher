@@ -9,9 +9,14 @@
 - 开发方式调整为 Mac 本地优先，GitHub 仅在版本节点或明确备份/交接需求时同步。
 - 版本路线重排：先完成 Mac Replay 基础和本地 Alpha，再进入 Windows/通达信真实数据闸门。
 
-### Planned
+### Added
 
-- v0.1 Mac Replay 基础版：建立跨平台工程、Provider 协议、Mock/Replay/Synthetic、SQLite/配置骨架和确定性测试。
+- v0.1 Mac Replay Foundation：跨平台 Python 工程、Provider 协议、Mock/Replay/Synthetic、SQLite WAL/配置与脱敏滚动日志基础，以及确定性测试。
+- STOPPED 恢复来源时间门：拒绝并计数不晚于 STOPPED 截止线的延迟样本，防止旧数据重新放行候选。
+
+### Pending synchronization
+
+- v0.1 已本地完成，尚未同步 GitHub；该版本只证明 Mac + Mock/Replay，不证明 Windows、通达信或真实行情。
 
 ## [0.0.0] - 2026-07-22
 
