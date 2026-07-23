@@ -36,6 +36,7 @@
 | 2026-07-23 | HAZ-393 完成 Replay 确定性候选、提醒策略与 SQLite 可追溯核心；UI 与真实数据验证仍未开始 | 进行中 |
 | 2026-07-23 | HAZ-395 修复替代关系/新鲜批次防抖、固定时点与盘中额度分账，并完成 v1→v2 SQLite 原子迁移与回归 | 进行中 |
 | 2026-07-23 | HAZ-397 仅修复替换关系中断后防抖状态清空，并补回放序列回归；尚未获得新的整体复审结论 | 进行中 |
+| 2026-07-23 | HAZ-398 对核心提交 `fc62396f47b0c7cf535692e20639a75b2c56ea73` 给出 PASS；HAZ-399 已将该核心以 fast-forward 合入本地权威 `main`，并在随后的治理提交形成可回读基线。`uv sync --all-groups --frozen`、`uv lock --check`、pytest、Replay smoke、Ruff、Mypy、workspace validation 与 `git diff --check` 验证结果见本工单交付记录 | 进行中 |
 
 ## 决策与风险
 
@@ -52,4 +53,4 @@
 
 - 验证结果：待执行。
 - 遗留问题：真实数据闸门由 v0.3 承接。
-- 终态对账：执行 issue 为 HAZ-392；后续实现子任务/stage 待登记；本地 `main` 为权威，GitHub 尚未同步。
+- 终态对账：执行 issue 为 HAZ-392；核心合入基线为 `fc62396f47b0c7cf535692e20639a75b2c56ea73`，最终本地基线为 HAZ-399 治理提交后的 `main` HEAD；后续仍须完成 Mac PySide6 UI 与版本封版。本地 `main` 为权威，GitHub 尚未同步。
