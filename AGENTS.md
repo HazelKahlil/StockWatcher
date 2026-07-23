@@ -7,7 +7,7 @@
 - 本地路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`
 - 当前开发电脑：Mac；没有可用于真实验证的 Windows 电脑。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：v0.1 Mac Replay Foundation 已本地完成、待同步 GitHub；下一目标是 `v0.2-mac-local-alpha`。
+- 当前状态：v0.1 Mac Replay Foundation 已本地完成、待同步 GitHub；`v0.2-mac-local-alpha` 为当前活跃版本（进行中）。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
@@ -15,7 +15,7 @@
 ## 项目工作流
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
-- 产品实现未启动时，目标版本是 `docs/visions/v0.1-mac-replay-foundation/README.md`；首个实现 issue 进入执行前，必须先把它登记为活跃版本并写入本地 `main`。
+- 产品实现进入 v0.2 前，先读取活跃版本 `docs/visions/v0.2-mac-local-alpha/README.md`；首个实现 issue 进入执行前，必须确认活跃登记已写入本地 `main`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
 - 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
 - 长任务跨 session 时按 `kahlil-project-workflow` 的 handoff 规则交接；小改动优先更新目标版本 README，不滥建 session log。

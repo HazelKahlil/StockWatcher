@@ -1,6 +1,6 @@
 # v0.2-mac-local-alpha：交付基于 Replay 的 Mac 本地 Alpha
 
-> 状态：计划中
+> 状态：进行中
 > 创建：2026-07-22 ｜ 计划 tag：`v0.2.0`
 
 ## 目标与范围
@@ -13,7 +13,9 @@
 ## 依赖
 
 - v0.1 工程、Provider Protocol、Replay/Synthetic 和验证命令已在本地封版。
-- 本版本开工前建立执行 issue，登记为活跃版本，并读取 ranking、data、ui、storage、security 规则。
+- 执行 issue：`HAZ-392` 已于 2026-07-23 建立开工门；以本地 `main` 的基线提交 `cc0a4d245a8ecbc7abdea5cfd28ca5884aa30eae` 为准。
+- 后续实现必读：`docs/process/rules/ranking.md`、`docs/process/rules/data.md`、`docs/process/rules/ui.md`、`docs/process/rules/storage.md`、`docs/process/rules/security.md` 和 `docs/process/boundaries.md`。
+- 本版本的 Mac + Mock/Replay 结果只证明本地行为；真实通达信、紫黄线、Windows 行为和安装包均未验证。GitHub 尚未同步本地 v0.1 基线与本开工登记。
 
 ## 验收标准
 
@@ -30,6 +32,7 @@
 | 日期 | 进展 | 状态 |
 | --- | --- | --- |
 | 2026-07-22 | 从原 M1 Alpha 中拆出纯 Mac/Replay 可验证范围 | 计划中 |
+| 2026-07-23 | HAZ-392 激活开工门：v0.2 登记为本地 `main` 活跃版本，基线为 `cc0a4d2`；Mac + Mock/Replay 边界及 GitHub 未同步事实已确认 | 进行中 |
 
 ## 决策与风险
 
@@ -46,4 +49,4 @@
 
 - 验证结果：待执行。
 - 遗留问题：真实数据闸门由 v0.3 承接。
-- 终态对账：关联 issue 待创建；必需子任务/stage 待登记；本地/远端同步状态待填写。
+- 终态对账：执行 issue 为 HAZ-392；后续实现子任务/stage 待登记；本地 `main` 为权威，GitHub 尚未同步。
