@@ -7,8 +7,8 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 ## 当前状态
 
 - 项目治理与 V2.0 交接基线已建立。
-- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1 的 Mock/Replay 基础已开始实现。
-- 下一目标是 `v0.1-mac-replay-foundation`：先完成跨平台工程骨架、Mock/Replay 和确定性测试。
+- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1 的 Mock/Replay 基础已完成。
+- 当前活跃目标是 `v0.2-mac-local-alpha`：在 Mock/Replay 上运行 Mac PySide6 主窗口、详情、历史和低打扰提醒。
 - Windows/通达信真实数据 M0 延后到 `v0.3-windows-data-gate`。在该版本通过前，不得声称紫黄线、Windows 通知或安装包已经验证。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
 
@@ -17,7 +17,7 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
 3. 阅读 [锁定业务项](docs/reference/v2.0/requirements.lock.json) 和 [V2.0 规格](docs/reference/v2.0/SPEC_V2.0_AGENT.md)。
-4. 开始任何实现前，读取 [v0.1 Mac Replay 基础版](docs/visions/v0.1-mac-replay-foundation/README.md)，创建执行 issue，再把版本从“计划中”更新为“进行中”。
+4. 开始任何实现前，读取 [v0.2 Mac 本地 Alpha](docs/visions/v0.2-mac-local-alpha/README.md) 和规则路由表。
 
 ## 项目基线
 
@@ -59,6 +59,15 @@ git diff --check
 
 Python 3.11+ 均可用；`uv.lock` 锁定当前开发环境的依赖解析。不得将上述结果表述为 Windows、通达信、紫黄线或真实行情验证。
 直接与开发依赖的用途、许可证与安全影响见 [依赖审计](docs/process/dependencies.md)；变更后必须额外执行 `uv sync --all-groups --frozen` 与 `uv lock --check`。
+
+## 启动 Mac Replay UI Alpha
+
+```bash
+uv sync --all-groups --frozen
+uv run python -m stock_watcher.ui.app
+```
+
+窗口使用固定 Synthetic 场景写入临时 SQLite，并明确标注“模拟 / 回放数据”。“模拟数据中断”和“恢复回放”按钮用于复现 STOPPED/WARMING 安全状态；历史窗口只读，资金模块保持未就绪。
 
 ## 版本路线
 

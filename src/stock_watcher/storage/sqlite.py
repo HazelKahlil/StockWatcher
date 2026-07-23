@@ -252,3 +252,32 @@ class SQLiteStore:
         with self.connect() as connection:
             if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                 raise RuntimeError("rollback database failed integrity check")
+
+    def list_recent_snapshots(self, limit: int = 20) -> list[dict[str, str | int]]:
+        """Read visible candidate batches without initializing or mutating storage.
+
+        The desktop history view uses this method from a worker thread.  It is
+        intentionally query-only: an absent/corrupt database is surfaced to
+        the caller instead of being silently created or migrated by the UI.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least one")
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id, source_ts, generated_at, health, overall_weak, "
+                "provider_version, config_version, app_version, payload_json "
+                "FROM candidate_snapshots ORDER BY source_ts DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        keys = (
+            "id",
+            "source_ts",
+            "generated_at",
+            "health",
+            "overall_weak",
+            "provider_version",
+            "config_version",
+            "app_version",
+            "payload_json",
+        )
+        return [dict(zip(keys, row)) for row in rows]

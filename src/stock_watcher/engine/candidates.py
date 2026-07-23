@@ -33,6 +33,11 @@ class Candidate:
     provider_version: str
     config_version: str
     app_version: str
+    # Display fields are copied from the point-in-time input so the UI never
+    # has to re-read provider payloads or infer prices from a score.
+    price: float = 0.0
+    change_pct: float = 0.0
+    velocity_pct: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,4 +136,7 @@ class CandidateEngine:
             provider_version=item.provider_version,
             config_version=config.version,
             app_version=config.app_version,
+            price=item.price,
+            change_pct=item.change_pct,
+            velocity_pct=item.velocity_pct,
         )
