@@ -51,13 +51,17 @@ class AlertPolicy:
             and self._intraday_sent_today >= self.config.daily_limit
         ):
             return AlertDecision(False, "daily-limit")
+        codes = tuple(candidate.code for candidate in batch.candidates)
+        if self._replacement_relation is not None and codes == self._last_codes:
+            # Returning to the accepted Top3 interrupts a pending replacement,
+            # even when this batch is later rejected as stale.
+            self._reset_replacement_debounce(clear_source_ts=True)
         if (
             self._last_processed_source_ts is not None
             and batch.source_ts <= self._last_processed_source_ts
         ):
             return AlertDecision(False, "stale-source")
         self._last_processed_source_ts = batch.source_ts
-        codes = tuple(candidate.code for candidate in batch.candidates)
         if not codes:
             return AlertDecision(False, "empty")
         if codes == self._last_codes:
@@ -104,6 +108,8 @@ class AlertPolicy:
             return None
         return next(iter(outgoing)), next(iter(entering))
 
-    def _reset_replacement_debounce(self) -> None:
+    def _reset_replacement_debounce(self, *, clear_source_ts: bool = False) -> None:
         self._replacement_streak = 0
         self._replacement_relation = None
+        if clear_source_ts:
+            self._last_processed_source_ts = None

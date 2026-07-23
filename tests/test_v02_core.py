@@ -143,6 +143,68 @@ def test_alert_policy_binds_debounce_to_relation_and_fresh_source_cycles() -> No
     ).should_alert
 
 
+def test_alert_policy_resets_pending_replacement_when_top_three_recovers() -> None:
+    baseline = batch(item("600001"), item("600002"), item("600003"))
+    first_replacement = batch(
+        item("600001", source_ts=stamp(46)),
+        item("600002", source_ts=stamp(46)),
+        item("600004", source_ts=stamp(46)),
+    )
+    recovered_baseline = batch(
+        item("600001", source_ts=stamp(47)),
+        item("600002", source_ts=stamp(47)),
+        item("600003", source_ts=stamp(47)),
+    )
+    second_replacement = batch(
+        item("600001", source_ts=stamp(48)),
+        item("600002", source_ts=stamp(48)),
+        item("600004", source_ts=stamp(48)),
+    )
+    confirmed_replacement = batch(
+        item("600001", source_ts=stamp(49)),
+        item("600002", source_ts=stamp(49)),
+        item("600004", source_ts=stamp(49)),
+    )
+    assert (
+        baseline is not None
+        and first_replacement is not None
+        and recovered_baseline is not None
+        and second_replacement is not None
+        and confirmed_replacement is not None
+    )
+    policy = AlertPolicy(AlertPolicyConfig(replacement_cycles=2, replacement_margin=1.0))
+    now = stamp()
+
+    assert policy.decide(baseline, now, AlertTrigger.INTRADAY).should_alert
+    assert (
+        policy.decide(first_replacement, now + timedelta(minutes=6), AlertTrigger.INTRADAY).reason
+        == "replacement-debounce"
+    )
+    assert (
+        policy.decide(recovered_baseline, now + timedelta(minutes=12), AlertTrigger.INTRADAY).reason
+        == "unchanged"
+    )
+    assert (
+        policy.decide(recovered_baseline, now + timedelta(minutes=18), AlertTrigger.INTRADAY).reason
+        == "stale-source"
+    )
+    assert (
+        policy.decide(second_replacement, now + timedelta(minutes=24), AlertTrigger.INTRADAY).reason
+        == "replacement-debounce"
+    )
+    assert (
+        policy.decide(recovered_baseline, now + timedelta(minutes=30), AlertTrigger.INTRADAY).reason
+        == "unchanged"
+    )
+    assert (
+        policy.decide(second_replacement, now + timedelta(minutes=36), AlertTrigger.INTRADAY).reason
+        == "replacement-debounce"
+    )
+    assert policy.decide(
+        confirmed_replacement, now + timedelta(minutes=42), AlertTrigger.INTRADAY
+    ).should_alert
+
+
 def test_alert_policy_counts_only_intraday_batches_and_resets_daily() -> None:
     policy = AlertPolicy(AlertPolicyConfig(replacement_cycles=1, daily_limit=3))
     now = stamp()
