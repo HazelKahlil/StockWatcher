@@ -17,6 +17,11 @@
 - v0.2 Mac Local Alpha：固定三只候选、确定性回放提醒与可追溯 SQLite 记录，以及基于 Mock/Replay 的 Mac 本地界面（当前观察、三只提醒、数据中断、详情和历史）。
 - v0.3 TdxQuant 前置交付包：官方本机 HTTP/可选 Python 传输、行情归一化、健康与恢复门、Windows 一键入口、脱敏 M0 报告和 PyInstaller/Inno Setup 配置。
 
+### Fixed
+
+- v0.3 板块关系与交易日历改为实际返回带时间、版本和质量元数据的统一 domain 对象；陈旧/中断后的行情必须完成配置数量的恢复预热样本后才重新放行。
+- Windows 入口仅选择项目支持的 Python 3.11/3.12，原生命令失败立即返回非零；CI 在两个版本上验证无通达信终端的安装、导入、CLI、PowerShell、PyInstaller 和 Inno Setup 链路。
+
 ### Pending synchronization
 
 - v0.1 已本地完成，尚未同步 GitHub；该版本只证明 Mac + Mock/Replay，不证明 Windows、通达信或真实行情。

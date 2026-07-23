@@ -43,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
 
 ## 构建、卸载与回滚
 
-- 菜单“构建分发包”先生成 `dist\StockWatcher`；若机器安装了 Inno Setup，再生成安装器。
+- 菜单“构建分发包”要求已安装 Inno Setup，并依次生成 `dist\StockWatcher` 与安装器；任一步失败都会返回非零，不显示成功提示。
 - 应用和报告位于 `%LOCALAPPDATA%\StockWatcher`，安装程序位于 `%LOCALAPPDATA%\Programs\StockWatcher`。
 - 卸载不会自动删除数据库、日志和 M0 报告，避免误删证据。确认已备份后再由用户手动删除运行目录。
 - 回滚时卸载当前版本并安装上一个已验证包；不得为恢复服务切换到未授权数据源。

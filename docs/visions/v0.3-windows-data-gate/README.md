@@ -60,12 +60,13 @@
 | 2026-07-23 | HAZ-409 将 v0.3 激活到本地 `main`；GitHub 尚未同步 | 本地激活完成 |
 | 2026-07-23 | Human Owner 收敛路线：停止 Mac/Tushare/iFinD 执行，改为 Windows/TdxQuant 单人只读测试 | 当前权威路线 |
 | 2026-07-23 | HAZ-410 完成 Provider/传输/预检/M0/PowerShell/打包前置与离线回归 | 实现完成，待 Windows 现场 |
+| 2026-07-23 | HAZ-418 修复板块/日历归一化、STALE 恢复门与 PowerShell 失败语义；新增 Python 3.11/3.12 `windows-latest` 无终端构建矩阵 | 候选分支验证中；不等于真实 TdxQuant M0 |
 
 ## 验证边界
 
 - 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复、安全门、PyInstaller 配置与 Windows 包离线检查。
 - 当前未验证：Windows、真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏、安装器与卸载体验。
-- GitHub：本地 `main` 比 `origin/main` 领先；本任务不 push、不建 PR、不合入本地 `main`。
+- GitHub：本地 `main` 比 `origin/main` 领先；HAZ-418 仅为取得真实 `windows-latest` 证据推送候选分支并使用单一 draft 里程碑 PR，不合入本地 `main`。
 
 HAZ-410 在 macOS + Python 3.12 的前置验证：`uv sync --all-groups --frozen`、`uv lock --check`、62 项 pytest、Ruff、Mypy、workspace validation、Windows package offline contract、`git diff --check` 均通过；离屏 Replay smoke 生成 5 张状态图；PyInstaller 成功生成当前 macOS 架构目录且冻结程序 `--help` 可启动。这些结果不构成 Windows 构建或 TdxQuant 真机证据。
 

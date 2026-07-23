@@ -1,0 +1,19 @@
+[
+  {
+    "BlockCode": "881355.SH",
+    "BlockName": "软件服务",
+    "BlockType": "行业",
+    "GPNume": "234"
+  },
+  {
+    "BlockCode": "880592.SH",
+    "BlockName": "互联金融",
+    "BlockType": "概念",
+    "GPNume": "211"
+  },
+  {
+    "BlockName": "中证500",
+    "BlockType": "指数",
+    "GPNume": "500"
+  }
+]

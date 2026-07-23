@@ -83,12 +83,12 @@ def run_preflight(
             ),
         )
     )
-    python_supported = (3, 11) <= sys.version_info[:2] <= (3, 14)
+    python_supported = (3, 11) <= sys.version_info[:2] <= (3, 12)
     checks.append(
         PreflightCheck(
             "python",
             CheckStatus.PASS if python_supported else CheckStatus.FAIL,
-            f"Python {platform.python_version()}（项目要求 3.11—3.14）。",
+            f"Python {platform.python_version()}（项目要求 3.11 或 3.12）。",
             None if python_supported else TdxFailureReason.DEPENDENCY_MISSING,
         )
     )

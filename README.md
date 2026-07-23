@@ -57,7 +57,7 @@ python3 scripts/validate_workspace.py
 git diff --check
 ```
 
-Python 3.11+ 均可用；`uv.lock` 锁定当前开发环境的依赖解析。不得将上述结果表述为 Windows、通达信、紫黄线或真实行情验证。
+项目支持 Python 3.11/3.12；`uv.lock` 锁定当前开发环境的依赖解析。不得将上述结果表述为 Windows、通达信、紫黄线或真实行情验证。
 直接与开发依赖的用途、许可证与安全影响见 [依赖审计](docs/process/dependencies.md)；变更后必须额外执行 `uv sync --all-groups --frozen` 与 `uv lock --check`。
 
 ## 启动 Mac Replay UI Alpha

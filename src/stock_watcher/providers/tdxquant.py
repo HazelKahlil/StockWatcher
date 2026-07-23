@@ -22,9 +22,11 @@ from stock_watcher.domain import (
     HistoricalBar,
     MarketEvent,
     ProviderHealth,
+    SectorMembership,
     Security,
     Snapshot,
     SourceTimestampKind,
+    TradingDate,
 )
 
 from .availability import TDXQUANT_DESCRIPTOR, ProviderDescriptor, ProviderUnavailable
@@ -469,18 +471,75 @@ class TdxQuantProvider:
             )
         return tuple(bars)
 
-    def sectors(self, code: str) -> object:
-        return self._require_transport().call("get_relation", {"stock_code": code})
+    def sectors(self, code: str) -> tuple[SectorMembership, ...]:
+        received = self._clock()
+        raw = self._require_transport().call("get_relation", {"stock_code": code})
+        if isinstance(raw, dict):
+            raw = raw.get("relations") or raw.get("Relations") or raw.get("Value")
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+            raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE, "get_relation")
+        memberships: list[SectorMembership] = []
+        security = _security(code)
+        for item in raw:
+            if not isinstance(item, Mapping):
+                raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE, "get_relation item")
+            required = ("BlockName", "BlockType", "GPNume")
+            missing = next((field for field in required if item.get(field) in (None, "")), None)
+            if missing is not None:
+                raise TdxTransportError(TdxFailureReason.FIELD_UNAVAILABLE, missing)
+            member_count = _number(item.get("GPNume"), "GPNume")
+            if not member_count.is_integer():
+                raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE, "GPNume")
+            memberships.append(
+                SectorMembership(
+                    security=security,
+                    sector_code=str(item.get("BlockCode") or "0"),
+                    sector_name=str(item["BlockName"]),
+                    sector_type=str(item["BlockType"]),
+                    member_count=int(member_count),
+                    effective_date=received.date(),
+                    source_ts=received,
+                    received_ts=received,
+                    provider_version=self.config.provider_version,
+                    config_version=self.config.config_version,
+                )
+            )
+        return tuple(memberships)
 
-    def trading_dates(self, start: str = "", end: str = "") -> tuple[str, ...]:
+    def trading_dates(
+        self, start: str = "", end: str = "", *, count: int = -1
+    ) -> tuple[TradingDate, ...]:
+        if count == 0 or count < -1:
+            raise ValueError("count must be -1 or a positive integer")
+        received = self._clock()
         raw = self._require_transport().call(
-            "get_trading_dates", {"market": "SH", "start_date": start, "end_date": end}
+            "get_trading_dates",
+            {"market": "SH", "start_time": start, "end_time": end, "count": count},
         )
         if isinstance(raw, dict):
             raw = raw.get("Dates") or raw.get("dates") or list(raw)
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
             raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE, "get_trading_dates")
-        return tuple(str(value) for value in raw)
+        dates: list[TradingDate] = []
+        for value in raw:
+            try:
+                parsed = datetime.strptime(str(value), "%Y%m%d").date()
+            except ValueError as error:
+                raise TdxTransportError(
+                    TdxFailureReason.FIELD_UNAVAILABLE, "trading_date"
+                ) from error
+            dates.append(
+                TradingDate(
+                    market="SH",
+                    trading_date=parsed,
+                    is_open=True,
+                    source_ts=received,
+                    received_ts=received,
+                    provider_version=self.config.provider_version,
+                    config_version=self.config.config_version,
+                )
+            )
+        return tuple(dates)
 
     def events(self) -> Iterator[MarketEvent]:
         self._require_transport()
@@ -528,11 +587,17 @@ class TdxQuantProvider:
                 state = HealthState.STALE
                 detail = "恢复样本不晚于中断截止时间；已拒绝旧数据。"
             elif age > timedelta(seconds=self.config.stale_after_seconds):
+                self._enter_recovery(snapshot.received_ts)
                 state = HealthState.STALE
                 detail = FAILURE_MESSAGES_ZH[TdxFailureReason.DATA_STALE]
             elif snapshot.source_timestamp_kind is SourceTimestampKind.RECEIVED_FALLBACK:
+                self._enter_recovery(snapshot.received_ts)
                 state = HealthState.WARMING
                 detail = "接口未提供精确 source_ts；已保留接收时间并阻止候选输出。"
+            elif snapshot.trading_state == "suspended":
+                self._enter_recovery(snapshot.received_ts)
+                state = HealthState.STALE
+                detail = "证券当前停牌；不会产生新候选。"
             elif self._reconnecting:
                 self._recovery_samples += 1
                 if self._recovery_samples <= self.config.min_recovery_samples:
@@ -547,9 +612,6 @@ class TdxQuantProvider:
                     self._recovery_samples = 0
                     state = HealthState.HEALTHY
                     detail = "官方 TdxQuant 行情已完成断线恢复预热。"
-            elif snapshot.trading_state == "suspended":
-                state = HealthState.STALE
-                detail = "证券当前停牌；不会产生新候选。"
             else:
                 state = HealthState.HEALTHY
                 detail = "官方 TdxQuant 行情已归一化。"
@@ -562,6 +624,11 @@ class TdxQuantProvider:
                 detail=detail,
             )
             yield MarketEvent(snapshot=snapshot, health=health)
+
+    def _enter_recovery(self, cutoff: datetime) -> None:
+        self._reconnecting = True
+        self._recovery_cutoff = cutoff
+        self._recovery_samples = 0
 
     def _health_event(
         self, state: HealthState, source_ts: datetime, received_ts: datetime, detail: str

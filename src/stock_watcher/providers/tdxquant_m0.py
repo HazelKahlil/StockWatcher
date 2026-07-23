@@ -4,7 +4,8 @@ import argparse
 import json
 import statistics
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import fields as dataclass_fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -57,17 +58,26 @@ def _timed(
     if isinstance(value, dict):
         row_count = len(value)
         first: object = next(iter(value.values()), {})
-        fields = tuple(sorted(str(field) for field in first)) if isinstance(first, dict) else ()
+        field_names = (
+            tuple(sorted(str(field) for field in first)) if isinstance(first, dict) else ()
+        )
     elif isinstance(value, (list, tuple)):
         row_count = len(value)
-        fields = ()
+        first = next(iter(value), None)
+        field_names = (
+            tuple(field.name for field in dataclass_fields(first))
+            if first is not None and is_dataclass(first)
+            else ()
+        )
     else:
         row_count = int(value is not None)
-        fields = ()
+        field_names = ()
     ordered = sorted(durations)
     p50 = statistics.median(ordered)
     p95_index = min(len(ordered) - 1, max(0, int((len(ordered) * 0.95) - 0.000001)))
-    return value, ProbeObservation(capability, "PASS", p50, ordered[p95_index], row_count, fields)
+    return value, ProbeObservation(
+        capability, "PASS", p50, ordered[p95_index], row_count, field_names
+    )
 
 
 def run_m0_probe(

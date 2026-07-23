@@ -23,6 +23,14 @@ def main() -> int:
             errors.append(f"PowerShell entry is missing action {action}")
     if "127.0.0.1:17709" not in powershell:
         errors.append("PowerShell entry is missing the official TQ loopback endpoint")
+    if 'return @("py", "-3.12")' in powershell:
+        errors.append(
+            "PowerShell entry must not force py -3.12 when another supported version exists"
+        )
+    if "Invoke-CheckedNative" not in powershell:
+        errors.append("PowerShell entry must fail closed on native command errors")
+    if "3.11 或 3.12" not in powershell:
+        errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
     installer = required[3].read_text(encoding="utf-8")

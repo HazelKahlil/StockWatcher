@@ -20,3 +20,57 @@ jobs:
         run: python scripts/validate_workspace.py
       - name: Check whitespace errors
         run: git show --check --format= HEAD
+
+  windows-no-terminal:
+    name: Windows no-terminal / Python ${{ matrix.python-version }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --frozen --python "${{ matrix.python-version }}"
+      - name: Verify import, CLI, tests, lint, and types
+        shell: pwsh
+        run: |
+          uv run python -c "import stock_watcher; import stock_watcher.providers.tdxquant; import stock_watcher.ui.app"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run python -m stock_watcher --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run pytest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run ruff check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run mypy src tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify PowerShell setup and fail-closed preflight
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Preflight
+          if ($LASTEXITCODE -eq 0) { throw "Preflight unexpectedly passed without TdxQuant" }
+          python scripts/check_windows_package.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress --yes
+      - name: Build PyInstaller folder and Inno Setup installer
+        shell: pwsh
+        run: pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Build
+      - name: Upload no-terminal build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockwatcher-windows-py${{ matrix.python-version }}
+          path: |
+            dist/StockWatcher/**
+            dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 7

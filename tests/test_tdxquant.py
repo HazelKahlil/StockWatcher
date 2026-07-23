@@ -16,6 +16,7 @@ from stock_watcher.domain import (
     DataQuality,
     HealthState,
     SourceTimestampKind,
+    TradingDate,
 )
 from stock_watcher.providers import (
     ProviderReadiness,
@@ -29,7 +30,7 @@ from stock_watcher.providers import (
     provider_descriptor,
 )
 from stock_watcher.providers.tdxquant import is_continuous_trading_session
-from stock_watcher.providers.tdxquant_m0 import M0Report, write_report
+from stock_watcher.providers.tdxquant_m0 import M0Report, _timed, write_report
 from stock_watcher.providers.tdxquant_preflight import CheckStatus, run_preflight
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tdxquant"
@@ -206,6 +207,66 @@ def test_historical_mapping_is_timezone_aware_and_bounded() -> None:
         provider(transport).historical_bars("600000.SH", count=24_001)
 
 
+def test_official_sector_fixture_maps_to_normalized_memberships() -> None:
+    transport = FakeTransport({"get_relation": tuple(fixture("sectors.json"))})
+    memberships = provider(transport).sectors("688318.SH")
+    assert [item.sector_name for item in memberships] == ["软件服务", "互联金融", "中证500"]
+    assert memberships[0].security.code == "688318.SH"
+    assert memberships[0].sector_code == "881355.SH"
+    assert memberships[0].sector_type == "行业"
+    assert memberships[0].member_count == 234
+    assert memberships[0].effective_date == date(2026, 7, 23)
+    assert memberships[0].source_ts == memberships[0].received_ts == now()
+    assert memberships[0].provider_version == "tdxquant-official-unverified"
+    assert memberships[0].config_version == "v0.3"
+    assert memberships[0].quality is DataQuality.DEGRADED
+    assert memberships[0].source_timestamp_kind is SourceTimestampKind.RECEIVED_FALLBACK
+    assert memberships[-1].sector_code == "0"
+
+
+@pytest.mark.parametrize("missing", ("BlockName", "BlockType", "GPNume"))
+def test_sector_mapping_rejects_missing_official_fields(missing: str) -> None:
+    payload = fixture("sectors.json")
+    payload[0].pop(missing)
+    transport = FakeTransport({"get_relation": tuple(payload)})
+    with pytest.raises(TdxTransportError) as caught:
+        provider(transport).sectors("688318.SH")
+    assert caught.value.reason is TdxFailureReason.FIELD_UNAVAILABLE
+    assert caught.value.detail == missing
+
+
+def test_official_trading_calendar_fixture_maps_to_domain_metadata() -> None:
+    transport = FakeTransport({"get_trading_dates": tuple(fixture("trading_dates.json"))})
+    dates = provider(transport).trading_dates("20251201", "20251231", count=5)
+    assert all(isinstance(item, TradingDate) for item in dates)
+    assert dates[0].trading_date == date(2025, 12, 11)
+    assert dates[0].market == "SH"
+    assert dates[0].is_open
+    assert dates[0].source_ts == dates[0].received_ts == now()
+    assert dates[0].provider_version == "tdxquant-official-unverified"
+    assert dates[0].config_version == "v0.3"
+    assert dates[0].quality is DataQuality.DEGRADED
+    assert dates[0].source_timestamp_kind is SourceTimestampKind.RECEIVED_FALLBACK
+    assert transport.calls == [
+        (
+            "get_trading_dates",
+            {
+                "market": "SH",
+                "start_time": "20251201",
+                "end_time": "20251231",
+                "count": 5,
+            },
+        )
+    ]
+
+
+def test_trading_calendar_rejects_malformed_date() -> None:
+    transport = FakeTransport({"get_trading_dates": ("2025-12-11",)})
+    with pytest.raises(TdxTransportError) as caught:
+        provider(transport).trading_dates()
+    assert caught.value.reason is TdxFailureReason.FIELD_UNAVAILABLE
+
+
 def test_missing_source_timestamp_never_becomes_candidate_safe() -> None:
     more = fixture("more_info.json")
     more.pop("HqTime")
@@ -254,6 +315,58 @@ def test_disconnect_requires_fresh_warming_samples_before_health() -> None:
     assert tuple(configured.events())[0].health.state is HealthState.STOPPED
     assert tuple(configured.events())[0].health.state is HealthState.WARMING
     assert tuple(configured.events())[0].health.state is HealthState.HEALTHY
+
+
+def test_stale_recovery_requires_cutoff_and_all_configured_warming_samples() -> None:
+    snapshot = fixture("market_snapshot.json")
+    times = ("095900", "100001", "100003", "100004", "100005", "100006")
+    infos = []
+    for value in times:
+        info = fixture("more_info.json")
+        info["HqTime"] = value
+        infos.append(info)
+    transport = FakeTransport(
+        {
+            "get_market_snapshot": [snapshot] * len(times),
+            "get_more_info": infos,
+        }
+    )
+    configured = provider(transport, min_recovery_samples=3)
+    events = [tuple(configured.events())[0] for _ in times]
+    assert [event.health.state for event in events] == [
+        HealthState.STALE,
+        HealthState.STALE,
+        HealthState.WARMING,
+        HealthState.WARMING,
+        HealthState.WARMING,
+        HealthState.HEALTHY,
+    ]
+    assert all(not event.is_candidate_safe for event in events[:-1])
+    assert events[-1].is_candidate_safe
+
+
+def test_duplicate_fresh_timestamp_does_not_advance_or_repeat_recovery() -> None:
+    snapshot = fixture("market_snapshot.json")
+    times = ("095900", "100003", "100003", "100004", "100005")
+    infos = []
+    for value in times:
+        info = fixture("more_info.json")
+        info["HqTime"] = value
+        infos.append(info)
+    transport = FakeTransport(
+        {
+            "get_market_snapshot": [snapshot] * len(times),
+            "get_more_info": infos,
+        }
+    )
+    configured = provider(transport, min_recovery_samples=2)
+    assert tuple(configured.events())[0].health.state is HealthState.STALE
+    assert tuple(configured.events())[0].health.state is HealthState.WARMING
+    assert tuple(configured.events()) == ()
+    assert tuple(configured.events())[0].health.state is HealthState.WARMING
+    recovered = tuple(configured.events())[0]
+    assert recovered.health.state is HealthState.HEALTHY
+    assert recovered.is_candidate_safe
 
 
 def test_stale_and_user_pause_block_candidates() -> None:
@@ -322,6 +435,41 @@ def test_sanitized_report_contains_no_secret_or_raw_payload(tmp_path: Path) -> N
     assert "unavailable" in combined
     assert "password" not in combined.lower()
     assert "token" not in combined.lower()
+
+
+def test_m0_report_records_normalized_sector_and_calendar_fields(tmp_path: Path) -> None:
+    transport = FakeTransport(
+        {
+            "get_relation": tuple(fixture("sectors.json")),
+            "get_trading_dates": tuple(fixture("trading_dates.json")),
+        }
+    )
+    configured = provider(transport)
+    _, sector_observation = _timed(
+        "sectors", lambda: configured.sectors("688318.SH")
+    )
+    _, calendar_observation = _timed(
+        "trading_calendar", lambda: configured.trading_dates(count=5)
+    )
+    assert "source_ts" in sector_observation.fields
+    assert "received_ts" in calendar_observation.fields
+    report = M0Report(
+        generated_at=now().isoformat(),
+        environment="Windows-test-fixture",
+        verdict="PASS_WITH_LIMITS",
+        provider="official-tdxquant",
+        endpoint="http://127.0.0.1:17709/",
+        preflight={"status": "PASS"},
+        observations=(sector_observation, calendar_observation),
+        fund_module="unavailable",
+        windows_live_verified=False,
+        limitations=("fixture only",),
+    )
+    json_path, _ = write_report(report, tmp_path)
+    rendered = json_path.read_text(encoding="utf-8")
+    assert "sector_type" in rendered
+    assert "trading_date" in rendered
+    assert "provider_version" in rendered
 
 
 def test_windows_package_contract_is_offline_checkable() -> None:

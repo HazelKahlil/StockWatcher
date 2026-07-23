@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from zoneinfo import ZoneInfo
 
@@ -92,13 +92,54 @@ class HistoricalBar:
 
 @dataclass(frozen=True, slots=True)
 class SectorMembership:
+    """A stock-to-sector relation observed from the official provider.
+
+    TdxQuant does not publish a relation effective timestamp in ``get_relation``.
+    ``effective_date`` therefore records the local observation date and the
+    received-fallback timestamp kind keeps that limitation machine-readable.
+    """
+
     security: Security
     sector_code: str
     sector_name: str
-    effective_date: str | None
+    sector_type: str
+    member_count: int
+    effective_date: date
+    source_ts: datetime
+    received_ts: datetime
     provider_version: str
     config_version: str
     quality: DataQuality = DataQuality.DEGRADED
+    source_timestamp_kind: SourceTimestampKind = SourceTimestampKind.RECEIVED_FALLBACK
+
+    def __post_init__(self) -> None:
+        _require_shanghai(self.source_ts, "sector membership source_ts")
+        _require_shanghai(self.received_ts, "sector membership received_ts")
+        if self.member_count < 0:
+            raise ValueError("sector member_count cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class TradingDate:
+    """An A-share open date returned by the official TdxQuant calendar.
+
+    The API returns open-date strings without a provider generation timestamp,
+    so source time explicitly falls back to the local receipt time.
+    """
+
+    market: str
+    trading_date: date
+    is_open: bool
+    source_ts: datetime
+    received_ts: datetime
+    provider_version: str
+    config_version: str
+    quality: DataQuality = DataQuality.DEGRADED
+    source_timestamp_kind: SourceTimestampKind = SourceTimestampKind.RECEIVED_FALLBACK
+
+    def __post_init__(self) -> None:
+        _require_shanghai(self.source_ts, "trading date source_ts")
+        _require_shanghai(self.received_ts, "trading date received_ts")
 
 
 @dataclass(frozen=True, slots=True)

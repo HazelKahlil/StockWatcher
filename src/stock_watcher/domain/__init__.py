@@ -10,6 +10,7 @@ from .models import (
     Security,
     Snapshot,
     SourceTimestampKind,
+    TradingDate,
 )
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "Security",
     "SectorMembership",
     "SourceTimestampKind",
+    "TradingDate",
     "Snapshot",
 ]
