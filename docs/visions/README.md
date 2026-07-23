@@ -5,7 +5,7 @@
 
 ## 活跃版本
 
-- **[v0.2-mac-local-alpha](v0.2-mac-local-alpha/README.md)** — 交付基于 Mock/Replay 的 Mac 本地 Alpha（状态：本地完成，待同步）。
+- **[v0.3-windows-data-gate](v0.3-windows-data-gate/README.md)** — 双路线真实数据闸门：Mac/Tushare Pro 与 Windows/TdxQuant 分别取得真实环境结论，共用核心契约（状态：进行中；真实接入仍为 `NO-GO for implementation`）。
 
 ## 同步状态
 
@@ -20,7 +20,7 @@
 | [v0.0-project-bootstrap](v0.0-project-bootstrap/README.md) | 建立仓库、治理骨架、版本路线并迁入 V2.0 交接基线 | 已封版 | 2026-07-22 |
 | [v0.1-mac-replay-foundation](v0.1-mac-replay-foundation/README.md) | 在 Mac 建立可复现的跨平台工程与 Replay 基础 | 本地完成，待同步 | 2026-07-23 |
 | [v0.2-mac-local-alpha](v0.2-mac-local-alpha/README.md) | 交付基于 Mock/Replay 的 Mac 本地 Alpha | 本地完成，待同步 | 2026-07-23 |
-| [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 取得 Windows/通达信或经确认替代路线的真实数据结论 | 计划中（环境待定） | |
+| [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 以 Mac/Tushare Pro 与 Windows/TdxQuant 双路线取得真实数据、授权和共享核心结论 | 进行中（双路线 M0；真实接入 NO-GO） | |
 | [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | 在真实数据路线基础上接入完整 V1 功能 | 计划中 | |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
 
@@ -33,4 +33,4 @@
 
 ## 排期原则
 
-先 Mac Replay 技术基础 → Mac 本地 Alpha → 真实环境数据闸门 → 完整 V1 → 稳定化与安装 → 常规迭代。Mac 阶段只证明可回放工程和规则，不提前宣称真实通达信能力。
+先 Mac Replay 技术基础 → Mac 本地 Alpha → 双路线真实环境数据闸门 → 完整 V1 → 稳定化与安装 → 常规迭代。v0.3 的 Mac/Tushare Pro 与 Windows/TdxQuant 分别取证并复用共享核心；Mac 结果不证明 Windows/通达信或紫黄线能力，任一路线未过独立 M0 都不得进入对应真实接入。

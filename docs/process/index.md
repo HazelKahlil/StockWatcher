@@ -1,6 +1,6 @@
 # 过程规则与踩坑索引
 
-> 最后更新：2026-07-22
+> 最后更新：2026-07-23
 > 每条规则必须有“为什么”；后续 session 先从路由表定位必读规则。
 
 ## 硬边界
@@ -32,6 +32,8 @@
 | local-first 期间，日常事实以本地 `main` 为生效终点 | 用户当前只有 Mac，频繁 GitHub 操作会增加摩擦；本地默认分支仍能给 Agent 提供稳定事实源 |
 | GitHub 只在版本节点同步，且必须明确本地/远端差异 | 既降低日常操作成本，又避免把未同步本地进展误报成远端交付 |
 | 验证证据必须标运行环境 | Mac 回放和 UI 证据不能证明 Windows/通达信行为 |
+| v0.3 的 Mac/Tushare Pro 与 Windows/TdxQuant 是独立证据路线 | 两条路线共用 Provider/domain、时间戳、健康、去重和回放契约，但一条路线的 M0 不能替代另一条路线或紫黄线证据 |
+| Tushare 真实 M0 必须先通过 HTTPS 与授权门 | HAZ-403 只有 `PASS_WITH_LIMITS`；无法正式确认 HTTPS 时路线 FAIL，真实 token 不经 HTTP，资金模块继续 `unavailable` |
 
 ## 踩坑记录
 
@@ -48,6 +50,7 @@
 | 2026-07-22 | Bootstrap 作为 `v0.0.0`，产品实现从软件 v0.1 开始 | 直接称 V2.0 产品已开发 | V2.0 是交接文档版本，不是软件已交付版本 | 版本索引明确映射，避免把规格版本误当发布版本 |
 | 2026-07-22 | 开发改为 Mac 本地优先，GitHub 在版本节点同步 | 继续每次改动走 GitHub PR | 当前无 Windows，且用户明确认为 GitHub 日常操作成本过高 | 本地 `main` 保持可恢复；版本节点用 `publish/<version>` + 单一 PR 做远端备份 |
 | 2026-07-22 | v0.1 先做 Mac Replay 基础，真实 Windows/通达信 M0 延后到 v0.3 | 没有 Windows 仍强行执行 M0 | Mock/Replay、接口和确定性测试可以在 Mac 可靠完成，紫黄线与 Windows 行为不能 | 所有环境证据明确标注；v0.3 未通过前资金模块保持 unavailable |
+| 2026-07-23 | Human Owner 批准 v0.3 改为双路线真实数据闸门：Mac 验证北京沃远数据科技有限公司 Tushare Pro，Windows 保留官方 TdxQuant | 用 Mac 路线替代 Windows；继续只等待 Windows | Tushare Pro 是首个 Mac M0 候选，TdxQuant 仍承接原规格现场证据；两者复用共享核心但互不冒充 | HAZ-403 保持 `PASS_WITH_LIMITS` 和 `NO-GO for implementation`；Tushare 仅走供应商正式支持的 HTTPS POST/JSON，授权账号归 Human Owner，token 只从 `TUSHARE_TOKEN` 读取且不落 issue、评论、日志、Git、SQLite、截图或示例配置；Agent 不注册、不购买、不接受条款、不回显 token |
 
 ## 维护节奏
 

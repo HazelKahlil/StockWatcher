@@ -7,7 +7,7 @@
 - 本地路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`
 - 当前开发电脑：Mac；没有可用于真实验证的 Windows 电脑。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：v0.1 Mac Replay Foundation 已本地完成、待同步 GitHub；`v0.2-mac-local-alpha` 为当前活跃版本（进行中）。
+- 当前状态：v0.1 Mac Replay Foundation 与 v0.2 Mac Local Alpha 均已本地完成、待同步 GitHub；`v0.3-windows-data-gate` 已激活为双路线真实数据闸门（进行中）。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
@@ -15,7 +15,7 @@
 ## 项目工作流
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
-- 产品实现进入 v0.2 前，先读取活跃版本 `docs/visions/v0.2-mac-local-alpha/README.md`；首个实现 issue 进入执行前，必须确认活跃登记已写入本地 `main`。
+- 真实数据工作进入 v0.3 前，先读取活跃版本 `docs/visions/v0.3-windows-data-gate/README.md`；首个路线执行 issue 进入执行前，必须确认活跃登记已写入本地 `main`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
 - 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
 - 长任务跨 session 时按 `kahlil-project-workflow` 的 handoff 规则交接；小改动优先更新目标版本 README，不滥建 session log。
@@ -40,7 +40,9 @@
 
 - 只做候选观察与异动提醒；禁止读取交易密码、连接交易账户、调用下单接口或生成自动交易行为。
 - 实时筛选必须是确定性、可回放的规则；大语言模型不得进入盘中主链路。
-- 紫黄线、供应商字段、批量能力与授权必须通过 M0。未通过时只能明确标记“资金模块未就绪”，不得用替代字段冒充。
+- 紫黄线、供应商字段、批量能力与授权必须通过对应路线 M0。Tushare 字段不得命名或展示为通达信紫黄线；独立资金字段 M0 未通过时只能明确标记“资金模块未就绪”，不得用替代字段冒充。
+- Mac 的 Tushare Pro 真实行情 M0 只能使用供应商正式支持的 HTTPS POST/JSON；无法正式确认 HTTPS 时该路线直接 FAIL，真实 token 不得经 HTTP 传输。
+- Tushare 只使用 Human Owner 自有且已授权的账号；token 只能从 `TUSHARE_TOKEN` 环境变量读取，不得进入 issue、评论、日志、Git、SQLite、截图或示例配置。Agent 不注册、不购买、不接受条款、不回显 token。
 - Mac 上的 Mock/Replay、PySide6 和性能结果只证明 Mac 本地行为，不能充当 Windows/通达信 M0、Windows 通知或安装包证据。
 - 数据健康为 `STOPPED/RED` 时停止产生新候选；不得把旧数据包装成新结果。
 - 高风险区和人类确认门见 `docs/process/boundaries.md`。命中时先停、说明影响并取得确认。
