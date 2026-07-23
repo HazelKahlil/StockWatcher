@@ -32,6 +32,7 @@
 | 日期 | 进展 | 状态 |
 | --- | --- | --- |
 | 2026-07-22 | 因当前只有 Mac，将真实 Windows/通达信 M0 从首版延后 | 计划中（环境待定） |
+| 2026-07-23 | HAZ-406 完成 Mac 可移植性预检：共享核心回归、Provider readiness 降级契约与 [Windows 迁移清单](mac-portability-preflight.md) 已记录；Windows/TdxQuant 仍未验证 | PASS_WITH_LIMITS |
 
 ## 决策与风险
 
