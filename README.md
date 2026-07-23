@@ -7,9 +7,9 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 ## 当前状态
 
 - 项目治理与 V2.0 交接基线已建立。
-- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1 的 Mock/Replay 基础已完成。
-- 当前活跃目标是 `v0.2-mac-local-alpha`：在 Mock/Replay 上运行 Mac PySide6 主窗口、详情、历史和低打扰提醒。
-- Windows/通达信真实数据 M0 延后到 `v0.3-windows-data-gate`。在该版本通过前，不得声称紫黄线、Windows 通知或安装包已经验证。
+- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1/v0.2 的 Mac Mock/Replay 范围已本地完成。
+- 当前活跃目标是 `v0.3-windows-data-gate`：Windows + 官方 TdxQuant 单人只读测试。Mac 继续承担开发、Mock/Replay 与离线契约验证，不购买或接入 Tushare/iFinD。
+- Windows 真机 M0 前不得声称紫黄线、真实交易时段、Windows 通知或安装体验已经验证。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
 
 ## 从这里开始
@@ -17,7 +17,7 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
 3. 阅读 [锁定业务项](docs/reference/v2.0/requirements.lock.json) 和 [V2.0 规格](docs/reference/v2.0/SPEC_V2.0_AGENT.md)。
-4. 开始任何实现前，读取 [v0.2 Mac 本地 Alpha](docs/visions/v0.2-mac-local-alpha/README.md) 和规则路由表。
+4. 开始真实数据工作前，读取 [v0.3 Windows 数据闸门](docs/visions/v0.3-windows-data-gate/README.md) 和规则路由表。
 
 ## 项目基线
 
@@ -68,6 +68,16 @@ uv run python -m stock_watcher.ui.app
 ```
 
 窗口使用固定 Synthetic 场景写入临时 SQLite，并以小型“Mac 测试版”标签标明本地回放范围。普通界面只展示三只候选、当前状态、详情和历史；“模拟数据中断”“恢复回放”和开发诊断保留在“开发”菜单，历史窗口只读，资金模块继续保持未就绪。
+
+## Windows TdxQuant 现场入口
+
+Human Owner 只需安装并登录官方免费 64 位“金融终端（量化模拟）”，从私有 GitHub 取得交付包后运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
+```
+
+该入口可安装/更新环境、执行 TQ 预检、启动安全诊断界面、导出脱敏 M0 报告及构建分发包。详见 [Windows 一页交接](docs/visions/v0.3-windows-data-gate/windows-handoff.md)。
 
 ## 版本路线
 

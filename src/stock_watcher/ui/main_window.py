@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from stock_watcher.domain import HealthState
+from stock_watcher.engine.candidates import CandidateBatch
 from stock_watcher.storage import SQLiteStore
 
 from .demo import demo_batch, demo_clock, recovery_clock
@@ -189,8 +191,26 @@ class CandidateDetailDialog(QDialog):
         root.addWidget(close)
 
 
+class UiSession(Protocol):
+    store: SQLiteStore
+    batch: CandidateBatch | None
+    state: HealthState
+    health_detail: str
+    source_label: str
+    phase_label: str
+    app_badge: str
+    window_title: str
+    is_replay: bool
+
+    def stop(self) -> None: ...
+
+    def warm_and_recover(self) -> None: ...
+
+    def recover(self) -> None: ...
+
+
 class DeveloperInfoDialog(QDialog):
-    def __init__(self, session: ReplaySession, parent: QWidget | None = None) -> None:
+    def __init__(self, session: UiSession, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("开发信息")
         self.resize(520, 300)
@@ -199,10 +219,10 @@ class DeveloperInfoDialog(QDialog):
         title.setObjectName("sectionTitle")
         root.addWidget(title)
         form = QFormLayout()
-        first = session.batch.candidates[0] if session.batch.candidates else None
+        first = session.batch.candidates[0] if session.batch and session.batch.candidates else None
         fields = (
             ("状态", session.state.value),
-            ("数据场景", "Mock / Replay · Synthetic"),
+            ("数据场景", session.source_label),
             ("Provider", first.provider_version if first else "—"),
             ("配置版本", first.config_version if first else "—"),
             ("资金模块", "unavailable（M0 未就绪）"),
@@ -218,6 +238,12 @@ class DeveloperInfoDialog(QDialog):
 
 
 class ReplaySession:
+    source_label = "Mock / Replay（模拟/回放数据）"
+    phase_label = "盘中观察 · 回放时间 09:45"
+    app_badge = "Mac 测试版"
+    window_title = "A股观察提醒 · Mac 测试版"
+    is_replay = True
+
     def __init__(self, store_path: Path) -> None:
         self.store = SQLiteStore(store_path)
         self.store.initialize()
@@ -227,10 +253,11 @@ class ReplaySession:
             # A repeated demo run may reuse an explicitly supplied database;
             # config versions are immutable, so retaining the existing row is safe.
             pass
-        self.batch = demo_batch(demo_clock())
+        batch = demo_batch(demo_clock())
+        self.batch: CandidateBatch | None = batch
         historical_batch = demo_batch(demo_clock().replace(minute=15))
         self.store.record_batch(historical_batch)
-        self.snapshot_id = self.store.record_batch(self.batch)
+        self.snapshot_id = self.store.record_batch(batch)
         self.store.record_alert_event(
             self.snapshot_id, demo_clock().isoformat(), "changed", "desktop-demo"
         )
@@ -253,14 +280,14 @@ class ReplaySession:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, session: ReplaySession) -> None:
+    def __init__(self, session: UiSession) -> None:
         super().__init__()
         self.session = session
         self._popup: AlertPopup | None = None
         self._rows: dict[str, CandidateRow] = {}
         self._last_alert_signature: tuple[str, ...] | None = None
         self._actions_bound = False
-        self.setWindowTitle("A股观察提醒 · Mac 测试版")
+        self.setWindowTitle(session.window_title)
         self.resize(1040, 720)
         self.setMinimumSize(860, 620)
         self._build()
@@ -278,7 +305,7 @@ class MainWindow(QMainWindow):
         brand = QLabel("A股观察提醒")
         brand.setObjectName("appBrand")
         app_bar.addWidget(brand)
-        test_badge = QLabel("Mac 测试版")
+        test_badge = QLabel(self.session.app_badge)
         test_badge.setObjectName("testBadge")
         app_bar.addWidget(test_badge)
         app_bar.addStretch()
@@ -336,7 +363,7 @@ class MainWindow(QMainWindow):
         status_dot = QLabel("●")
         status_dot.setObjectName("statusDot")
         footer.addWidget(status_dot)
-        self._footer = QLabel("本地测试中")
+        self._footer = QLabel(self.session.app_badge)
         self._footer.setObjectName("footer")
         footer.addWidget(self._footer)
         root.addLayout(footer)
@@ -356,10 +383,10 @@ class MainWindow(QMainWindow):
 
     def _build_developer_menu(self) -> None:
         developer = self.menuBar().addMenu("开发")
-        stop = QAction("模拟数据中断", self)
+        stop = QAction("模拟数据中断" if self.session.is_replay else "暂停实时观察", self)
         stop.triggered.connect(self._stop_replay)
         developer.addAction(stop)
-        recover = QAction("恢复回放", self)
+        recover = QAction("恢复回放" if self.session.is_replay else "重新执行 TQ 预检", self)
         recover.triggered.connect(self._recover_replay)
         developer.addAction(recover)
         developer.addSeparator()
@@ -372,7 +399,8 @@ class MainWindow(QMainWindow):
             self.session.batch,
             health=self.session.state,
             health_detail=self.session.health_detail,
-            phase_label="盘中观察 · 回放时间 09:45",
+            source_label=self.session.source_label,
+            phase_label=self.session.phase_label,
         )
 
     def _clear_cards(self) -> None:

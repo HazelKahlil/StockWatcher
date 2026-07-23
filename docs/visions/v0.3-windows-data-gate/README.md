@@ -1,116 +1,74 @@
-# v0.3-windows-data-gate：双路线真实数据闸门
+# v0.3-windows-data-gate：Windows TdxQuant 真实数据闸门
 
-> 状态：活跃（双路线 M0；真实接入仍为 `NO-GO for implementation`）
-> 创建：2026-07-22 ｜ 激活：2026-07-23 ｜ PASS/PASS_WITH_LIMITS 后计划 tag：`v0.3.0`
-
-目录名保留最初的 Windows 数据闸门命名；本版本现按 Human Owner 批准的双路线决策执行，不以 Mac 路线替代 Windows 路线。
+> 状态：活跃（前置交付包已实现，等待 Windows 现场 M0）
+> 创建：2026-07-22 ｜ 路线收敛：2026-07-23 ｜ 计划 tag：`v0.3.0`
 
 ## 权威结论
 
-- v0.2 已在本地 `main` 完成 Mac + Mock/Replay 范围，GitHub 尚未同步；v0.3 接手真实数据、授权和共享核心验证。
-- HAZ-403 的查证结论是 `PASS_WITH_LIMITS`：北京沃远数据科技有限公司 Tushare Pro 是首个 Mac M0 候选，不是生产接入 PASS。官方文档/SDK 仍存在明文 HTTP 入口；正式 HTTPS 支持、书面授权和真实环境证据未齐前，保持 `NO-GO for implementation`。
-- Mac 路线只能通过供应商正式支持的 HTTPS POST/JSON 运行真实行情 M0。若供应商不能正式确认 HTTPS，该首选路线直接判定 FAIL；真实 token 在任何情况下都不得经 HTTP 传输。
-- Windows 路线继续使用官方通达信 TdxQuant，等待合规 Windows、书面授权和 HAZ-405 现场 M0。Mac/Tushare Pro 证据不能替代 Windows、TdxQuant、通达信紫黄线、Windows 通知或安装包证据。
+- Human Owner 已决定正式数据路线回到 Windows + 官方通达信 TdxQuant；当前为单人、只读测试，不购买或接入 Mac/Tushare/iFinD。
+- HAZ-404 证明官方 TdxQuant 仍在维护，支持 `tqcenter` Python 调用和本机 `POST http://127.0.0.1:17709/`。本机 HTTP 不是供应商托管 HTTPS，不得开放到非回环地址。
+- 官方免费 64 位“金融终端（量化模拟）”不含券商交易，适合作为现场 M0 起点；技术可调用不等于已获多人展示、保存或派生结果授权。
+- Mac 只证明 Mock/Replay、归一化契约、离线测试和打包配置；不能证明 Windows、通达信、真实交易时段、紫黄线、性能或安装体验。
+- 紫黄线、Level-2、`Zjl`、`Zjl_HB` 与公式口径在真实 M0 前全部保持 `unavailable`。
 
-## 双路线范围
+## HAZ-410 前置交付范围
 
-| 路线 | 数据源与目的 | 当前门禁 |
-| --- | --- | --- |
-| Mac | 北京沃远数据科技有限公司 Tushare Pro；验证真实行情 M0 与共享核心 | 仅 HAZ-403 `PASS_WITH_LIMITS`；正式 HTTPS、书面授权与受控真实环境未齐，`NO-GO for implementation` |
-| Windows | 官方通达信 TdxQuant；验证原规格行情、板块、紫黄线、批量、重连及现场授权 | 等待合规 Windows、书面授权和 HAZ-405 现场 M0 |
+- 官方 TdxQuant HTTP/Python 可替换传输层；Python 客户端延迟加载，Mac 无 TQ 时仍可运行 Mock/Replay、测试与 UI。
+- 股票列表、批量价量、快照、历史行情、板块关系和交易日历的显式调用与归一化边界。
+- 每条快照保留 `source_ts`、`received_ts`、provider/config 版本、交易状态和质量；官方响应缺精确 `source_ts` 时使用接收时间作显式 fallback，但健康只到 `WARMING`，候选保持关闭。
+- 端口不可达、超时、未登录、接口/字段缺失、过期、重复时间戳、中断/恢复、非交易时段与用户暂停的可解释状态。
+- Windows 单一 PowerShell 入口，覆盖安装/更新、预检、应用诊断界面、脱敏 M0 报告和分发包构建。
+- PyInstaller、Inno Setup、版本信息、运行目录、卸载保留与离线检查。
 
-两条路线共用 Provider/domain 对象、`source_ts` / `received_ts`、provider/config 版本、Asia/Shanghai 时区、健康状态、去重和 Replay 契约。供应商字段必须先归一化，engine 不直接读取供应商字典键。
+## 开工与安全门
 
-Tushare 字段不得命名或展示为通达信紫黄线，也不得据此声称通达信资金口径已验证。资金模块继续显示 `unavailable`，直至独立资金字段 M0 通过。
+- [x] 只使用 HAZ-404 查证的一手官方能力；不使用 pytdx、逆向服务器、网页抓取、OCR 或鼠标脚本。
+- [x] 代码不读取交易密码，不连接券商账户、持仓、订单或下单接口。
+- [x] HTTP 端点只允许回环地址和官方端口 17709。
+- [x] 资金字段保持 `unavailable`，未把 `Zjl`/`Zjl_HB` 或替代字段命名为紫黄线。
+- [ ] Human Owner 在 Windows 安装并登录官方免费 64 位“金融终端（量化模拟）”。
+- [ ] 现场确认终端/TdxQuant 版本、账号授权范围及本项目内部使用边界。
+- [ ] 现场完成真实交易时段 M0，并形成 `PASS`、`PASS_WITH_LIMITS` 或 `FAIL`。
 
-## 账号、网络与秘密开工门
+## Windows 现场验收
 
-- [x] Human Owner 已批准双路线验证方向；该批准不等于供应商授权、付费或生产接入许可。
-- [ ] 供应商以正式渠道确认 Mac M0 所用 HTTPS POST/JSON 是受支持入口；无法确认则 Mac 首选路线 FAIL，不运行真实 token。
-- [ ] Human Owner 提供自有且已授权的最小权限账号，并书面确认套餐、价格、有效期和使用范围；技术可调用不等于获许可。
-- [ ] Tushare token 只从 `TUSHARE_TOKEN` 环境变量读取，不进入 issue、评论、日志、Git、SQLite、截图或示例配置；任何输出均不得回显 token。
-- [ ] Agent 不注册账号、不购买套餐、不接受供应商条款、不调用下单或交易账户能力。
-- [ ] Windows 路线取得合规 Windows、官方 TdxQuant、书面授权及 HAZ-405 现场条件。
-- [ ] 执行者已读取 `rules/data.md`、`rules/security.md`、`boundaries.md` 与 `docs/reference/v2.0/m0_checklist.md`。
+- [ ] 预检区分未安装、终端未启动/未登录、TQ 服务不可达、接口/字段不可用、非交易时段、数据中断和用户暂停。
+- [ ] 全 A 股列表和批量价量覆盖沪深京；记录数量、字段、耗时、限频、错误率和 p50/p95。
+- [ ] 至少 3 只股票每 5 秒比对界面与程序值，连续不少于 30 分钟。
+- [ ] 验证三日分钟历史、行业/概念及成分、交易日历、开盘/午后、断网重连、补数和完整交易时段。
+- [ ] 验证精确供应商源时间；若官方接口仍不提供，必须保持限制并不得把 `received_ts` 冒充 `source_ts`。
+- [ ] 紫黄线的字段、颜色、公式、单位、累计、刷新、历史和权限一致率达到验收要求；否则资金模块继续关闭。
+- [ ] Windows 构建、安装、启动、日志/数据库目录、卸载和回滚实际可用。
+- [ ] M0 报告逐项区分已验证与未验证，不把 Mac/CI 结果外推。
 
-两条路线的门禁独立判定：Mac 路线须先具备正式 HTTPS、书面授权和受控真实环境；Windows 路线须先具备合规 Windows、官方 TdxQuant、书面授权和 HAZ-405 现场条件。对应路线的门未齐前，不运行该路线真实数据探针；门齐后也只先运行受控 M0。生产 Provider 仍须等待该路线的真实环境证据与 PASS / PASS_WITH_LIMITS / FAIL 结论；Mock/Replay 不得包装成真实行情证据。
+完整现场清单还须回读 `docs/reference/v2.0/m0_checklist.md`。
 
-## Mac Tushare M0 可验证验收输入
+## 入口与交付物
 
-### 全市场快照与字段
+- Human Owner 操作：[Windows 一页交接](windows-handoff.md)。
+- PowerShell：`scripts/windows/stockwatcher.ps1`。
+- JSON/Markdown 探针：`python -m stock_watcher.providers.tdxquant_m0 --output <目录>`。
+- 报告口径：[M0 报告模板](m0-report-template.md)。
+- 打包：`packaging/stockwatcher.spec`、`packaging/windows/StockWatcher.iss`。
 
-- [ ] 取得覆盖上海、深圳、北京的全 A 股批量快照，核对证券数量、代码、名称、前收、最新价、量、额、涨跌幅，以及停复牌/交易状态。
-- [ ] 记录供应商原始字段到统一 domain 字段的映射、单位、空值和异常值处理；不把任何 Tushare 字段命名或展示为通达信紫黄线。
-
-### 时间、去重与历史口径
-
-- [ ] 每条事件保存 `source_ts`、`received_ts`、provider/config 版本和 Asia/Shanghai 时区；同一 `code + source_ts` 只处理一次。
-- [ ] 验证至少三个交易日的日线与分钟线、复权口径、午休/集合竞价、交易日滚动和重复拉取差异。
-
-### 板块与成分
-
-- [ ] 验证行业/概念板块、成分、生效日、空集与开盘前刷新。
-- [ ] 板块临时空结果保留最近成功快照并进入可解释降级，不得作为全量清空。
-
-### 批量、性能与新鲜度
-
-- [ ] 记录供应商限频、单次批量、全市场扫描与 TopN 深取耗时、CPU/内存、错误率、端到端 p50/p95 和新鲜度。
-- [ ] 未获供应商正式承诺的 SLA 继续标记 `unknown`，不得从一次测试推导供应商保证。
-
-### 时段与故障演练
-
-- [ ] 连续运行至少 30 分钟，并另行覆盖一个完整交易时段。
-- [ ] 演练开盘、午后、断网、token 失效、服务错误、重连、补数和重复数据，记录恢复时间、数据缺口及重复处理结果。
-- [ ] 数据不新鲜进入 `STOPPED/RED` 并停止新候选；恢复必须先进入 `WARMING`，通过新鲜样本预热后才恢复提醒。
-
-### 授权与结论
-
-- [ ] 书面授权明确账号、套餐、价格、有效期，以及内部 2—3 人展示、历史保存、派生候选、日志/缓存、备份/删除和到期处置；技术可调用不等于获许可。
-- [ ] 最终输出只能为 `PASS`、`PASS_WITH_LIMITS` 或 `FAIL`；每项限制必须绑定降级路线、owner 和下一触发点。
-- [ ] Mock/Replay 证据只用于共享契约回归，不得冒充真实行情或 Windows/TdxQuant 证据。
-
-## Windows TdxQuant M0 附加验收
-
-- [ ] 完成 `docs/reference/v2.0/m0_checklist.md` 的 Windows/TdxQuant 适用项并附真实环境、软件/SDK 版本、账号授权和原始证据。
-- [ ] 至少 3 只股票每 5 秒比对界面与程序值，连续 ≥30 分钟；紫黄线字段、单位、累计方式、历史与刷新能力在显示精度内一致率 ≥98%，否则明确 FAIL 或限制。
-- [ ] 验证全市场基础快照、三日历史、板块、批量性能、开盘/午后、断网重连和一个完整交易时段，并记录 p50/p95、错误率与环境信息。
-- [ ] Windows 结果独立给出 `PASS`、`PASS_WITH_LIMITS` 或 `FAIL`，每项限制绑定降级路线、owner 和下一触发点。
-
-## 交付物
-
-- 可重复运行且默认不回显秘密的路线级 `m0_probe`。
-- 字段映射、provider/config 版本、目标环境与授权元数据。
-- 路线级 `M0_report.md`，包含原始证据索引、性能/新鲜度结果、限制、降级路线、owner 和下一触发点。
-- Provider 归一化、时间戳、去重、`STOPPED/RED` → `WARMING` 恢复与 Replay 回归结果。
-
-FAIL 不使用网页抓取、OCR、鼠标脚本、未获支持的 HTTP 入口或替代资金字段绕过。
-
-## 进度与依赖
+## 进度
 
 | 日期 | 进展 | 状态 |
 | --- | --- | --- |
-| 2026-07-22 | 因当前只有 Mac，将真实 Windows/通达信 M0 从首版延后 | 计划中（环境待定） |
-| 2026-07-23 | HAZ-406 完成 Mac 可移植性预检：共享核心回归、Provider readiness 降级契约与 [Windows 迁移清单](mac-portability-preflight.md) 已记录；Windows/TdxQuant 仍未验证 | PASS_WITH_LIMITS |
-| 2026-07-23 | Human Owner 批准激活双路线真实数据闸门；HAZ-403 确认 Tushare Pro 仅为首个 Mac M0 候选，正式 HTTPS、授权和真实环境证据未齐 | `PASS_WITH_LIMITS`；真实接入 NO-GO |
-| 2026-07-23 | HAZ-409 治理提交 `d45d3f1` 已以 fast-forward 合入本地 `main`，并从全新 detached worktree 回读 v0.3 激活与双路线验收口径 | 本地激活完成；GitHub 尚未同步 |
-| 待启动 | HAZ-410 已登记为 backlog，承接 Mac Tushare 真实行情 M0；HAZ-409 的本地 `main` 依赖已满足，但 Mac 路线的正式 HTTPS、书面授权和受控真实环境前置条件仍未满足 | `backlog`；仅为未来 M0，不构成生产接入许可 |
+| 2026-07-23 | HAZ-406 完成 Mac 可移植性预检；只证明共享核心在无 TQ 环境下安全降级 | `PASS_WITH_LIMITS` |
+| 2026-07-23 | HAZ-404 核验官方 TdxQuant、免费量化模拟终端与 127.0.0.1:17709 路线 | `PASS_WITH_LIMITS`；实施仍需 M0 |
+| 2026-07-23 | HAZ-409 将 v0.3 激活到本地 `main`；GitHub 尚未同步 | 本地激活完成 |
+| 2026-07-23 | Human Owner 收敛路线：停止 Mac/Tushare/iFinD 执行，改为 Windows/TdxQuant 单人只读测试 | 当前权威路线 |
+| 2026-07-23 | HAZ-410 完成 Provider/传输/预检/M0/PowerShell/打包前置与离线回归 | 实现完成，待 Windows 现场 |
 
-## 决策与风险
+## 验证边界
 
-| 决策/风险 | 理由/应对 |
-| --- | --- |
-| 本版本不阻塞 v0.1/v0.2 的本地工程与回放 | 可先降低技术不确定性，但不能宣称真实数据可用 |
-| 双路线并行取证，不做平台二选一 | Mac/Tushare Pro 验证可得的真实行情与共享核心；Windows/TdxQuant 保留原规格、紫黄线和目标环境证据 |
-| HAZ-403 只有 `PASS_WITH_LIMITS` | 官方材料仍存在明文 HTTP 入口；供应商不正式确认 HTTPS 则 Mac 路线 FAIL，真实 token 永不走 HTTP |
-| 环境、账号和授权由 Human Owner 提供 | Agent 无法凭空证明硬件、账号、许可和真实界面一致性，也不得代为注册、购买或接受条款 |
-| 资金模块保持 `unavailable` | Tushare 字段不冒充通达信紫黄线；等待独立资金字段 M0 |
+- 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复、安全门、PyInstaller 配置与 Windows 包离线检查。
+- 当前未验证：Windows、真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏、安装器与卸载体验。
+- GitHub：本地 `main` 比 `origin/main` 领先；本任务不 push、不建 PR、不合入本地 `main`。
 
-## Session Handoff 索引
+HAZ-410 在 macOS + Python 3.12 的前置验证：`uv sync --all-groups --frozen`、`uv lock --check`、62 项 pytest、Ruff、Mypy、workspace validation、Windows package offline contract、`git diff --check` 均通过；离屏 Replay smoke 生成 5 张状态图；PyInstaller 成功生成当前 macOS 架构目录且冻结程序 `--help` 可启动。这些结果不构成 Windows 构建或 TdxQuant 真机证据。
 
-尚无。现场验证跨 session 时必须记录环境、样本、持续时间、错误与原始证据位置，但不得记录或回显 token。
+## Session Handoff
 
-## 封版记录
-
-- 验证结果：待执行；当前只有 HAZ-403 `PASS_WITH_LIMITS` 的候选查证与 HAZ-406 Mac 可移植性预检。
-- 遗留问题：任一路线 PASS/PASS_WITH_LIMITS 后仅承接该路线获证范围；FAIL 时必须重新规划，不自动推进。
-- 终态对账：必需 M0、书面授权与真实环境证据均未完成；GitHub 尚未同步。
+下一位现场执行者先读本文件和 [Windows 一页交接](windows-handoff.md)，再在真实 Windows 运行 PowerShell 的“预检”和“M0 探针”。失败不得改接非官方数据源；按报告中的具体原因修复或给出 `FAIL`。

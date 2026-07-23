@@ -6,6 +6,7 @@ from enum import StrEnum
 
 class ProviderReadiness(StrEnum):
     READY = "ready"
+    PREFLIGHT_REQUIRED = "preflight_required"
     UNAVAILABLE = "unavailable"
 
 
@@ -29,7 +30,7 @@ class ProviderDescriptor:
     detail: str = ""
 
     def require_ready(self) -> None:
-        if self.readiness is ProviderReadiness.UNAVAILABLE:
+        if self.readiness is not ProviderReadiness.READY:
             raise ProviderUnavailable(self.detail)
 
 
@@ -42,11 +43,22 @@ REPLAY_DESCRIPTOR = ProviderDescriptor(
 
 TDXQUANT_DESCRIPTOR = ProviderDescriptor(
     name="tdxquant",
-    readiness=ProviderReadiness.UNAVAILABLE,
-    capabilities=frozenset(),
+    readiness=ProviderReadiness.PREFLIGHT_REQUIRED,
+    capabilities=frozenset(
+        {
+            "official-loopback-http",
+            "optional-python-client",
+            "stock-list",
+            "price-volume",
+            "market-snapshot",
+            "historical-bars",
+            "sectors",
+            "trading-calendar",
+        }
+    ),
     detail=(
-        "TdxQuant is unavailable until the Windows M0 gate verifies the official SDK, "
-        "authorization, field semantics, and recovery behavior."
+        "TdxQuant requires a successful local Windows preflight. M0-unverified fields, "
+        "including fund lines, remain unavailable."
     ),
 )
 

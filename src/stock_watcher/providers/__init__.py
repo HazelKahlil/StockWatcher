@@ -8,7 +8,14 @@ from .mock import MockProvider
 from .protocol import Provider
 from .replay import ReplayProvider
 from .synthetic import SyntheticScenarioBuilder
-from .tdxquant import TdxQuantProvider
+from .tdxquant import (
+    TdxFailureReason,
+    TdxHttpTransport,
+    TdxPythonTransport,
+    TdxQuantConfig,
+    TdxQuantProvider,
+    TdxTransportError,
+)
 
 __all__ = [
     "MockProvider",
@@ -19,5 +26,10 @@ __all__ = [
     "ReplayProvider",
     "SyntheticScenarioBuilder",
     "TdxQuantProvider",
+    "TdxFailureReason",
+    "TdxHttpTransport",
+    "TdxPythonTransport",
+    "TdxQuantConfig",
+    "TdxTransportError",
     "provider_descriptor",
 ]

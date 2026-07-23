@@ -1,3 +1,3 @@
-"""StockWatcher v0.1: deterministic local replay foundations."""
+"""Deterministic A-share candidate observation with Replay and TdxQuant boundaries."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0a1"

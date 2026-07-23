@@ -20,6 +20,17 @@ class HealthState(StrEnum):
     STOPPED = "STOPPED"
 
 
+class DataQuality(StrEnum):
+    GOOD = "GOOD"
+    DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class SourceTimestampKind(StrEnum):
+    PROVIDER = "provider"
+    RECEIVED_FALLBACK = "received_fallback"
+
+
 @dataclass(frozen=True, slots=True)
 class Security:
     code: str
@@ -35,12 +46,59 @@ class Snapshot:
     received_ts: datetime
     provider_version: str
     config_version: str
+    previous_close: float | None = None
+    volume: float | None = None
+    amount: float | None = None
+    trading_state: str = "unknown"
+    quality: DataQuality = DataQuality.GOOD
+    source_timestamp_kind: SourceTimestampKind = SourceTimestampKind.PROVIDER
 
     def __post_init__(self) -> None:
         _require_shanghai(self.source_ts, "snapshot source_ts")
         _require_shanghai(self.received_ts, "snapshot received_ts")
         if self.price < 0:
             raise ValueError("price cannot be negative")
+        for name, value in (
+            ("previous_close", self.previous_close),
+            ("volume", self.volume),
+            ("amount", self.amount),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalBar:
+    security: Security
+    period: str
+    source_ts: datetime
+    received_ts: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    amount: float
+    provider_version: str
+    config_version: str
+    quality: DataQuality = DataQuality.GOOD
+
+    def __post_init__(self) -> None:
+        _require_shanghai(self.source_ts, "bar source_ts")
+        _require_shanghai(self.received_ts, "bar received_ts")
+        if min(self.open, self.high, self.low, self.close, self.volume, self.amount) < 0:
+            raise ValueError("bar values cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class SectorMembership:
+    security: Security
+    sector_code: str
+    sector_name: str
+    effective_date: str | None
+    provider_version: str
+    config_version: str
+    quality: DataQuality = DataQuality.DEGRADED
 
 
 @dataclass(frozen=True, slots=True)

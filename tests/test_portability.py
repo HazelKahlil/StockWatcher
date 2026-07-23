@@ -32,9 +32,9 @@ def test_provider_selection_uses_declared_readiness_not_host_platform() -> None:
     assert "normalized-events" in replay.capabilities
 
     tdxquant = provider_descriptor("tdxquant")
-    assert tdxquant.readiness is ProviderReadiness.UNAVAILABLE
-    assert tdxquant.capabilities == frozenset()
-    with pytest.raises(ProviderUnavailable, match="Windows M0 gate"):
+    assert tdxquant.readiness is ProviderReadiness.PREFLIGHT_REQUIRED
+    assert "official-loopback-http" in tdxquant.capabilities
+    with pytest.raises(ProviderUnavailable, match="preflight"):
         tuple(TdxQuantProvider().events())
 
 

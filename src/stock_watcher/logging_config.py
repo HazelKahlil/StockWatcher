@@ -1,4 +1,4 @@
-"""Safe, local logging defaults for the Mac Replay foundation."""
+"""Safe, local logging defaults for StockWatcher runtimes."""
 
 from __future__ import annotations
 

@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from stock_watcher.domain import SHANGHAI, HealthState
+from stock_watcher.providers.tdxquant_preflight import (
+    CheckStatus,
+    PreflightCheck,
+    PreflightReport,
+)
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.demo import demo_batch
 from stock_watcher.ui.presenter import (
@@ -12,6 +19,7 @@ from stock_watcher.ui.presenter import (
     format_time,
     snapshot_from_batch,
 )
+from stock_watcher.ui.tdx_session import TdxDiagnosticSession
 
 
 def test_ui_snapshot_exposes_replay_fields_and_blocks_alerts_when_unhealthy() -> None:
@@ -78,3 +86,35 @@ def test_ui_demo_does_not_change_candidate_engine_semantics() -> None:
     batch = demo_batch(datetime(2026, 7, 23, 9, 45, tzinfo=SHANGHAI))
     assert [candidate.level for candidate in batch.candidates] == ["强", "中", "近"]
     assert batch.fund_module == "unavailable"
+
+
+def test_tdx_diagnostic_ui_never_relabels_replay_as_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = PreflightReport(
+        status=CheckStatus.FAIL,
+        platform="macOS fixture",
+        python_version="3.12",
+        endpoint="http://127.0.0.1:17709/",
+        checks=(
+            PreflightCheck(
+                "tq_service",
+                CheckStatus.FAIL,
+                "TQ 本机服务不可达",
+            ),
+        ),
+    )
+    monkeypatch.setattr("stock_watcher.ui.tdx_session.run_preflight", lambda **_kwargs: report)
+    session = TdxDiagnosticSession(tmp_path / "tdx.sqlite3", report.endpoint)
+    view = snapshot_from_batch(
+        session.batch,
+        health=session.state,
+        health_detail=session.health_detail,
+        source_label=session.source_label,
+        phase_label=session.phase_label,
+    )
+    assert session.batch is None
+    assert session.state is HealthState.STOPPED
+    assert not view.alert_allowed
+    assert view.candidates == ()
+    assert "Mock" not in view.source_label

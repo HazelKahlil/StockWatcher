@@ -1,4 +1,4 @@
-"""PySide6 desktop UI for the Mac Mock/Replay alpha."""
+"""PySide6 desktop UI for Replay and safe Windows TdxQuant diagnostics."""
 
 from .presenter import CandidateRow, UiSnapshot, snapshot_from_batch
 

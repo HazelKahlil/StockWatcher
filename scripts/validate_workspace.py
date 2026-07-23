@@ -22,6 +22,8 @@ REQUIRED_PATHS = (
     ROOT / "docs" / "visions" / "v0.1-mac-replay-foundation" / "README.md",
     ROOT / "docs" / "visions" / "v0.2-mac-local-alpha" / "README.md",
     ROOT / "docs" / "visions" / "v0.3-windows-data-gate" / "README.md",
+    ROOT / "docs" / "visions" / "v0.3-windows-data-gate" / "windows-handoff.md",
+    ROOT / "docs" / "visions" / "v0.3-windows-data-gate" / "m0-report-template.md",
     ROOT / "docs" / "visions" / "v0.4-v1-feature-complete" / "README.md",
     ROOT / "docs" / "visions" / "v0.5-stabilization" / "README.md",
     REFERENCE / "README.md",
