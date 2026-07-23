@@ -38,6 +38,7 @@
 | 2026-07-23 | HAZ-395 修复替代关系/新鲜批次防抖、固定时点与盘中额度分账，并完成 v1→v2 SQLite 原子迁移与回归 | 进行中 |
 | 2026-07-23 | HAZ-397 仅修复替换关系中断后防抖状态清空，并补回放序列回归；尚未获得新的整体复审结论 | 进行中 |
 | 2026-07-23 | HAZ-400 完成 Mac PySide6 Replay UI 纵切：主窗口、健康安全状态、固定三行弹窗、详情、历史只读、固定 Synthetic smoke；待 Human Visual Acceptance | 实现完成，待验收 |
+| 2026-07-23 | HAZ-401 按第一次 Human Visual Acceptance 简化普通用户视图：中文三卡主窗口、固定三行提醒、数据中断旧结果降权、交易员可读详情、技术字段移入开发菜单；五张 Mac + Mock/Replay 新截图待第二次视觉验收 | 已实现，待验收 |
 | 2026-07-23 | HAZ-398 对核心提交 `fc62396f47b0c7cf535692e20639a75b2c56ea73` 给出 PASS；HAZ-399 已将该核心以 fast-forward 合入本地权威 `main`，并在随后的治理提交形成可回读基线。`uv sync --all-groups --frozen`、`uv lock --check`、pytest、Replay smoke、Ruff、Mypy、workspace validation 与 `git diff --check` 验证结果见本工单交付记录 | 进行中 |
 
 ## 决策与风险
@@ -54,6 +55,6 @@
 
 ## 封版记录
 
-- 验证结果：HAZ-400 已执行 `uv sync --all-groups --frozen`、`uv lock --check`、pytest、Ruff、Mypy、workspace validation、diff check 和 headless Qt smoke；真实 Mac 图形会话已生成 `test-results/HAZ-400-ui/` 下的主窗口、三行弹窗、STOPPED、详情和历史截图。Windows/通达信/真实行情仍未验证。
+- 验证结果：HAZ-401 在 macOS + Mock/Replay 下执行 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（38 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 和真实 GUI Replay smoke；五张新截图位于 `test-results/HAZ-401-ui/`。Windows/通达信/真实行情/Windows 通知仍未验证，当前等待第二次 Human Visual Acceptance。
 - 遗留问题：真实数据闸门由 v0.3 承接。
 - 终态对账：执行 issue 为 HAZ-400；实现分支从 HAZ-399 `cd91df0` 建立。本地 `main` 仍是权威，GitHub 尚未同步；Human Visual Acceptance 和版本封版仍由后续流程决定。

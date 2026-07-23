@@ -2,20 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -26,36 +23,198 @@ from stock_watcher.storage import SQLiteStore
 from .demo import demo_batch, demo_clock, recovery_clock
 from .history import HistoryDialog
 from .popup import AlertPopup
-from .presenter import CandidateRow, UiSnapshot, format_change, format_time, snapshot_from_batch
+from .presenter import (
+    CandidateRow,
+    UiSnapshot,
+    detail_reasons,
+    format_change,
+    format_time,
+    snapshot_from_batch,
+)
+
+
+class CandidateCard(QFrame):
+    clicked = Signal(str)
+
+    def __init__(
+        self,
+        rank: int,
+        row: CandidateRow,
+        *,
+        previous: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.code = row.code
+        self.setObjectName("candidateCard")
+        self.setProperty("level", row.level)
+        self.setProperty("previous", previous)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(96)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(18)
+
+        rank_label = QLabel(str(rank))
+        rank_label.setObjectName("rankBadge")
+        rank_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rank_label.setFixedSize(38, 38)
+        layout.addWidget(rank_label)
+
+        identity = QVBoxLayout()
+        identity.setSpacing(3)
+        name = QLabel(row.name)
+        name.setObjectName("candidateName")
+        code = QLabel(row.code)
+        code.setObjectName("candidateCode")
+        identity.addWidget(name)
+        identity.addWidget(code)
+        layout.addLayout(identity, 1)
+
+        quote = QVBoxLayout()
+        quote.setSpacing(3)
+        change = QLabel(format_change(row.change_pct))
+        change.setObjectName("candidateChange")
+        price = QLabel(f"¥{row.price:.2f}")
+        price.setObjectName("candidatePrice")
+        quote.addWidget(change)
+        quote.addWidget(price)
+        layout.addLayout(quote)
+
+        level = QLabel(row.level)
+        level.setObjectName("levelBadge")
+        level.setProperty("level", row.level)
+        level.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        level.setFixedWidth(58)
+        layout.addWidget(level)
+
+        sector = QVBoxLayout()
+        sector.setSpacing(3)
+        sector_label = QLabel("所属板块")
+        sector_label.setObjectName("candidateMeta")
+        sector_value = QLabel(row.sector)
+        sector_value.setObjectName("candidateSector")
+        sector.addWidget(sector_label)
+        sector.addWidget(sector_value)
+        layout.addLayout(sector, 1)
+
+        arrow = QLabel("›")
+        arrow.setObjectName("cardArrow")
+        layout.addWidget(arrow)
+        for child in self.findChildren(QLabel):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if previous:
+            opacity = QGraphicsOpacityEffect(self)
+            opacity.setOpacity(0.62)
+            self.setGraphicsEffect(opacity)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.code)
+        super().mousePressEvent(event)
 
 
 class CandidateDetailDialog(QDialog):
     def __init__(self, row: CandidateRow, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"候选详情 · {row.name} {row.code}")
-        self.resize(560, 360)
-        layout = QVBoxLayout(self)
-        title = QLabel(f"{row.name}  {row.code}  ·  {row.level}")
-        title.setObjectName("detailTitle")
-        layout.addWidget(title)
+        self.setWindowTitle(f"{row.name} {row.code}")
+        self.resize(760, 500)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(30, 26, 30, 24)
+        root.setSpacing(20)
+
+        heading = QHBoxLayout()
+        title = QLabel(f"{row.name}  {row.code}")
+        title.setObjectName("dialogTitle")
+        heading.addWidget(title)
+        heading.addStretch()
+        level = QLabel(row.level)
+        level.setObjectName("levelBadge")
+        level.setProperty("level", row.level)
+        level.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        level.setFixedWidth(58)
+        heading.addWidget(level)
+        root.addLayout(heading)
+
+        metrics = QFrame()
+        metrics.setObjectName("metricsCard")
+        metric_layout = QHBoxLayout(metrics)
+        metric_layout.setContentsMargins(20, 18, 20, 18)
+        for label, value, level_name in (
+            ("当前价格", f"¥{row.price:.2f}", "neutral"),
+            ("当前涨幅", format_change(row.change_pct), "up"),
+            ("涨速", format_change(row.velocity_pct), "medium"),
+            ("所属板块", row.sector, "neutral"),
+        ):
+            cell = QVBoxLayout()
+            caption = QLabel(label)
+            caption.setObjectName("metricLabel")
+            value_label = QLabel(value)
+            value_label.setObjectName("metricValue")
+            value_label.setProperty("tone", level_name)
+            cell.addWidget(caption)
+            cell.addWidget(value_label)
+            metric_layout.addLayout(cell, 1)
+        root.addWidget(metrics)
+
+        reasons_title = QLabel("为什么进入本轮观察")
+        reasons_title.setObjectName("sectionTitle")
+        root.addWidget(reasons_title)
+        reasons = QFrame()
+        reasons.setObjectName("reasonCard")
+        reason_layout = QVBoxLayout(reasons)
+        reason_layout.setContentsMargins(20, 16, 20, 16)
+        reason_layout.setSpacing(12)
+        for title_text, explanation in detail_reasons(row):
+            line = QHBoxLayout()
+            reason = QLabel(title_text)
+            reason.setObjectName("reasonTitle")
+            explanation_label = QLabel(explanation)
+            explanation_label.setObjectName("reasonText")
+            explanation_label.setWordWrap(True)
+            line.addWidget(reason)
+            line.addWidget(explanation_label, 1)
+            reason_layout.addLayout(line)
+        root.addWidget(reasons)
+
+        conclusion = QLabel("符合本轮观察条件，可自行打开通达信进一步确认。")
+        conclusion.setObjectName("conclusion")
+        conclusion.setWordWrap(True)
+        root.addWidget(conclusion)
+        root.addStretch()
+
+        close = QPushButton("返回列表")
+        close.setObjectName("primaryButton")
+        close.clicked.connect(self.accept)
+        root.addWidget(close)
+
+
+class DeveloperInfoDialog(QDialog):
+    def __init__(self, session: ReplaySession, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("开发信息")
+        self.resize(520, 300)
+        root = QVBoxLayout(self)
+        title = QLabel("开发信息（普通用户不可见）")
+        title.setObjectName("sectionTitle")
+        root.addWidget(title)
         form = QFormLayout()
-        form.addRow("当前价格", QLabel(f"¥{row.price:.2f}"))
-        form.addRow("当前涨幅", QLabel(format_change(row.change_pct)))
-        form.addRow("涨速", QLabel(format_change(row.velocity_pct)))
-        form.addRow("板块", QLabel(row.sector))
-        form.addRow("总分", QLabel(f"{row.score:.2f}"))
-        form.addRow("数据时间", QLabel(format_time(row.source_ts)))
-        form.addRow("Provider / 配置", QLabel(f"{row.provider_version} / {row.config_version}"))
-        form.addRow("资金模块", QLabel("未就绪（M0 未通过；未使用替代字段）"))
-        layout.addLayout(form)
-        reason_box = QGroupBox("入选原因（可追溯）")
-        reason_layout = QVBoxLayout(reason_box)
-        for reason in row.reasons:
-            reason_layout.addWidget(QLabel(f"• {reason}"))
-        layout.addWidget(reason_box)
+        first = session.batch.candidates[0] if session.batch.candidates else None
+        fields = (
+            ("状态", session.state.value),
+            ("数据场景", "Mock / Replay · Synthetic"),
+            ("Provider", first.provider_version if first else "—"),
+            ("配置版本", first.config_version if first else "—"),
+            ("资金模块", "unavailable（M0 未就绪）"),
+            ("诊断", session.health_detail),
+        )
+        for label, value in fields:
+            form.addRow(label, QLabel(value))
+        root.addLayout(form)
+        root.addStretch()
         close = QPushButton("关闭")
         close.clicked.connect(self.accept)
-        layout.addWidget(close)
+        root.addWidget(close)
 
 
 class ReplaySession:
@@ -69,6 +228,8 @@ class ReplaySession:
             # config versions are immutable, so retaining the existing row is safe.
             pass
         self.batch = demo_batch(demo_clock())
+        historical_batch = demo_batch(demo_clock().replace(minute=15))
+        self.store.record_batch(historical_batch)
         self.snapshot_id = self.store.record_batch(self.batch)
         self.store.record_alert_event(
             self.snapshot_id, demo_clock().isoformat(), "changed", "desktop-demo"
@@ -78,7 +239,7 @@ class ReplaySession:
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
-        self.health_detail = "模拟数据中断；保留旧结果但停止产生新候选"
+        self.health_detail = "数据源中断；保留旧结果但停止产生新候选"
 
     def warm_and_recover(self) -> None:
         self.state = HealthState.WARMING
@@ -97,88 +258,114 @@ class MainWindow(QMainWindow):
         self.session = session
         self._popup: AlertPopup | None = None
         self._rows: dict[str, CandidateRow] = {}
-        self.setWindowTitle("StockWatcher · Mac Replay Alpha")
+        self._last_alert_signature: tuple[str, ...] | None = None
+        self._actions_bound = False
+        self.setWindowTitle("A股观察提醒 · Mac 测试版")
         self.resize(1040, 720)
+        self.setMinimumSize(860, 620)
         self._build()
         self._refresh()
         QTimer.singleShot(250, self._show_initial_alert)
 
     def _build(self) -> None:
+        self._build_developer_menu()
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(28, 24, 28, 24)
+        root.setContentsMargins(34, 26, 34, 24)
         root.setSpacing(16)
-        banner = QFrame()
-        banner.setObjectName("demoBanner")
-        banner_layout = QGridLayout(banner)
-        banner_layout.addWidget(QLabel("模拟 / 回放数据"), 0, 0)
-        banner_layout.addWidget(QLabel("Mac 本地 Alpha · 只做候选观察与异动提醒"), 0, 1)
-        banner_layout.addWidget(QLabel("资金模块：未就绪"), 0, 2)
-        root.addWidget(banner)
 
-        title_row = QGridLayout()
-        title = QLabel("当前观察")
-        title.setObjectName("pageTitle")
-        title_row.addWidget(title, 0, 0)
-        self._health = QLabel()
-        self._health.setObjectName("healthBadge")
-        title_row.addWidget(self._health, 0, 1)
-        title_row.setColumnStretch(0, 1)
+        app_bar = QHBoxLayout()
+        brand = QLabel("A股观察提醒")
+        brand.setObjectName("appBrand")
+        app_bar.addWidget(brand)
+        test_badge = QLabel("Mac 测试版")
+        test_badge.setObjectName("testBadge")
+        app_bar.addWidget(test_badge)
+        app_bar.addStretch()
+        root.addLayout(app_bar)
+
+        title_row = QHBoxLayout()
+        self._page_title = QLabel()
+        self._page_title.setObjectName("pageTitle")
+        title_row.addWidget(self._page_title)
+        title_row.addStretch()
         root.addLayout(title_row)
 
-        status = QGroupBox("运行状态")
-        status_layout = QGridLayout(status)
-        self._source = QLabel()
-        self._updated = QLabel()
-        self._phase = QLabel()
-        self._overall = QLabel()
-        status_fields = (
-            ("数据源", self._source),
-            ("最后更新时间", self._updated),
-            ("交易阶段", self._phase),
-            ("本轮判断", self._overall),
-        )
-        for row, (label, widget) in enumerate(status_fields):
-            status_layout.addWidget(QLabel(label), row, 0)
-            status_layout.addWidget(widget, row, 1)
-        status_layout.setColumnStretch(1, 1)
-        root.addWidget(status)
+        self._summary_card = QFrame()
+        self._summary_card.setObjectName("summaryCard")
+        summary_layout = QHBoxLayout(self._summary_card)
+        summary_layout.setContentsMargins(22, 18, 22, 18)
+        self._updated = self._add_summary_item(summary_layout, "更新时间")
+        self._overall = self._add_summary_item(summary_layout, "整体状态")
+        self._result = self._add_summary_item(summary_layout, "本轮结果")
+        root.addWidget(self._summary_card)
 
-        self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(
-            ["排序", "名称", "代码", "涨幅", "价格", "强度", "总分 / 板块"]
-        )
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.cellDoubleClicked.connect(self._open_detail_at)
-        root.addWidget(self._table)
+        self._interrupt_card = QFrame()
+        self._interrupt_card.setObjectName("interruptCard")
+        interrupt_layout = QVBoxLayout(self._interrupt_card)
+        interrupt_layout.setContentsMargins(24, 20, 24, 20)
+        self._interrupt_title = QLabel("数据中断")
+        self._interrupt_title.setObjectName("interruptTitle")
+        self._interrupt_message = QLabel()
+        self._interrupt_message.setObjectName("interruptMessage")
+        self._interrupt_last_update = QLabel()
+        self._interrupt_last_update.setObjectName("interruptMeta")
+        interrupt_layout.addWidget(self._interrupt_title)
+        interrupt_layout.addWidget(self._interrupt_message)
+        interrupt_layout.addWidget(self._interrupt_last_update)
+        root.addWidget(self._interrupt_card)
 
-        self._top20_toggle = QToolButton()
-        self._top20_toggle.setText("Top 20（默认折叠）")
-        self._top20_toggle.setCheckable(True)
-        self._top20_toggle.setChecked(False)
-        self._top20_toggle.toggled.connect(self._toggle_top20)
-        root.addWidget(self._top20_toggle)
-        self._top20_hint = QLabel("后台候选已计算；当前只展示可见 Top3。")
-        self._top20_hint.setVisible(False)
-        root.addWidget(self._top20_hint)
+        self._candidate_label = QLabel()
+        self._candidate_label.setObjectName("sectionTitle")
+        root.addWidget(self._candidate_label)
+        self._cards = QVBoxLayout()
+        self._cards.setSpacing(10)
+        root.addLayout(self._cards, 1)
 
-        self._fund = QLabel()
-        self._fund.setObjectName("muted")
-        root.addWidget(self._fund)
-        buttons = QGridLayout()
-        disconnect = QPushButton("模拟数据中断")
-        disconnect.clicked.connect(self._stop_replay)
-        recover = QPushButton("恢复回放")
-        recover.clicked.connect(self._recover_replay)
-        detail = QPushButton("打开当前详情")
-        detail.clicked.connect(self._open_first_detail)
-        history = QPushButton("历史批次（只读）")
-        history.clicked.connect(self._open_history)
-        for col, button in enumerate((disconnect, recover, detail, history)):
-            buttons.addWidget(button, 0, col)
-        root.addLayout(buttons)
+        actions = QHBoxLayout()
+        self._primary_action = QPushButton()
+        self._primary_action.setObjectName("primaryButton")
+        self._secondary_action = QPushButton()
+        self._secondary_action.setObjectName("secondaryButton")
+        actions.addWidget(self._primary_action, 1)
+        actions.addWidget(self._secondary_action, 1)
+        root.addLayout(actions)
+
+        footer = QHBoxLayout()
+        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_dot = QLabel("●")
+        status_dot.setObjectName("statusDot")
+        footer.addWidget(status_dot)
+        self._footer = QLabel("本地测试中")
+        self._footer.setObjectName("footer")
+        footer.addWidget(self._footer)
+        root.addLayout(footer)
         self.setCentralWidget(central)
+
+    def _add_summary_item(self, layout: QHBoxLayout, label: str) -> QLabel:
+        cell = QVBoxLayout()
+        cell.setSpacing(4)
+        caption = QLabel(label)
+        caption.setObjectName("summaryLabel")
+        value = QLabel()
+        value.setObjectName("summaryValue")
+        cell.addWidget(caption)
+        cell.addWidget(value)
+        layout.addLayout(cell, 1)
+        return value
+
+    def _build_developer_menu(self) -> None:
+        developer = self.menuBar().addMenu("开发")
+        stop = QAction("模拟数据中断", self)
+        stop.triggered.connect(self._stop_replay)
+        developer.addAction(stop)
+        recover = QAction("恢复回放", self)
+        recover.triggered.connect(self._recover_replay)
+        developer.addAction(recover)
+        developer.addSeparator()
+        info = QAction("开发信息", self)
+        info.triggered.connect(self._open_developer_info)
+        developer.addAction(info)
 
     def _snapshot(self) -> UiSnapshot:
         return snapshot_from_batch(
@@ -188,52 +375,78 @@ class MainWindow(QMainWindow):
             phase_label="盘中观察 · 回放时间 09:45",
         )
 
+    def _clear_cards(self) -> None:
+        while self._cards.count():
+            item = self._cards.takeAt(0)
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
     def _refresh(self) -> None:
         snapshot = self._snapshot()
-        self._health.setText(f"{snapshot.health.value} · {snapshot.health_detail}")
-        self._health.setProperty("state", snapshot.health.value)
-        self._health.style().unpolish(self._health)
-        self._health.style().polish(self._health)
-        self._source.setText(snapshot.source_label)
+        healthy = snapshot.health is HealthState.HEALTHY
+        stopped = snapshot.health is HealthState.STOPPED
+        self._page_title.setText("当前观察" if healthy else "数据中断")
+        self._summary_card.setVisible(healthy)
+        self._interrupt_card.setVisible(not healthy)
+        self._candidate_label.setText("本轮候选" if healthy else "上次结果，仅供参考")
         self._updated.setText(format_time(snapshot.last_updated))
-        self._phase.setText(snapshot.phase_label)
-        self._overall.setText(snapshot.overall_label)
-        self._fund.setText(snapshot.fund_label)
-        self._rows = {row.code: row for row in snapshot.candidates}
-        self._table.setRowCount(len(snapshot.candidates))
-        for index, row in enumerate(snapshot.candidates):
-            values = (
-                str(index + 1),
-                row.name,
-                row.code,
-                format_change(row.change_pct),
-                f"¥{row.price:.2f}",
-                row.level,
-                f"{row.score:.2f} · {row.sector}",
-            )
-            for column, value in enumerate(values):
-                self._table.setItem(index, column, QTableWidgetItem(value))
+        self._overall.setText(
+            "偏弱" if snapshot.overall_label == "整体偏弱" else snapshot.overall_label
+        )
+        self._result.setText(f"{len(snapshot.candidates)}只可看")
+        self._interrupt_message.setText(
+            "数据暂时中断，已停止生成新候选。" if stopped else "正在恢复数据，请稍候。"
+        )
+        last_time = snapshot.last_updated.strftime("%H:%M") if snapshot.last_updated else "—"
+        self._interrupt_last_update.setText(f"上次成功更新时间：{last_time}")
+
+        rows = snapshot.candidates if healthy else snapshot.previous_candidates
+        self._rows = {row.code: row for row in rows}
+        self._clear_cards()
+        for index, row in enumerate(rows[:3], start=1):
+            card = CandidateCard(index, row, previous=not healthy)
+            card.clicked.connect(self._open_detail_by_code)
+            self._cards.addWidget(card)
+
+        self._primary_action.setText("刷新" if healthy else "重新连接")
+        self._secondary_action.setText("历史记录")
+        if self._actions_bound:
+            self._primary_action.clicked.disconnect()
+        if healthy:
+            self._primary_action.clicked.connect(self._refresh)
+        else:
+            self._primary_action.clicked.connect(self._recover_replay)
+
+        if self._actions_bound:
+            self._secondary_action.clicked.disconnect()
+        self._secondary_action.clicked.connect(self._open_history)
+        self._actions_bound = True
 
     def _show_initial_alert(self) -> None:
         snapshot = self._snapshot()
-        if not snapshot.alert_allowed:
-            return
-        self._show_alert(snapshot)
+        if snapshot.alert_allowed:
+            self._show_alert(snapshot)
 
     def _show_alert(self, snapshot: UiSnapshot) -> None:
-        old_popup = self._popup
-        self._popup = None
-        if old_popup is not None:
-            try:
-                old_popup.close()
-            except RuntimeError:
-                # WA_DeleteOnClose can destroy the native object before the
-                # Python callback that requested the next batch runs.
-                pass
-        title = f"异动观察 · {format_time(snapshot.last_updated)} · {snapshot.overall_label}"
-        self._popup = AlertPopup(snapshot.candidates, title, self._open_detail_by_code)
+        signature = tuple(row.code for row in snapshot.candidates)
+        if signature == self._last_alert_signature and self._popup is not None:
+            return
+        if signature == self._last_alert_signature:
+            return
+        self._last_alert_signature = signature
+        if self._popup is not None:
+            self._popup.close()
+        self._popup = AlertPopup(
+            snapshot.candidates,
+            (
+                f"{format_time(snapshot.last_updated)} · "
+                f"{('偏弱' if snapshot.overall_label == '整体偏弱' else snapshot.overall_label)}"
+            ),
+            self._open_detail_by_code,
+        )
         self._popup.show_at_bottom_right()
-        self._popup.row_clicked.connect(lambda _code: None)
 
     def _stop_replay(self) -> None:
         self.session.stop()
@@ -254,27 +467,16 @@ class MainWindow(QMainWindow):
         if snapshot.alert_allowed:
             self._show_alert(snapshot)
 
-    def _open_first_detail(self) -> None:
-        if self._rows:
-            self._open_detail_by_code(next(iter(self._rows)))
-
-    def _open_detail_at(self, row: int, _column: int) -> None:
-        if 0 <= row < len(self._rows):
-            code_item = self._table.item(row, 2)
-            if code_item is not None:
-                self._open_detail_by_code(code_item.text())
-
     def _open_detail_by_code(self, code: str) -> None:
         row = self._rows.get(code)
         if row is not None:
             CandidateDetailDialog(row, self).exec()
 
     def _open_history(self) -> None:
-        dialog = HistoryDialog(self.session.store.path, self)
-        dialog.exec()
+        HistoryDialog(self.session.store.path, self).exec()
 
-    def _toggle_top20(self, visible: bool) -> None:
-        self._top20_hint.setVisible(visible)
+    def _open_developer_info(self) -> None:
+        DeveloperInfoDialog(self.session, self).exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._popup is not None:

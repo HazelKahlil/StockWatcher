@@ -67,7 +67,7 @@ uv sync --all-groups --frozen
 uv run python -m stock_watcher.ui.app
 ```
 
-窗口使用固定 Synthetic 场景写入临时 SQLite，并明确标注“模拟 / 回放数据”。“模拟数据中断”和“恢复回放”按钮用于复现 STOPPED/WARMING 安全状态；历史窗口只读，资金模块保持未就绪。
+窗口使用固定 Synthetic 场景写入临时 SQLite，并以小型“Mac 测试版”标签标明本地回放范围。普通界面只展示三只候选、当前状态、详情和历史；“模拟数据中断”“恢复回放”和开发诊断保留在“开发”菜单，历史窗口只读，资金模块继续保持未就绪。
 
 ## 版本路线
 

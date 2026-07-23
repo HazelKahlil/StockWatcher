@@ -6,7 +6,12 @@ from pathlib import Path
 from stock_watcher.domain import SHANGHAI, HealthState
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.demo import demo_batch
-from stock_watcher.ui.presenter import format_change, snapshot_from_batch
+from stock_watcher.ui.presenter import (
+    detail_reasons,
+    format_change,
+    format_time,
+    snapshot_from_batch,
+)
 
 
 def test_ui_snapshot_exposes_replay_fields_and_blocks_alerts_when_unhealthy() -> None:
@@ -19,6 +24,7 @@ def test_ui_snapshot_exposes_replay_fields_and_blocks_alerts_when_unhealthy() ->
     assert view.fund_label == "资金模块：未就绪（M0 未通过）"
     assert view.alert_allowed
     assert view.overall_label == "整体偏弱"
+    assert view.previous_candidates == ()
 
     stopped = snapshot_from_batch(
         healthy,
@@ -27,12 +33,30 @@ def test_ui_snapshot_exposes_replay_fields_and_blocks_alerts_when_unhealthy() ->
     )
     assert not stopped.alert_allowed
     assert stopped.candidates == ()
-    assert stopped.overall_label == "数据中断，停止产生新候选"
+    assert stopped.previous_candidates == view.candidates
+    assert stopped.overall_label == "数据中断"
 
 
 def test_ui_formats_signed_percentages() -> None:
     assert format_change(2.5) == "+2.50%"
     assert format_change(-1.25) == "-1.25%"
+    assert format_time(datetime(2026, 7, 23, 9, 45, tzinfo=SHANGHAI)) == "2026-07-23 09:45"
+
+
+def test_detail_copy_is_plain_language_and_keeps_internal_fields_hidden() -> None:
+    batch = demo_batch(datetime(2026, 7, 23, 9, 45, tzinfo=SHANGHAI))
+    row = snapshot_from_batch(batch, health=HealthState.HEALTHY).candidates[0]
+    reasons = detail_reasons(row)
+    assert [title for title, _ in reasons] == [
+        "涨幅明显",
+        "涨速较快",
+        "板块配合较好",
+        "三日走势较稳",
+    ]
+    copy = " ".join(f"{title} {explanation}" for title, explanation in reasons)
+    assert "Provider" not in copy
+    assert "M0" not in copy
+    assert "买入" not in copy
 
 
 def test_history_reader_is_query_only_and_returns_visible_batches(tmp_path: Path) -> None:

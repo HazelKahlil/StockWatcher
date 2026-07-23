@@ -1,18 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
-    QLabel,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
-)
+from PySide6.QtWidgets import QDialog, QFrame, QLabel, QPushButton, QVBoxLayout
 
 from stock_watcher.storage import SQLiteStore
 
@@ -36,20 +30,31 @@ class HistoryWorker(QThread):
 class HistoryDialog(QDialog):
     def __init__(self, path: Path, parent: Any = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("历史批次 · 只读回放")
-        self.resize(720, 360)
+        self.setWindowTitle("历史记录")
+        self.resize(760, 520)
         self._worker = HistoryWorker(path)
-        layout = QVBoxLayout(self)
-        self._status = QLabel("正在读取可见批次…（后台只读查询）")
-        layout.addWidget(self._status)
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["时间", "健康", "整体", "候选", "来源"])
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self._table)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(30, 26, 30, 24)
+        root.setSpacing(16)
+        title = QLabel("历史记录")
+        title.setObjectName("dialogTitle")
+        root.addWidget(title)
+        description = QLabel("这里可以查看之前的提醒结果。")
+        description.setObjectName("dialogDescription")
+        root.addWidget(description)
+        self._status = QLabel("正在读取历史记录…")
+        self._status.setObjectName("historyStatus")
+        root.addWidget(self._status)
+        self._records = QVBoxLayout()
+        self._records.setSpacing(10)
+        root.addLayout(self._records, 1)
+        note = QLabel("历史仅用于回看，不会影响当前结果。")
+        note.setObjectName("historyNote")
+        root.addWidget(note)
+        close = QPushButton("关闭")
+        close.setObjectName("secondaryButton")
+        close.clicked.connect(self.reject)
+        root.addWidget(close)
         self._worker.loaded.connect(self._on_loaded)
         self._worker.start()
 
@@ -62,22 +67,33 @@ class HistoryDialog(QDialog):
             if isinstance(rows, list)
             else []
         )
-        self._table.setRowCount(len(records))
-        for index, record in enumerate(records):
+        for record in records:
             if not isinstance(record, dict):
                 continue
             payload = _json_dict(record.get("payload_json"))
-            codes = _candidate_codes(payload.get("candidates", []))
-            values = (
-                str(record.get("source_ts", "")),
-                str(record.get("health", "")),
-                "偏弱" if record.get("overall_weak") else "正常",
-                codes or "无候选",
-                str(record.get("provider_version", "")),
-            )
-            for column, value in enumerate(values):
-                self._table.setItem(index, column, QTableWidgetItem(value))
-        self._status.setText(f"已读取 {len(records)} 个可见批次；历史只读，不生成新候选。")
+            candidates = _candidate_names(payload.get("candidates", []))
+            timestamp = _display_time(record.get("source_ts"))
+            overall = "偏弱" if record.get("overall_weak") else "整体正常"
+            card = QFrame()
+            card.setObjectName("historyCard")
+            layout = QVBoxLayout(card)
+            layout.setContentsMargins(18, 14, 18, 14)
+            heading = QFrame()
+            heading_layout = QVBoxLayout(heading)
+            heading_layout.setContentsMargins(0, 0, 0, 0)
+            time_label = QLabel(timestamp)
+            time_label.setObjectName("historyTime")
+            status_label = QLabel(overall)
+            status_label.setObjectName("historyOverall")
+            heading_layout.addWidget(time_label)
+            heading_layout.addWidget(status_label)
+            layout.addWidget(heading)
+            names = QLabel(candidates or "暂无候选")
+            names.setObjectName("historyCandidates")
+            names.setWordWrap(True)
+            layout.addWidget(names)
+            self._records.addWidget(card)
+        self._status.setText("" if records else "暂无历史提醒记录")
 
 
 def _json_dict(value: object) -> dict[str, object]:
@@ -90,12 +106,21 @@ def _json_dict(value: object) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _candidate_codes(value: object) -> str:
+def _candidate_names(value: object) -> str:
     if not isinstance(value, list):
         return ""
-    codes = [
-        str(candidate.get("code", ""))
+    names = [
+        str(candidate.get("name", ""))
         for candidate in value[:3]
-        if isinstance(candidate, dict)
+        if isinstance(candidate, dict) and candidate.get("name")
     ]
-    return ", ".join(codes)
+    return "、".join(names)
+
+
+def _display_time(value: object) -> str:
+    if not isinstance(value, str):
+        return "—"
+    try:
+        return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value

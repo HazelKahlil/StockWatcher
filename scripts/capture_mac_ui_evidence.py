@@ -1,4 +1,4 @@
-"""Capture the four Mac Replay UI evidence states in a real GUI session.
+"""Capture the five Mac Replay UI evidence states in a real GUI session.
 
 This intentionally captures only the fixed synthetic demo. It is not a
 Windows notification or real-market validation tool.
@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from stock_watcher.domain import HealthState
 from stock_watcher.ui.app import STYLE_SHEET
 from stock_watcher.ui.history import HistoryDialog
 from stock_watcher.ui.main_window import CandidateDetailDialog, MainWindow, ReplaySession
@@ -40,6 +41,8 @@ def main() -> int:
     def healthy_main() -> None:
         if window._popup is not None:
             window._popup.close()
+        window._popup = None
+        window._last_alert_signature = None
         QTimer.singleShot(250, lambda: (capture("01-healthy-main", window), popup()))
 
     def popup() -> None:
@@ -57,7 +60,10 @@ def main() -> int:
         QTimer.singleShot(250, lambda: (capture("03-stopped", window), detail()))
 
     def detail() -> None:
-        session.recover()
+        # Re-enter the healthy view without creating a third history entry;
+        # the fixed replay evidence should show 09:45 and 09:15 only.
+        session.state = HealthState.HEALTHY
+        session.health_detail = "恢复完成；新鲜回放样本已通过健康门"
         window._refresh()
         row = next(iter(window._rows.values()))
         dialog = CandidateDetailDialog(row, window)
