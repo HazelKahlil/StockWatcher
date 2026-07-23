@@ -1,6 +1,6 @@
 # v0.2-mac-local-alpha：交付基于 Replay 的 Mac 本地 Alpha
 
-> 状态：进行中
+> 状态：本地完成，待同步
 > 创建：2026-07-22 ｜ 计划 tag：`v0.2.0`
 
 ## 目标与范围
@@ -20,13 +20,13 @@
 
 ## 验收标准
 
-- [ ] 锁定股票池排除项有单元测试；0/1/2/3+ 完整信号场景的固定三只逻辑正确。
-- [ ] 相同 Replay 输入与配置得到完全相同的候选、等级、原因和提醒事件。
-- [ ] 价格很强但板块弱最多为“近”；核心数据断开时停止新候选并正确预热恢复。
-- [ ] 模拟 09:45/14:50、同股冷却、无变化不重复、三四名防抖和每日上限通过回放。
+- [x] 锁定股票池排除项有单元测试；0/1/2/3+ 完整信号场景的固定三只逻辑正确。
+- [x] 相同 Replay 输入与配置得到完全相同的候选、等级、原因和提醒事件。
+- [x] 价格很强但板块弱最多为“近”；核心数据断开时停止新候选并正确预热恢复。
+- [x] 模拟 09:45/14:50、同股冷却、无变化不重复、三四名防抖和每日上限通过回放。
 - [x] Mac 界面能展示模拟健康、当前 Top3、详情与历史；不会使用“买入/卖出/胜率”等表达。
-- [ ] SQLite、日志、配置版本和健康指标可追溯，未保存凭证。
-- [ ] README 和 UI 清楚列出真实数据、紫黄线、Windows 行为均未验证。
+- [x] SQLite、日志、配置版本和健康指标可追溯，未保存凭证。
+- [x] README 和 UI 清楚列出真实数据、紫黄线、Windows 行为均未验证。
 
 ## 进度
 
@@ -40,6 +40,7 @@
 | 2026-07-23 | HAZ-400 完成 Mac PySide6 Replay UI 纵切：主窗口、健康安全状态、固定三行弹窗、详情、历史只读、固定 Synthetic smoke；待 Human Visual Acceptance | 实现完成，待验收 |
 | 2026-07-23 | HAZ-401 按第一次 Human Visual Acceptance 简化普通用户视图：中文三卡主窗口、固定三行提醒、数据中断旧结果降权、交易员可读详情、技术字段移入开发菜单；五张 Mac + Mock/Replay 新截图待第二次视觉验收 | 已实现，待验收 |
 | 2026-07-23 | HAZ-398 对核心提交 `fc62396f47b0c7cf535692e20639a75b2c56ea73` 给出 PASS；HAZ-399 已将该核心以 fast-forward 合入本地权威 `main`，并在随后的治理提交形成可回读基线。`uv sync --all-groups --frozen`、`uv lock --check`、pytest、Replay smoke、Ruff、Mypy、workspace validation 与 `git diff --check` 验证结果见本工单交付记录 | 进行中 |
+| 2026-07-23 | HAZ-400/HAZ-401 的 Mac Replay UI 已经第二次 Human Visual Acceptance 通过，并以 fast-forward 合入本地 `main`；本地完整门禁复跑通过，v0.2 的 Mac + Mock/Replay 范围收口 | 本地完成，待同步 |
 
 ## 决策与风险
 
@@ -53,8 +54,10 @@
 
 尚无。
 
-## 封版记录
+## 本地完成记录
 
-- 验证结果：HAZ-401 在 macOS + Mock/Replay 下执行 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（38 passed）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 和真实 GUI Replay smoke；五张新截图位于 `test-results/HAZ-401-ui/`。Windows/通达信/真实行情/Windows 通知仍未验证，当前等待第二次 Human Visual Acceptance。
-- 遗留问题：真实数据闸门由 v0.3 承接。
-- 终态对账：执行 issue 为 HAZ-400；实现分支从 HAZ-399 `cd91df0` 建立。本地 `main` 仍是权威，GitHub 尚未同步；Human Visual Acceptance 和版本封版仍由后续流程决定。
+- Human Visual Acceptance：2026-07-23 第二次验收已通过；证据为 HAZ-401 的五张真实 macOS + Mock/Replay 截图（主窗口、固定三只提醒、数据中断、详情、历史）。该验收仅覆盖已展示的 Mac Replay 视觉基线。
+- 验证：在 macOS 上执行 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`（38 passed）、离屏 Replay/UI smoke（五张状态图均成功生成）、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py` 与 `git diff --check`，均通过。
+- 合入：HAZ-400 UI `4f6e424db8ab99ecd0f3610c96f043cc446b8852` 与 HAZ-401 视觉修订 `fe2caeefa951a7cc51eadd02d0b3cb648d127ef5` 已以 fast-forward 进入本地 `main`；未改写历史。
+- 环境边界：本版本只证明 macOS + Mock/Replay。本地结果不证明 Windows、通达信、真实行情、紫黄线、Windows 通知、多屏、安装包或目标环境 UAT；资金模块保持未就绪。真实数据闸门由 v0.3 承接。
+- 同步状态：本地 `main` 是权威；GitHub 尚未同步，未创建 `v0.2.0` tag。
