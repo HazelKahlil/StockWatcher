@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 张新玲 2026-07-22 需求确认与补充 | 固定三只、板块共振、紫黄线、09:45/14:50、少打扰、内部使用 | `requirements.lock.json` 为锁定业务项，变更需新版本确认 |
 | Hazel Kahlil 2026-07-22 环境确认 | 当前只有 Mac，日常迭代改为本地优先 | 先做跨平台 Mock/Replay 基础；Windows/通达信证据延后到独立版本 |
-| 北京沃远数据科技有限公司 Tushare Pro | HAZ-403 查证结论为 `PASS_WITH_LIMITS`：可作为首个 Mac 真实行情 M0 候选，但不是生产接入 PASS | 仅在供应商正式支持的 HTTPS POST/JSON、书面授权和真实环境证据齐备后运行受控 M0；否则保持 `NO-GO for implementation` |
+| 北京沃远数据科技有限公司 Tushare Pro | HAZ-403 查证结论为 `PASS_WITH_LIMITS`：可作为首个 Mac 真实行情 M0 候选，但不是生产接入 PASS | 仅在供应商正式支持的 HTTPS POST/JSON、书面授权和受控真实环境齐备后运行 M0；生产接入仍须等待真实环境结论，否则保持 `NO-GO for implementation` |
 | 通达信 TdxQuant 官方能力 | 可能提供实时/历史、板块和批量公式调用，但字段、授权、刷新与紫黄线一致性必须现场证明 | 完整真实数据路线必须经过 v0.3 M0；生产主链路禁止 OCR/网页抓取替代 |
 | Windows App Notifications | 桌面端可做非抢焦点提醒，但多屏、停留和安装后的实际行为需 Windows 验证 | UI 验收不能只靠单元测试 |
 | Bark | 可作为可替换的 iPhone 辅助通道 | 手机失败不得阻塞桌面，设备密钥不得入库 |

@@ -33,7 +33,7 @@ Tushare 字段不得命名或展示为通达信紫黄线，也不得据此声称
 - [ ] Windows 路线取得合规 Windows、官方 TdxQuant、书面授权及 HAZ-405 现场条件。
 - [ ] 执行者已读取 `rules/data.md`、`rules/security.md`、`boundaries.md` 与 `docs/reference/v2.0/m0_checklist.md`。
 
-上述门未齐前，不运行真实数据探针、不实现生产 Provider、不把 Mock/Replay 包装成真实行情证据。门齐后只先运行受控 M0；是否进入产品接入仍由 M0 的 PASS / PASS_WITH_LIMITS / FAIL 结论决定。
+两条路线的门禁独立判定：Mac 路线须先具备正式 HTTPS、书面授权和受控真实环境；Windows 路线须先具备合规 Windows、官方 TdxQuant、书面授权和 HAZ-405 现场条件。对应路线的门未齐前，不运行该路线真实数据探针；门齐后也只先运行受控 M0。生产 Provider 仍须等待该路线的真实环境证据与 PASS / PASS_WITH_LIMITS / FAIL 结论；Mock/Replay 不得包装成真实行情证据。
 
 ## Mac Tushare M0 可验证验收输入
 
