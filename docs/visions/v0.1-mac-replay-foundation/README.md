@@ -61,4 +61,4 @@
 - 本地终态：`main` 包含审定提交 `0083e39bea124f8b854192cff34c7c579cf8a532` 与本封版文档提交；GitHub `origin/main` 仍停在 `7ec5c6b`，尚未同步，未创建 tag 或 PR。
 - 验证结果：Mac + Mock/Replay 下 `uv sync --all-groups --frozen`、`uv lock --check`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check` 均通过，并已在新本地 worktree 回读后复跑核心 pytest。
 - 环境与未验证项：只证明 Mac + Mock/Replay；未验证真实行情、通达信紫黄线、供应商授权、Windows 通知/多屏/托盘、Windows 打包。真实数据与目标环境由 v0.3 承接，Mac 本地 Alpha 由 v0.2 承接。
-- 同步差异：封版记录提交前后均以 `git rev-list --left-right --count main...origin/main` 回读；本提交落入 `main` 后预期为 `9 0`（本地领先 9、远端领先 0）。仅可在用户要求的版本节点创建 `publish/v0.1.0` 并同步，当前不 push。
+- 同步差异：封版记录提交前后均以 `git rev-list --left-right --count main...origin/main` 回读；本轮证据提交落入 `main` 后预期为 `10 0`（本地领先 10、远端领先 0）。仅可在用户要求的版本节点创建 `publish/v0.1.0` 并同步，当前不 push。
