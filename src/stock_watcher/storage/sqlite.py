@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from stock_watcher.engine.candidates import CandidateBatch
@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 class SQLiteStore:
     path: Path
     read_only: bool = False
+
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 2
 
     def connect(self) -> sqlite3.Connection:
         connection = (
@@ -33,42 +35,107 @@ class SQLiteStore:
                     "CREATE TABLE IF NOT EXISTS schema_version "
                     "(version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
                 )
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS notes (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-                )
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS config_versions "
-                    "(version TEXT PRIMARY KEY, source TEXT NOT NULL, settings_json TEXT NOT NULL, "
-                    "created_at TEXT NOT NULL)"
-                )
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS candidate_snapshots "
-                    "(id INTEGER PRIMARY KEY, source_ts TEXT NOT NULL, generated_at TEXT NOT NULL, "
-                    "health TEXT NOT NULL, overall_weak INTEGER NOT NULL, "
-                    "provider_version TEXT NOT NULL, config_version TEXT NOT NULL, "
-                    "app_version TEXT NOT NULL, payload_json TEXT NOT NULL)"
-                )
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS alert_events "
-                    "(id INTEGER PRIMARY KEY, snapshot_id INTEGER NOT NULL, "
-                    "displayed_at TEXT NOT NULL, decision TEXT NOT NULL, channel TEXT NOT NULL, "
-                    "FOREIGN KEY(snapshot_id) REFERENCES candidate_snapshots(id))"
-                )
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS health_metrics "
-                    "(id INTEGER PRIMARY KEY, source_ts TEXT NOT NULL, received_ts TEXT NOT NULL, "
-                    "state TEXT NOT NULL, provider_version TEXT NOT NULL, "
-                    "config_version TEXT NOT NULL, "
-                    "detail TEXT NOT NULL)"
-                )
-                if connection.execute("SELECT COUNT(*) FROM schema_version").fetchone() == (0,):
-                    connection.execute("INSERT INTO schema_version VALUES (2, datetime('now'))")
-                if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-                    raise RuntimeError("database integrity check failed")
+                self._assert_integrity(connection)
+                version = self._schema_version(connection)
+                if version < self.CURRENT_SCHEMA_VERSION:
+                    self._backup_before_migration()
+                    self._migrate_to_current(connection, version)
+                self._assert_current_schema(connection)
         except (sqlite3.DatabaseError, RuntimeError):
             if self.path.exists():
                 self.read_only = True
             raise
+
+    def _schema_version(self, connection: sqlite3.Connection) -> int:
+        row = connection.execute(
+            "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def _backup_before_migration(self) -> None:
+        """Keep a durable v1 snapshot before changing an existing database."""
+        if not self.path.exists():
+            return
+        backup = self.path.with_suffix(f"{self.path.suffix}.pre-v2.bak")
+        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
+            source.backup(target)
+
+    def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
+        if version not in (0, 1):
+            raise RuntimeError(f"unsupported schema version: {version}")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            if version == 0:
+                self._apply_v1_schema(connection)
+            self._apply_v2_migration(connection)
+            connection.execute("DELETE FROM schema_version")
+            connection.execute(
+                "INSERT INTO schema_version VALUES (?, datetime('now'))",
+                (self.CURRENT_SCHEMA_VERSION,),
+            )
+            self._assert_current_schema(connection)
+            connection.commit()
+        except (sqlite3.DatabaseError, RuntimeError):
+            connection.rollback()
+            raise
+
+    @staticmethod
+    def _apply_v1_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS notes (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+
+    @staticmethod
+    def _apply_v2_migration(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS config_versions "
+            "(version TEXT PRIMARY KEY, source TEXT NOT NULL, settings_json TEXT NOT NULL, "
+            "created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS candidate_snapshots "
+            "(id INTEGER PRIMARY KEY, source_ts TEXT NOT NULL, generated_at TEXT NOT NULL, "
+            "health TEXT NOT NULL, overall_weak INTEGER NOT NULL, "
+            "provider_version TEXT NOT NULL, config_version TEXT NOT NULL, "
+            "app_version TEXT NOT NULL, payload_json TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS alert_events "
+            "(id INTEGER PRIMARY KEY, snapshot_id INTEGER NOT NULL, "
+            "displayed_at TEXT NOT NULL, decision TEXT NOT NULL, channel TEXT NOT NULL, "
+            "FOREIGN KEY(snapshot_id) REFERENCES candidate_snapshots(id))"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS health_metrics "
+            "(id INTEGER PRIMARY KEY, source_ts TEXT NOT NULL, received_ts TEXT NOT NULL, "
+            "state TEXT NOT NULL, provider_version TEXT NOT NULL, "
+            "config_version TEXT NOT NULL, detail TEXT NOT NULL)"
+        )
+
+    @staticmethod
+    def _assert_integrity(connection: sqlite3.Connection) -> None:
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            raise RuntimeError("database integrity check failed")
+
+    def _assert_current_schema(self, connection: sqlite3.Connection) -> None:
+        required_tables = {
+            "schema_version",
+            "notes",
+            "config_versions",
+            "candidate_snapshots",
+            "alert_events",
+            "health_metrics",
+        }
+        tables = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        if (
+            self._schema_version(connection) != self.CURRENT_SCHEMA_VERSION
+            or not required_tables <= tables
+        ):
+            raise RuntimeError("schema migration did not reach v2")
+        self._assert_integrity(connection)
 
     def put_note(self, key: str, value: str) -> None:
         with self.connect() as connection:
