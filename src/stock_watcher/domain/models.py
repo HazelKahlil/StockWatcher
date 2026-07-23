@@ -70,3 +70,54 @@ class MarketEvent:
     @property
     def is_candidate_safe(self) -> bool:
         return self.health.state is HealthState.HEALTHY and self.snapshot is not None
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateInput:
+    """Normalized, point-in-time inputs for the deterministic candidate engine.
+
+    This deliberately contains no provider payload or fund-line fields.  The fund
+    module remains unavailable until the separate M0 data gate is passed.
+    """
+
+    security: Security
+    price: float
+    change_pct: float
+    velocity_pct: float
+    sector: str
+    sector_strength: float
+    trend_3d_pct: float
+    source_ts: datetime
+    received_ts: datetime
+    provider_version: str
+    config_version: str
+    is_st: bool = False
+    is_delisting: bool = False
+    is_suspended: bool = False
+    is_limit_up: bool = False
+    is_new_or_corporate_action: bool = False
+    is_complete: bool = True
+
+    def __post_init__(self) -> None:
+        _require_shanghai(self.source_ts, "candidate input source_ts")
+        _require_shanghai(self.received_ts, "candidate input received_ts")
+        if self.price < 0:
+            raise ValueError("candidate input price cannot be negative")
+
+    @property
+    def exclusion_reason(self) -> str | None:
+        if self.security.market == "BJ":
+            return "北交所"
+        if self.is_st or self.security.name.upper().startswith(("ST", "*ST")):
+            return "ST"
+        if self.is_delisting:
+            return "退市整理"
+        if self.is_suspended:
+            return "停牌"
+        if self.is_limit_up:
+            return "一字涨停"
+        if self.is_new_or_corporate_action:
+            return "新股/复牌/除权当日"
+        if not self.is_complete:
+            return "数据不完整"
+        return None
