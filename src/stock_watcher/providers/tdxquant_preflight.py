@@ -28,6 +28,15 @@ class CheckStatus(StrEnum):
 
 
 REPORT_ENDPOINT = "http://127.0.0.1:17709/"
+CANONICAL_CHECK_NAMES = (
+    "operating_system",
+    "python",
+    "terminal_install",
+    "python_client",
+    "tq_service",
+    "api_session",
+)
+FALLBACK_CHECK_NAMES = ("api_session",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,25 +58,25 @@ class PreflightReport:
     windows_live_verified: bool = False
 
     def __post_init__(self) -> None:
-        statuses = {self.status, *(check.status for check in self.checks)}
-        if CheckStatus.FAIL in statuses:
-            final_status = CheckStatus.FAIL
-        elif CheckStatus.WARN in statuses:
-            final_status = CheckStatus.WARN
-        else:
-            final_status = CheckStatus.PASS
-        api_checks = tuple(check for check in self.checks if check.name == "api_session")
-        api_session_passed = (
-            len(api_checks) == 1 and api_checks[0].status is CheckStatus.PASS
+        check_names = tuple(check.name for check in self.checks)
+        derived_status = _aggregate(self.checks)
+        canonical = check_names == CANONICAL_CHECK_NAMES
+        fallback = (
+            check_names == FALLBACK_CHECK_NAMES
+            and derived_status is CheckStatus.FAIL
         )
-        if final_status is CheckStatus.PASS and not api_session_passed:
-            final_status = CheckStatus.FAIL
-        object.__setattr__(self, "status", final_status)
+        expected_live = canonical and derived_status is CheckStatus.PASS
+        report_is_consistent = (
+            (canonical or fallback)
+            and self.status is derived_status
+            and self.windows_live_verified is expected_live
+        )
         object.__setattr__(
             self,
-            "windows_live_verified",
-            self.windows_live_verified and api_session_passed,
+            "status",
+            derived_status if report_is_consistent else CheckStatus.FAIL,
         )
+        object.__setattr__(self, "windows_live_verified", expected_live and report_is_consistent)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -76,7 +85,7 @@ class PreflightReport:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
 
-def _aggregate(checks: list[PreflightCheck]) -> CheckStatus:
+def _aggregate(checks: tuple[PreflightCheck, ...] | list[PreflightCheck]) -> CheckStatus:
     statuses = {check.status for check in checks}
     if CheckStatus.FAIL in statuses:
         return CheckStatus.FAIL
@@ -305,7 +314,7 @@ def main() -> int:
         print(f"Preflight: {report.status}; report: {args.output.name}")
     else:
         print(rendered)
-    return 0 if report.status is not CheckStatus.FAIL else 2
+    return 0 if report.status is CheckStatus.PASS else 2
 
 
 if __name__ == "__main__":

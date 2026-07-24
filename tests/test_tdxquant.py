@@ -416,7 +416,7 @@ def test_preflight_on_mac_is_explicit_offline_evidence(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("refused")),
     )
     report = run_preflight(require_windows=False, attempt_api=False)
-    assert report.status is CheckStatus.WARN
+    assert report.status is CheckStatus.FAIL
     assert not report.windows_live_verified
     assert report.fund_module == "unavailable"
     service = next(check for check in report.checks if check.name == "tq_service")
@@ -533,31 +533,143 @@ def test_valid_stock_list_produces_exactly_one_passing_api_check(
     assert report.windows_live_verified
 
 
+def _canonical_preflight_checks(
+    *,
+    api_status: CheckStatus = CheckStatus.PASS,
+) -> tuple[PreflightCheck, ...]:
+    return (
+        PreflightCheck("operating_system", CheckStatus.PASS, "ok"),
+        PreflightCheck("python", CheckStatus.PASS, "ok"),
+        PreflightCheck("terminal_install", CheckStatus.PASS, "ok"),
+        PreflightCheck("python_client", CheckStatus.PASS, "ok"),
+        PreflightCheck("tq_service", CheckStatus.PASS, "ok"),
+        PreflightCheck("api_session", api_status, "ok"),
+    )
+
+
 @pytest.mark.parametrize(
-    "api_checks",
+    ("status", "checks", "live", "expected_status", "expected_live"),
     (
-        (),
         (
-            PreflightCheck("api_session", CheckStatus.PASS, "ok"),
-            PreflightCheck("api_session", CheckStatus.PASS, "duplicate"),
+            CheckStatus.PASS,
+            _canonical_preflight_checks(),
+            True,
+            CheckStatus.PASS,
+            True,
         ),
-        (PreflightCheck("api_session", CheckStatus.FAIL, "failed"),),
+        (
+            CheckStatus.FAIL,
+            _canonical_preflight_checks(api_status=CheckStatus.FAIL),
+            False,
+            CheckStatus.FAIL,
+            False,
+        ),
     ),
 )
-def test_preflight_report_enforces_api_session_terminal_invariant(
-    api_checks: tuple[PreflightCheck, ...],
+def test_preflight_report_accepts_only_consistent_canonical_outcomes(
+    status: CheckStatus,
+    checks: tuple[PreflightCheck, ...],
+    live: bool,
+    expected_status: CheckStatus,
+    expected_live: bool,
 ) -> None:
     report = PreflightReport(
-        status=CheckStatus.PASS,
-        platform="Windows-test-fixture",
+        status=status,
+        platform="Windows",
         python_version="3.12",
         endpoint="http://127.0.0.1:17709/",
-        checks=(PreflightCheck("operating_system", CheckStatus.PASS, "ok"), *api_checks),
-        windows_live_verified=True,
+        checks=checks,
+        windows_live_verified=live,
+    )
+
+    assert report.status is expected_status
+    assert report.windows_live_verified is expected_live
+
+
+@pytest.mark.parametrize(
+    ("status", "checks", "live"),
+    (
+        (CheckStatus.PASS, _canonical_preflight_checks()[:-1], True),
+        (
+            CheckStatus.PASS,
+            (PreflightCheck("api_session", CheckStatus.PASS, "ok"),),
+            True,
+        ),
+        (
+            CheckStatus.PASS,
+            (
+                *_canonical_preflight_checks(),
+                PreflightCheck("api_session", CheckStatus.PASS, "duplicate"),
+            ),
+            True,
+        ),
+        (
+            CheckStatus.PASS,
+            (
+                PreflightCheck("unknown_check", CheckStatus.PASS, "ok"),
+                *_canonical_preflight_checks()[1:],
+            ),
+            True,
+        ),
+        (
+            CheckStatus.PASS,
+            (
+                *_canonical_preflight_checks()[:2],
+                *_canonical_preflight_checks()[3:],
+            ),
+            True,
+        ),
+        (
+            CheckStatus.PASS,
+            _canonical_preflight_checks(api_status=CheckStatus.FAIL),
+            False,
+        ),
+        (CheckStatus.PASS, _canonical_preflight_checks(), False),
+        (
+            CheckStatus.FAIL,
+            _canonical_preflight_checks(api_status=CheckStatus.FAIL),
+            True,
+        ),
+    ),
+)
+def test_preflight_report_rejects_malformed_or_contradictory_success(
+    status: CheckStatus,
+    checks: tuple[PreflightCheck, ...],
+    live: bool,
+) -> None:
+    report = PreflightReport(
+        status=status,
+        platform="Windows",
+        python_version="3.12",
+        endpoint="http://127.0.0.1:17709/",
+        checks=checks,
+        windows_live_verified=live,
     )
 
     assert report.status is CheckStatus.FAIL
-    assert not report.windows_live_verified
+    assert report.windows_live_verified is False
+
+
+def test_preflight_main_returns_nonzero_for_non_pass_terminal_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checks = list(_canonical_preflight_checks())
+    checks[3] = PreflightCheck("python_client", CheckStatus.WARN, "optional client missing")
+    report = PreflightReport(
+        status=CheckStatus.WARN,
+        platform="Windows",
+        python_version="3.12.0",
+        endpoint="http://127.0.0.1:17709/",
+        checks=tuple(checks),
+        windows_live_verified=False,
+    )
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.run_preflight",
+        lambda **_kwargs: report,
+    )
+    monkeypatch.setattr(sys, "argv", ["tdxquant_preflight"])
+
+    assert main() == 2
 
 
 @pytest.mark.parametrize(

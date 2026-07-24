@@ -175,17 +175,14 @@ function Read-ValidPreflightReport([string]$Path) {
         }
         $seenNames[$check.name] = $true
     }
-    $apiPasses = @($report.checks | Where-Object { $_.name -eq "api_session" -and $_.status -eq "PASS" })
     $checkNames = @($report.checks | ForEach-Object { $_.name })
     $baseCheckSet = @("operating_system", "python", "terminal_install", "python_client", "tq_service")
     $fullCheckSet = @($baseCheckSet) + @("api_session")
     $fallbackCheckSet = @("api_session")
     $serializedCheckNames = $checkNames -join "|"
-    if (
-        $serializedCheckNames -ne ($baseCheckSet -join "|") -and
-        $serializedCheckNames -ne ($fullCheckSet -join "|") -and
-        $serializedCheckNames -ne ($fallbackCheckSet -join "|")
-    ) {
+    $isCanonical = $serializedCheckNames -eq ($fullCheckSet -join "|")
+    $isFallback = $serializedCheckNames -eq ($fallbackCheckSet -join "|")
+    if (-not $isCanonical -and -not $isFallback) {
         throw "预检报告检查集合或顺序非法。"
     }
     $derivedStatus = if (@($report.checks | Where-Object { $_.status -eq "FAIL" }).Count -gt 0) {
@@ -198,11 +195,12 @@ function Read-ValidPreflightReport([string]$Path) {
     if ($report.status -ne $derivedStatus) {
         throw "预检报告顶层终态与检查项聚合矛盾。"
     }
-    if ($report.status -eq "PASS" -and $apiPasses.Count -ne 1) {
-        throw "预检报告违反 api_session PASS 不变量。"
+    if ($isFallback -and $report.status -ne "FAIL") {
+        throw "预检报告 fallback 只能表示失败。"
     }
-    if ($report.windows_live_verified -eq $true -and $apiPasses.Count -ne 1) {
-        throw "预检报告伪造 Windows live 验证。"
+    $expectedLive = $isCanonical -and $derivedStatus -eq "PASS"
+    if ($report.windows_live_verified -ne $expectedLive) {
+        throw "预检报告 Windows live 标记与完整检查集矛盾。"
     }
     return $report
 }
@@ -411,7 +409,9 @@ function Invoke-Preflight {
             }
             $exitCode = Invoke-PreflightProcess -Arguments $arguments
             $attemptReport = Read-ValidPreflightReport -Path $attemptPath
-            if ($exitCode -ne 0 -and $attemptReport.status -ne "FAIL") {
+            $processSucceeded = $exitCode -eq 0
+            $reportSucceeded = $attemptReport.status -eq "PASS"
+            if ($processSucceeded -ne $reportSucceeded) {
                 Write-FallbackPreflightReport -Path $attemptPath
                 $exitCode = 1
             }
@@ -420,7 +420,7 @@ function Invoke-Preflight {
             $exitCode = 1
         }
         $report = Publish-PreflightReport -AttemptPath $attemptPath -ReportPath $reportPath
-        if ($report.status -eq "FAIL" -and $exitCode -eq 0) {
+        if ($report.status -ne "PASS" -and $exitCode -eq 0) {
             $exitCode = 1
         }
         if ($exitCode -ne 0) {

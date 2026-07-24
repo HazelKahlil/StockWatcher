@@ -57,6 +57,7 @@ def _preflight_report(
     status: str = "PASS",
     tq_status: str = "PASS",
     api_status: str | None = "PASS",
+    windows_live_verified: bool = True,
     include_extra_field: bool = False,
 ) -> dict[str, object]:
     checks = [
@@ -95,7 +96,7 @@ def _preflight_report(
         "endpoint": "http://127.0.0.1:17709/",
         "checks": checks,
         "fund_module": "unavailable",
-        "windows_live_verified": status == "PASS" and api_status == "PASS",
+        "windows_live_verified": windows_live_verified,
     }
     if include_extra_field:
         report["unexpected"] = True
@@ -159,7 +160,8 @@ def test_powershell_preflight_validates_missing_malformed_and_unsafe_reports() -
     assert "ConvertFrom-Json" in validator
     assert "预检报告包含禁止字段" in validator
     assert '"api_session"' in validator
-    assert "$apiPasses.Count -ne 1" in validator
+    assert "$expectedLive" in validator
+    assert "$report.windows_live_verified -ne $expectedLive" in validator
     assert "$report.status -ne $derivedStatus" in validator
     assert "预检报告检查集合或顺序非法" in validator
     fallback = _function_body(powershell, "Write-FallbackPreflightReport")
@@ -226,8 +228,16 @@ def test_build_cleanup_is_scoped_and_failure_preserves_existing_artifacts() -> N
         ("pass", 0, "PASS", False, False),
         ("fail", 2, "FAIL", True, False),
         ("fail", 0, "FAIL", True, False),
+        ("warn", 2, "WARN", True, False),
         ("pass", 9, "FAIL", True, True),
         ("semantic_conflict", 0, "FAIL", True, True),
+        ("incomplete", 0, "FAIL", True, True),
+        ("api_only_pass", 0, "FAIL", True, True),
+        ("duplicate_check", 0, "FAIL", True, True),
+        ("unknown_check", 0, "FAIL", True, True),
+        ("missing_check", 0, "FAIL", True, True),
+        ("pass_live_false", 0, "FAIL", True, True),
+        ("fail_live_true", 2, "FAIL", True, True),
         ("schema_error", 0, "FAIL", True, True),
         ("invalid_json", 0, "FAIL", True, True),
         ("invalid_utf8", 0, "FAIL", True, True),
@@ -253,12 +263,79 @@ def test_powershell_preflight_executes_fail_closed_behavior_matrix(
     elif fixture_kind == "fail":
         _write_json(
             fixture,
-            _preflight_report(status="FAIL", tq_status="FAIL", api_status=None),
+            _preflight_report(
+                status="FAIL",
+                tq_status="FAIL",
+                api_status="FAIL",
+                windows_live_verified=False,
+            ),
         )
+    elif fixture_kind == "warn":
+        payload = _preflight_report(windows_live_verified=False)
+        checks = cast(list[dict[str, object]], payload["checks"])
+        checks[3] = _check(
+            "python_client",
+            "WARN",
+            "未发现 tqcenter；可继续使用官方 127.0.0.1:17709 HTTP 模式。",
+            "dependency_missing",
+        )
+        payload["status"] = "WARN"
+        _write_json(fixture, payload)
     elif fixture_kind == "semantic_conflict":
         _write_json(
             fixture,
             _preflight_report(status="PASS", tq_status="FAIL", api_status="PASS"),
+        )
+    elif fixture_kind == "incomplete":
+        _write_json(
+            fixture,
+            _preflight_report(api_status=None, windows_live_verified=True),
+        )
+    elif fixture_kind == "api_only_pass":
+        payload = _preflight_report()
+        payload["checks"] = [
+            _check(
+                "api_session",
+                "PASS",
+                "官方股票列表接口可调用；这不代表字段、授权或性能 M0 已通过。",
+            )
+        ]
+        _write_json(fixture, payload)
+    elif fixture_kind == "duplicate_check":
+        payload = _preflight_report()
+        checks = cast(list[dict[str, object]], payload["checks"])
+        checks.append(
+            _check(
+                "api_session",
+                "PASS",
+                "官方股票列表接口可调用；这不代表字段、授权或性能 M0 已通过。",
+            )
+        )
+        _write_json(fixture, payload)
+    elif fixture_kind == "unknown_check":
+        payload = _preflight_report()
+        checks = cast(list[dict[str, object]], payload["checks"])
+        checks[0] = _check("unknown_check", "PASS", "Windows 环境已就绪。")
+        _write_json(fixture, payload)
+    elif fixture_kind == "missing_check":
+        payload = _preflight_report()
+        checks = cast(list[dict[str, object]], payload["checks"])
+        del checks[2]
+        _write_json(fixture, payload)
+    elif fixture_kind == "pass_live_false":
+        _write_json(
+            fixture,
+            _preflight_report(windows_live_verified=False),
+        )
+    elif fixture_kind == "fail_live_true":
+        _write_json(
+            fixture,
+            _preflight_report(
+                status="FAIL",
+                tq_status="FAIL",
+                api_status="FAIL",
+                windows_live_verified=True,
+            ),
         )
     elif fixture_kind == "schema_error":
         _write_json(fixture, _preflight_report(include_extra_field=True))

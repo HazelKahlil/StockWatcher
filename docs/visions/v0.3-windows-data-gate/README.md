@@ -70,6 +70,7 @@
 | 2026-07-24 | HAZ-443 收紧 Preflight 成功结构与报告终态不变量：畸形/空/非法股票列表、缺失或重复 `api_session` 均不得形成整体 `PASS` 或 `windows_live_verified=true` | Mac fixture/offline 回归；仍不构成真实 Windows/TdxQuant 证据 |
 | 2026-07-24 | HAZ-447 针对真实 Windows 的 267 字符 ISCC 输入与原生 Preflight 缺报告 blocker：Build 改用临时短盘符和独占 staging，成功后再发布 installer/portable ZIP；Preflight 对启动失败、非零、缺失/畸形报告先落盘固定脱敏 `FAIL` 再返回非零 | Mac 深路径/中文空格 fixture 与离线契约通过；真实 ISCC、PowerShell、App Control 和 TdxQuant 仍待 Windows 复验 |
 | 2026-07-24 | HAZ-449 闭合独立复核发现的发布与 Preflight 语义缺口：全部发布路径继续使用短映射，双产物以备份/提交/回滚事务发布；Preflight 固定检查集合并重算聚合终态，子进程终态矛盾强制替换为固定脱敏 `FAIL` | macOS 上以真实 PowerShell 7.5.2 执行深路径、中文空格、重复发布、第二产物故障回滚及 Preflight 异常矩阵；仍待真实 Windows PowerShell 5.1/ISCC/App Control/TdxQuant 复验 |
+| 2026-07-24 | HAZ-452 修复 Preflight 成功语义：仅固定、完整、无重复的 canonical checks 全部 `PASS` 且 `windows_live_verified=true` 才能零退出；不完整/fallback/单项成功、未知或重复检查、顶层聚合矛盾及 live 双向矛盾均 fail-closed | macOS Python/离线门禁通过；本机无 PowerShell，行为用例如实跳过，仍待独立真实 Windows PowerShell 7.x 零跳过复核与最终 Gate |
 
 ## 验证边界
 
@@ -90,6 +91,8 @@ HAZ-443 在 macOS + Python 3.12 的返修回归：`uv sync --all-groups --frozen
 HAZ-447 在 macOS + Python 3.12 的修复回归：`uv sync --all-groups --frozen`、`uv lock --check`、Build/Preflight/Windows 包定向 51 项与全量 97 项 pytest、Ruff、Mypy、Windows 包离线契约、workspace validation、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。深层 checkout、中文/空格路径、240 字符 ISCC 保守预算、重复/失败清理、子进程非零/启动失败及缺失/畸形报告均由 fixture/静态契约覆盖；这些 Mac 结果不能替代真实 Windows ISCC、PowerShell、App Control 或 TdxQuant 复验。
 
 HAZ-449 在 macOS + Python 3.12 与 PowerShell 7.5.2 的返修回归：Build/Preflight/Windows 包定向 63 项与全量 109 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、Replay 五状态 smoke 与 `git diff --check` 均通过。真实 PowerShell 行为测试覆盖子进程 0/非 0、启动失败、报告缺失、非法 UTF-8/JSON、schema/检查集合/聚合矛盾、中文空格参数与报告目录，以及合法 PASS/FAIL；实际文件系统测试覆盖超过 260 字符的中文空格深树、成功与重复发布、第二产物发布故障回滚和事务 staging 清理。Mac 结果不构成真实 Windows PowerShell 5.1、ISCC、App Control 或 TdxQuant 现场证据。
+
+HAZ-452 在 macOS + Python 3.12 的返修回归：`uv sync --all-groups --frozen`、`uv lock --check`、定向 Preflight/Windows 包测试、全量 105 项通过/20 项 PowerShell 宿主跳过的 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、Replay 五状态 smoke 与 `git diff --check` 均通过。新增直接反例覆盖不完整/fallback/仅 `api_session=PASS`、重复/未知/缺失检查、顶层聚合矛盾、完整 PASS + `live=false`、非 PASS + `live=true` 及子进程终态矛盾；本机未发现可调用的 `pwsh`，因此不能复用 HAZ-449 的 PowerShell 7.5.2 证据，也不构成真实 Windows、TdxQuant、行情或 M0 证据。
 
 ## Session Handoff
 
