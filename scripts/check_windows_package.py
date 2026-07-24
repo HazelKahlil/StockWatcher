@@ -47,8 +47,12 @@ def main() -> int:
         errors.append("PowerShell entry must fail closed on native command errors")
     if "subst.exe" not in powershell or "Assert-IsccPathBudget" not in powershell:
         errors.append("PowerShell build must enforce the short ISCC input path contract")
-    if '".swb"' not in powershell or '"h447-$stageId"' not in powershell:
+    if '".swb"' not in powershell or '"h449-$stageId"' not in powershell:
         errors.append("PowerShell build must use an issue-owned staging directory")
+    if "Publish-BuildArtifactsTransaction" not in powershell:
+        errors.append("PowerShell build must publish installer and portable ZIP transactionally")
+    if 'Destination = Join-Path $mappedRoot "dist\\' not in powershell:
+        errors.append("PowerShell build must keep all publication paths on the short mapping")
     if "Write-FallbackPreflightReport" not in powershell:
         errors.append("PowerShell preflight must persist a fixed fail-closed fallback report")
     if "Read-ValidPreflightReport" not in powershell:

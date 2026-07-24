@@ -69,6 +69,7 @@
 | 2026-07-24 | HAZ-439 修复真实 Windows 暴露的 Preflight 失败报告缺失与供应商 detail 泄漏风险：API 会话失败统一使用稳定 reason 和固定脱敏消息，安全兜底异常先形成 `FAIL` 报告再非零退出；Windows 矩阵增加失败报告回读及中文/空格路径合约 | Mac fixture/offline 门禁通过；新冻结候选仍待独立真实 Windows + 官方 TdxQuant 复验 |
 | 2026-07-24 | HAZ-443 收紧 Preflight 成功结构与报告终态不变量：畸形/空/非法股票列表、缺失或重复 `api_session` 均不得形成整体 `PASS` 或 `windows_live_verified=true` | Mac fixture/offline 回归；仍不构成真实 Windows/TdxQuant 证据 |
 | 2026-07-24 | HAZ-447 针对真实 Windows 的 267 字符 ISCC 输入与原生 Preflight 缺报告 blocker：Build 改用临时短盘符和独占 staging，成功后再发布 installer/portable ZIP；Preflight 对启动失败、非零、缺失/畸形报告先落盘固定脱敏 `FAIL` 再返回非零 | Mac 深路径/中文空格 fixture 与离线契约通过；真实 ISCC、PowerShell、App Control 和 TdxQuant 仍待 Windows 复验 |
+| 2026-07-24 | HAZ-449 闭合独立复核发现的发布与 Preflight 语义缺口：全部发布路径继续使用短映射，双产物以备份/提交/回滚事务发布；Preflight 固定检查集合并重算聚合终态，子进程终态矛盾强制替换为固定脱敏 `FAIL` | macOS 上以真实 PowerShell 7.5.2 执行深路径、中文空格、重复发布、第二产物故障回滚及 Preflight 异常矩阵；仍待真实 Windows PowerShell 5.1/ISCC/App Control/TdxQuant 复验 |
 
 ## 验证边界
 
@@ -87,6 +88,8 @@ HAZ-439 在 macOS + Python 3.12 的修复回归：`uv sync --all-groups --frozen
 HAZ-443 在 macOS + Python 3.12 的返修回归：`uv sync --all-groups --frozen`、`uv lock --check`、Preflight/Windows 包定向 46 项与全量 92 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。新增 fixture/monkeypatch 回归证明畸形/空/非法股票列表及缺失、重复、非 PASS 的 `api_session` 不能形成整体 `PASS` 或 Windows live 验证；这些 Mac/静态结果仍不构成真实 Windows PowerShell 或 TdxQuant 现场证据。
 
 HAZ-447 在 macOS + Python 3.12 的修复回归：`uv sync --all-groups --frozen`、`uv lock --check`、Build/Preflight/Windows 包定向 51 项与全量 97 项 pytest、Ruff、Mypy、Windows 包离线契约、workspace validation、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。深层 checkout、中文/空格路径、240 字符 ISCC 保守预算、重复/失败清理、子进程非零/启动失败及缺失/畸形报告均由 fixture/静态契约覆盖；这些 Mac 结果不能替代真实 Windows ISCC、PowerShell、App Control 或 TdxQuant 复验。
+
+HAZ-449 在 macOS + Python 3.12 与 PowerShell 7.5.2 的返修回归：Build/Preflight/Windows 包定向 63 项与全量 109 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、Replay 五状态 smoke 与 `git diff --check` 均通过。真实 PowerShell 行为测试覆盖子进程 0/非 0、启动失败、报告缺失、非法 UTF-8/JSON、schema/检查集合/聚合矛盾、中文空格参数与报告目录，以及合法 PASS/FAIL；实际文件系统测试覆盖超过 260 字符的中文空格深树、成功与重复发布、第二产物发布故障回滚和事务 staging 清理。Mac 结果不构成真实 Windows PowerShell 5.1、ISCC、App Control 或 TdxQuant 现场证据。
 
 ## Session Handoff
 

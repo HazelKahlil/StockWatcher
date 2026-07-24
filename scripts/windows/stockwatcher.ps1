@@ -3,7 +3,8 @@ param(
     [ValidateSet("Menu", "Setup", "Preflight", "Run", "Probe", "Build")]
     [string]$Action = "Menu",
     [string]$TdxInstallPath = "",
-    [string]$Endpoint = "http://127.0.0.1:17709/"
+    [string]$Endpoint = "http://127.0.0.1:17709/",
+    [switch]$LoadFunctionsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -131,7 +132,7 @@ function Read-ValidPreflightReport([string]$Path) {
         "TQ 本机端口可达。",
         "官方股票列表接口可调用；这不代表字段、授权或性能 M0 已通过。",
         "未找到可选的 tqcenter Python 客户端，请改用本机 HTTP 模式或安装官方组件。",
-        "未找到官方通达信金融终端，请先安装免费的 64 位“金融终端（量化模拟）”。",
+        '未找到官方通达信金融终端，请先安装免费的 64 位“金融终端（量化模拟）”。',
         "通达信终端尚未启动，请先启动终端并保持运行。",
         "通达信终端尚未登录或行情权限未就绪，请在官方终端内完成登录。",
         "TQ 本机服务不可达，请确认终端支持 TQ，且 127.0.0.1:17709 已启动。",
@@ -175,6 +176,28 @@ function Read-ValidPreflightReport([string]$Path) {
         $seenNames[$check.name] = $true
     }
     $apiPasses = @($report.checks | Where-Object { $_.name -eq "api_session" -and $_.status -eq "PASS" })
+    $checkNames = @($report.checks | ForEach-Object { $_.name })
+    $baseCheckSet = @("operating_system", "python", "terminal_install", "python_client", "tq_service")
+    $fullCheckSet = @($baseCheckSet) + @("api_session")
+    $fallbackCheckSet = @("api_session")
+    $serializedCheckNames = $checkNames -join "|"
+    if (
+        $serializedCheckNames -ne ($baseCheckSet -join "|") -and
+        $serializedCheckNames -ne ($fullCheckSet -join "|") -and
+        $serializedCheckNames -ne ($fallbackCheckSet -join "|")
+    ) {
+        throw "预检报告检查集合或顺序非法。"
+    }
+    $derivedStatus = if (@($report.checks | Where-Object { $_.status -eq "FAIL" }).Count -gt 0) {
+        "FAIL"
+    } elseif (@($report.checks | Where-Object { $_.status -eq "WARN" }).Count -gt 0) {
+        "WARN"
+    } else {
+        "PASS"
+    }
+    if ($report.status -ne $derivedStatus) {
+        throw "预检报告顶层终态与检查项聚合矛盾。"
+    }
     if ($report.status -eq "PASS" -and $apiPasses.Count -ne 1) {
         throw "预检报告违反 api_session PASS 不变量。"
     }
@@ -190,7 +213,18 @@ function Publish-PreflightReport {
         [Parameter(Mandatory = $true)][string]$ReportPath
     )
     $null = Read-ValidPreflightReport -Path $AttemptPath
-    Move-Item -LiteralPath $AttemptPath -Destination $ReportPath -Force
+    if (Test-Path -LiteralPath $ReportPath -PathType Leaf) {
+        $replaceBackup = "$ReportPath.previous-h449.tmp"
+        try {
+            [System.IO.File]::Replace($AttemptPath, $ReportPath, $replaceBackup)
+        } finally {
+            if (Test-Path -LiteralPath $replaceBackup) {
+                Remove-Item -LiteralPath $replaceBackup -Force
+            }
+        }
+    } else {
+        [System.IO.File]::Move($AttemptPath, $ReportPath)
+    }
     $validated = Read-ValidPreflightReport -Path $ReportPath
     return $validated
 }
@@ -221,23 +255,122 @@ function Assert-IsccPathBudget {
     }
 }
 
-function Publish-BuildArtifact {
+function Assert-BuildPathBudget {
     param(
-        [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][string]$RunId
+        [Parameter(Mandatory = $true)][string[]]$Paths,
+        [int]$MaximumLength = 240
     )
-    $destinationDirectory = Split-Path -Parent $Destination
-    New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
-    $temporary = Join-Path $destinationDirectory (".haz447-$RunId-" + (Split-Path -Leaf $Destination) + ".tmp")
+    $longest = ($Paths | ForEach-Object { $_.Length } | Measure-Object -Maximum).Maximum
+    if ($null -eq $longest -or $longest -gt $MaximumLength) {
+        throw "构建发布路径超过保守预算（最大 $MaximumLength，实测 $longest）。"
+    }
+}
+
+function Publish-BuildArtifactsTransaction {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Artifacts,
+        [Parameter(Mandatory = $true)][string]$TransactionParent,
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [scriptblock]$BeforePublishArtifact = $null
+    )
+    if ($Artifacts.Count -ne 2) {
+        throw "Windows 发布事务必须且只能包含 installer 与 portable ZIP。"
+    }
+    $transactionRoot = Join-Path $TransactionParent ("publish-h449-" + $RunId.Substring(0, 12))
+    $states = @()
+    $createdDirectories = @()
+    $committed = $false
     try {
-        Copy-Item -LiteralPath $Source -Destination $temporary
-        Move-Item -LiteralPath $temporary -Destination $Destination -Force
+        New-Item -ItemType Directory -Force -Path $transactionRoot | Out-Null
+        for ($index = 0; $index -lt $Artifacts.Count; $index++) {
+            $artifact = $Artifacts[$index]
+            if (-not (Test-Path -LiteralPath $artifact.Source -PathType Leaf)) {
+                throw "待发布构建产物不存在。"
+            }
+            $destinationDirectory = Split-Path -Parent $artifact.Destination
+            $directoryCursor = $destinationDirectory
+            while ($directoryCursor -and -not (Test-Path -LiteralPath $directoryCursor)) {
+                if ($directoryCursor -notin $createdDirectories) {
+                    $createdDirectories += $directoryCursor
+                }
+                $directoryCursor = Split-Path -Parent $directoryCursor
+            }
+            New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+            $leaf = Split-Path -Leaf $artifact.Destination
+            $candidate = Join-Path $transactionRoot ("candidate-$index-$leaf")
+            $backup = Join-Path $transactionRoot ("backup-$index-$leaf")
+            Assert-BuildPathBudget -Paths @(
+                $artifact.Source,
+                $artifact.Destination,
+                $destinationDirectory,
+                $candidate,
+                $backup
+            )
+            Copy-Item -LiteralPath $artifact.Source -Destination $candidate
+            $states += [PSCustomObject]@{
+                Destination = $artifact.Destination
+                Candidate = $candidate
+                Backup = $backup
+                HadExisting = Test-Path -LiteralPath $artifact.Destination -PathType Leaf
+                BackupMoved = $false
+                Published = $false
+            }
+        }
+        foreach ($state in $states) {
+            if ($state.HadExisting) {
+                Move-Item -LiteralPath $state.Destination -Destination $state.Backup
+                $state.BackupMoved = $true
+            }
+        }
+        for ($index = 0; $index -lt $states.Count; $index++) {
+            if ($BeforePublishArtifact) {
+                & $BeforePublishArtifact ($index + 1)
+            }
+            $state = $states[$index]
+            Move-Item -LiteralPath $state.Candidate -Destination $state.Destination
+            $state.Published = $true
+        }
+        $committed = $true
+    } catch {
+        foreach ($state in $states) {
+            if ($state.Published -and (Test-Path -LiteralPath $state.Destination)) {
+                Remove-Item -LiteralPath $state.Destination -Force
+            }
+        }
+        foreach ($state in $states) {
+            if ($state.BackupMoved -and (Test-Path -LiteralPath $state.Backup -PathType Leaf)) {
+                Move-Item -LiteralPath $state.Backup -Destination $state.Destination
+                $state.BackupMoved = $false
+            }
+        }
+        throw
     } finally {
-        if (Test-Path -LiteralPath $temporary) {
-            Remove-Item -LiteralPath $temporary -Force
+        if ($committed) {
+            foreach ($state in $states) {
+                if ($state.BackupMoved -and (Test-Path -LiteralPath $state.Backup)) {
+                    Remove-Item -LiteralPath $state.Backup -Force
+                }
+            }
+        }
+        if (Test-Path -LiteralPath $transactionRoot) {
+            Remove-Item -LiteralPath $transactionRoot -Recurse -Force
+        }
+        if (-not $committed) {
+            foreach ($directory in @($createdDirectories | Sort-Object Length -Descending)) {
+                if (
+                    (Test-Path -LiteralPath $directory -PathType Container) -and
+                    @((Get-ChildItem -LiteralPath $directory -Force)).Count -eq 0
+                ) {
+                    Remove-Item -LiteralPath $directory -Force
+                }
+            }
         }
     }
+}
+
+function Invoke-PreflightProcess([string[]]$Arguments) {
+    & $PythonPath @Arguments
+    return $LASTEXITCODE
 }
 
 function Invoke-Setup {
@@ -263,7 +396,7 @@ function Invoke-Preflight {
     Write-Title "检查 Windows / 通达信 / TQ 服务"
     New-Item -ItemType Directory -Force -Path $ReportRoot | Out-Null
     $reportPath = Join-Path $ReportRoot "tdxquant-preflight.json"
-    $attemptPath = Join-Path $ReportRoot ("tdxquant-preflight.haz447-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+    $attemptPath = Join-Path $ReportRoot ("tdxquant-preflight.haz449-" + [Guid]::NewGuid().ToString("N") + ".tmp")
     $exitCode = 1
     try {
         try {
@@ -276,9 +409,12 @@ function Invoke-Preflight {
             if ($TdxInstallPath) {
                 $arguments += @("--terminal-path", $TdxInstallPath)
             }
-            & $PythonPath @arguments
-            $exitCode = $LASTEXITCODE
-            $null = Read-ValidPreflightReport -Path $attemptPath
+            $exitCode = Invoke-PreflightProcess -Arguments $arguments
+            $attemptReport = Read-ValidPreflightReport -Path $attemptPath
+            if ($exitCode -ne 0 -and $attemptReport.status -ne "FAIL") {
+                Write-FallbackPreflightReport -Path $attemptPath
+                $exitCode = 1
+            }
         } catch {
             Write-FallbackPreflightReport -Path $attemptPath
             $exitCode = 1
@@ -288,7 +424,7 @@ function Invoke-Preflight {
             $exitCode = 1
         }
         if ($exitCode -ne 0) {
-            throw "预检未通过；报告已安全写出，请先安装并登录官方免费 64 位“金融终端（量化模拟）”，再确认 TQ 服务已开启（退出码 $exitCode）。"
+            throw "预检未通过；报告已安全写出，请先安装并登录官方免费 64 位金融终端（量化模拟），再确认 TQ 服务已开启（退出码 $exitCode）。"
         }
     } finally {
         if (Test-Path -LiteralPath $attemptPath) {
@@ -316,7 +452,9 @@ function Invoke-Build {
     Invoke-CheckedNative -Command $PythonPath -Arguments @("-m", "pip", "install", "--upgrade", "pyinstaller>=6,<7") -FailureMessage "安装 PyInstaller 失败"
     $driveName = $null
     $driveMapped = $false
+    $stageParent = $null
     $stageRoot = $null
+    $stageId = $null
     $runId = [Guid]::NewGuid().ToString("N")
     try {
         $driveName = Get-AvailableBuildDriveName
@@ -325,7 +463,7 @@ function Invoke-Build {
         $mappedRoot = "$driveName\"
         $stageId = $runId.Substring(0, 12)
         $stageParent = Join-Path $mappedRoot ".swb"
-        $stageRoot = Join-Path $stageParent "h447-$stageId"
+        $stageRoot = Join-Path $stageParent "h449-$stageId"
         $stageDist = Join-Path $stageRoot "dist"
         $stageWork = Join-Path $stageRoot "work"
         $stageInstaller = Join-Path $stageRoot "installer"
@@ -360,20 +498,40 @@ function Invoke-Build {
         }
         $portable = Join-Path $stageRoot "StockWatcher-0.3.0-alpha-portable.zip"
         Compress-Archive -Path (Join-Path $bundleRoot "*") -DestinationPath $portable -CompressionLevel Optimal
-        Publish-BuildArtifact -Source $installer -Destination (Join-Path $ProjectRoot "dist\installer\StockWatcher-0.3.0-alpha-setup.exe") -RunId $runId
-        Publish-BuildArtifact -Source $portable -Destination (Join-Path $ProjectRoot "dist\StockWatcher-0.3.0-alpha-portable.zip") -RunId $runId
+        $publishArtifacts = @(
+            [PSCustomObject]@{
+                Source = $installer
+                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.3.0-alpha-setup.exe"
+            },
+            [PSCustomObject]@{
+                Source = $portable
+                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.3.0-alpha-portable.zip"
+            }
+        )
+        Publish-BuildArtifactsTransaction -Artifacts $publishArtifacts -TransactionParent $stageParent -RunId $runId
         Write-Host "安装器与 portable ZIP 已发布到 dist；短路径 staging 已清理。" -ForegroundColor Green
     } finally {
         if ($stageRoot -and (Test-Path -LiteralPath $stageRoot)) {
             $expectedParent = Join-Path "$driveName\" ".swb"
-            if ((Split-Path -Parent $stageRoot) -eq $expectedParent -and (Split-Path -Leaf $stageRoot) -eq "h447-$stageId") {
+            if ((Split-Path -Parent $stageRoot) -eq $expectedParent -and (Split-Path -Leaf $stageRoot) -eq "h449-$stageId") {
                 Remove-Item -LiteralPath $stageRoot -Recurse -Force
             }
+        }
+        if (
+            $stageParent -and
+            (Test-Path -LiteralPath $stageParent -PathType Container) -and
+            @((Get-ChildItem -LiteralPath $stageParent -Force)).Count -eq 0
+        ) {
+            Remove-Item -LiteralPath $stageParent -Force
         }
         if ($driveMapped) {
             Invoke-CheckedNative -Command "subst.exe" -Arguments @($driveName, "/D") -FailureMessage "清理短路径构建盘失败"
         }
     }
+}
+
+if ($LoadFunctionsOnly) {
+    return
 }
 
 if ($Action -eq "Menu") {
