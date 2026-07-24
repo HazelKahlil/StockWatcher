@@ -68,6 +68,7 @@
 | 2026-07-24 | HAZ-417 对 HAZ-415 三项 blocker 的唯一复审为 `PASS`；HAZ-416 将精确候选 fast-forward 合入本地 `main`，Mac 最终门禁 74 项测试与五状态 Replay smoke 通过，并复用单一 draft PR #2 做私有 GitHub 里程碑同步 | 本地候选收口；PR 待 Human Owner 审核/合入，真实 TdxQuant M0 待现场 |
 | 2026-07-24 | HAZ-439 修复真实 Windows 暴露的 Preflight 失败报告缺失与供应商 detail 泄漏风险：API 会话失败统一使用稳定 reason 和固定脱敏消息，安全兜底异常先形成 `FAIL` 报告再非零退出；Windows 矩阵增加失败报告回读及中文/空格路径合约 | Mac fixture/offline 门禁通过；新冻结候选仍待独立真实 Windows + 官方 TdxQuant 复验 |
 | 2026-07-24 | HAZ-443 收紧 Preflight 成功结构与报告终态不变量：畸形/空/非法股票列表、缺失或重复 `api_session` 均不得形成整体 `PASS` 或 `windows_live_verified=true` | Mac fixture/offline 回归；仍不构成真实 Windows/TdxQuant 证据 |
+| 2026-07-24 | HAZ-447 针对真实 Windows 的 267 字符 ISCC 输入与原生 Preflight 缺报告 blocker：Build 改用临时短盘符和独占 staging，成功后再发布 installer/portable ZIP；Preflight 对启动失败、非零、缺失/畸形报告先落盘固定脱敏 `FAIL` 再返回非零 | Mac 深路径/中文空格 fixture 与离线契约通过；真实 ISCC、PowerShell、App Control 和 TdxQuant 仍待 Windows 复验 |
 
 ## 验证边界
 
@@ -84,6 +85,8 @@ HAZ-416 在最终文档树上的 macOS + Python 3.12 回归：`uv sync --all-gro
 HAZ-439 在 macOS + Python 3.12 的修复回归：`uv sync --all-groups --frozen`、`uv lock --check`、Preflight/Windows 包定向 36 项与全量 82 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。测试以 fixture/monkeypatch 覆盖供应商非零错误、意外响应、兜底异常、进程控制信号、失败报告落盘/脱敏和中文/空格路径；这些 Mac/静态结果不构成真实 Windows PowerShell 或 TdxQuant 现场证据。
 
 HAZ-443 在 macOS + Python 3.12 的返修回归：`uv sync --all-groups --frozen`、`uv lock --check`、Preflight/Windows 包定向 46 项与全量 92 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。新增 fixture/monkeypatch 回归证明畸形/空/非法股票列表及缺失、重复、非 PASS 的 `api_session` 不能形成整体 `PASS` 或 Windows live 验证；这些 Mac/静态结果仍不构成真实 Windows PowerShell 或 TdxQuant 现场证据。
+
+HAZ-447 在 macOS + Python 3.12 的修复回归：`uv sync --all-groups --frozen`、`uv lock --check`、Build/Preflight/Windows 包定向 51 项与全量 97 项 pytest、Ruff、Mypy、Windows 包离线契约、workspace validation、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。深层 checkout、中文/空格路径、240 字符 ISCC 保守预算、重复/失败清理、子进程非零/启动失败及缺失/畸形报告均由 fixture/静态契约覆盖；这些 Mac 结果不能替代真实 Windows ISCC、PowerShell、App Control 或 TdxQuant 复验。
 
 ## Session Handoff
 

@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
 
 ## 构建、卸载与回滚
 
-- 菜单“构建分发包”要求已安装 Inno Setup，并依次生成 `dist\StockWatcher` 与安装器；任一步失败都会返回非零，不显示成功提示。
+- 菜单“构建分发包”要求已安装 Inno Setup。入口通过本任务独占的短路径 staging 生成 PyInstaller bundle 和安装器，全部成功后才发布 `dist\StockWatcher-0.3.0-alpha-portable.zip` 与 `dist\installer\StockWatcher-0.3.0-alpha-setup.exe`；任一步失败都会清理当次 staging、保留既有产物并返回非零。
 - 应用和报告位于 `%LOCALAPPDATA%\StockWatcher`，安装程序位于 `%LOCALAPPDATA%\Programs\StockWatcher`。
 - 卸载不会自动删除数据库、日志和 M0 报告，避免误删证据。确认已备份后再由用户手动删除运行目录。
 - 回滚时卸载当前版本并安装上一个已验证包；不得为恢复服务切换到未授权数据源。

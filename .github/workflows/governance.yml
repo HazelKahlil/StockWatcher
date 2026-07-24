@@ -76,7 +76,7 @@ jobs:
         with:
           name: stockwatcher-windows-py${{ matrix.python-version }}
           path: |
-            dist/StockWatcher/**
+            dist/StockWatcher-0.3.0-alpha-portable.zip
             dist/installer/*.exe
           if-no-files-found: error
           retention-days: 7

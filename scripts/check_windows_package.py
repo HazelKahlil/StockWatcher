@@ -45,6 +45,14 @@ def main() -> int:
         )
     if "Invoke-CheckedNative" not in powershell:
         errors.append("PowerShell entry must fail closed on native command errors")
+    if "subst.exe" not in powershell or "Assert-IsccPathBudget" not in powershell:
+        errors.append("PowerShell build must enforce the short ISCC input path contract")
+    if '".swb"' not in powershell or '"h447-$stageId"' not in powershell:
+        errors.append("PowerShell build must use an issue-owned staging directory")
+    if "Write-FallbackPreflightReport" not in powershell:
+        errors.append("PowerShell preflight must persist a fixed fail-closed fallback report")
+    if "Read-ValidPreflightReport" not in powershell:
+        errors.append("PowerShell preflight must validate the report before propagating failure")
     if "3.11 或 3.12" not in powershell:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
@@ -54,6 +62,8 @@ def main() -> int:
         errors.append("installer must use per-user, non-admin installation")
     if "UninstallDelete" not in installer:
         errors.append("installer must declare uninstall behavior")
+    if "StockWatcherBundleDir" not in installer or "StockWatcherOutputDir" not in installer:
+        errors.append("installer must accept controlled short build paths")
     if errors:
         print("Windows package contract failed:")
         print("\n".join(f"- {error}" for error in errors))

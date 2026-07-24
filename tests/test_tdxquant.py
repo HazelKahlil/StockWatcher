@@ -683,6 +683,75 @@ def test_preflight_main_writes_sanitized_failure_report_before_nonzero_exit(
     assert "account=demo" not in rendered
 
 
+def test_preflight_main_converts_ordinary_exception_to_fixed_failure_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_path = tmp_path / "含 空格与中文" / "tdxquant-preflight.json"
+
+    def unexpected_failure(**_kwargs: object) -> object:
+        raise RuntimeError(
+            "ErrorMsg=raw account=demo-user hostname=DESKTOP-DEMO "
+            "C:\\Users\\demo token=vendor-secret"
+        )
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.run_preflight",
+        unexpected_failure,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tdxquant_preflight", "--output", str(output_path)],
+    )
+
+    assert main() == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert set(payload) == {
+        "status",
+        "platform",
+        "python_version",
+        "endpoint",
+        "checks",
+        "fund_module",
+        "windows_live_verified",
+    }
+    assert payload["status"] == "FAIL"
+    assert payload["endpoint"] == "http://127.0.0.1:17709/"
+    assert payload["windows_live_verified"] is False
+    assert payload["checks"] == [
+        {
+            "name": "api_session",
+            "status": "FAIL",
+            "message": FAILURE_MESSAGES_ZH[TdxFailureReason.INVALID_RESPONSE],
+            "reason": "invalid_response",
+        }
+    ]
+    rendered = output_path.read_text(encoding="utf-8").lower()
+    for forbidden in (
+        "errormsg",
+        "demo-user",
+        "desktop-demo",
+        "c:\\\\users",
+        "token",
+        "vendor-secret",
+    ):
+        assert forbidden not in rendered
+
+
+def test_preflight_report_does_not_emit_terminal_directory_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "account-demo token-secret 用户名"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+
+    report = run_preflight(terminal_path=terminal_path, attempt_api=False)
+
+    terminal = next(check for check in report.checks if check.name == "terminal_install")
+    assert terminal.message == "已找到指定的官方终端目录。"
+    assert terminal_path.name not in report.to_json()
+    assert not report.windows_live_verified
+
+
 def test_sanitized_report_contains_no_secret_or_raw_payload(tmp_path: Path) -> None:
     report = M0Report(
         generated_at=now().isoformat(),

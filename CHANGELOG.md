@@ -22,6 +22,7 @@
 - v0.3 板块关系与交易日历改为实际返回带时间、版本和质量元数据的统一 domain 对象；陈旧/中断后的行情必须完成配置数量的恢复预热样本后才重新放行。
 - Windows 入口仅选择项目支持的 Python 3.11/3.12，原生命令失败立即返回非零；独立真实 Windows 无终端验收在两个版本上验证安装、导入、CLI、PowerShell、PyInstaller 和 Inno Setup 链路。GitHub Actions 因账户 billing 未启动，不能表述为 CI PASS。
 - TdxQuant Preflight 在 API 会话返回供应商错误、意外响应或安全兜底异常时，先写出结构完整的 UTF-8 脱敏 `FAIL` 报告，再保持 PowerShell 非零退出；报告不再包含供应商原始 detail。
+- Windows Build 通过临时短盘符与本任务独占 staging 把全部 ISCC 输入约束在经典路径预算内，成功后才发布 installer/portable ZIP；Preflight 对子进程启动失败、非零退出、缺失或畸形报告统一先落盘固定、脱敏的 `FAIL` 报告，再传播失败语义。
 
 ### Validation
 

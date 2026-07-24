@@ -2,6 +2,12 @@
 #define MyAppVersion "0.3.0-alpha"
 #define MyAppPublisher "StockWatcher"
 #define MyAppExeName "StockWatcher.exe"
+#ifndef StockWatcherBundleDir
+  #define StockWatcherBundleDir "..\..\dist\StockWatcher"
+#endif
+#ifndef StockWatcherOutputDir
+  #define StockWatcherOutputDir "..\..\dist\installer"
+#endif
 
 [Setup]
 AppId={{A768F76E-58CC-42C8-AC00-793593DF88A1}
@@ -11,7 +17,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
-OutputDir=..\..\dist\installer
+OutputDir={#StockWatcherOutputDir}
 OutputBaseFilename=StockWatcher-0.3.0-alpha-setup
 Compression=lzma2
 SolidCompression=yes
@@ -20,7 +26,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
-Source: "..\..\dist\StockWatcher\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StockWatcherBundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--provider tdxquant"

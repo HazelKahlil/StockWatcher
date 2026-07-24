@@ -7,6 +7,7 @@ import platform
 import re
 import socket
 import sys
+import uuid
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -24,6 +25,9 @@ class CheckStatus(StrEnum):
     PASS = "PASS"
     WARN = "WARN"
     FAIL = "FAIL"
+
+
+REPORT_ENDPOINT = "http://127.0.0.1:17709/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,40 @@ def _aggregate(checks: list[PreflightCheck]) -> CheckStatus:
     if CheckStatus.WARN in statuses:
         return CheckStatus.WARN
     return CheckStatus.PASS
+
+
+def _safe_platform_name() -> str:
+    return "Windows" if sys.platform == "win32" else "non-Windows"
+
+
+def _failure_report(
+    reason: TdxFailureReason = TdxFailureReason.INVALID_RESPONSE,
+) -> PreflightReport:
+    return PreflightReport(
+        status=CheckStatus.FAIL,
+        platform=_safe_platform_name(),
+        python_version=platform.python_version(),
+        endpoint=REPORT_ENDPOINT,
+        checks=(
+            PreflightCheck(
+                "api_session",
+                CheckStatus.FAIL,
+                FAILURE_MESSAGES_ZH[reason],
+                reason,
+            ),
+        ),
+    )
+
+
+def write_preflight_report(report: PreflightReport, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(report.to_json(), encoding="utf-8")
+        json.loads(temporary.read_text(encoding="utf-8"))
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 _STOCK_CODE_PATTERN = re.compile(r"\d{6}\.(?:SH|SZ|BJ)", re.IGNORECASE)
@@ -185,7 +223,7 @@ def run_preflight(
                 "terminal_install",
                 CheckStatus.PASS if terminal_installed else CheckStatus.FAIL,
                 (
-                    f"已找到终端目录：{terminal_path.name}"
+                    "已找到指定的官方终端目录。"
                     if terminal_installed
                     else FAILURE_MESSAGES_ZH[TdxFailureReason.TERMINAL_NOT_INSTALLED]
                 ),
@@ -231,9 +269,9 @@ def run_preflight(
         checks.append(_check_api_session(endpoint, timeout_seconds))
     return PreflightReport(
         status=_aggregate(checks),
-        platform=platform.platform(),
+        platform=_safe_platform_name(),
         python_version=platform.python_version(),
-        endpoint=endpoint,
+        endpoint=REPORT_ENDPOINT,
         checks=tuple(checks),
         windows_live_verified=(
             is_windows
@@ -251,15 +289,19 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--allow-non-windows", action="store_true")
     args = parser.parse_args()
-    report = run_preflight(
-        endpoint=args.endpoint,
-        terminal_path=args.terminal_path,
-        require_windows=not args.allow_non_windows,
-    )
+    try:
+        report = run_preflight(
+            endpoint=args.endpoint,
+            terminal_path=args.terminal_path,
+            require_windows=not args.allow_non_windows,
+        )
+    except Exception:
+        # Runtime/vendor exceptions may contain account identifiers, host names,
+        # paths, responses, or credentials. The report keeps a fixed safe schema.
+        report = _failure_report()
     rendered = report.to_json()
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rendered, encoding="utf-8")
+        write_preflight_report(report, args.output)
         print(f"Preflight: {report.status}; report: {args.output.name}")
     else:
         print(rendered)
