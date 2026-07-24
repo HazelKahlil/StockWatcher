@@ -20,13 +20,16 @@
 ### Fixed
 
 - v0.3 板块关系与交易日历改为实际返回带时间、版本和质量元数据的统一 domain 对象；陈旧/中断后的行情必须完成配置数量的恢复预热样本后才重新放行。
-- Windows 入口仅选择项目支持的 Python 3.11/3.12，原生命令失败立即返回非零；CI 在两个版本上验证无通达信终端的安装、导入、CLI、PowerShell、PyInstaller 和 Inno Setup 链路。
+- Windows 入口仅选择项目支持的 Python 3.11/3.12，原生命令失败立即返回非零；独立真实 Windows 无终端验收在两个版本上验证安装、导入、CLI、PowerShell、PyInstaller 和 Inno Setup 链路。GitHub Actions 因账户 billing 未启动，不能表述为 CI PASS。
+
+### Validation
+
+- 冻结代码候选 `7d5c8b07dd714d4f209528d23074692e8644103c` 已通过独立真实 Windows 无终端工程/打包验证：Python 3.11/3.12 各 74 项测试、PowerShell Setup 与 loopback Preflight 失败闭环、PyInstaller 和 Inno Setup 均通过。该结论不包含真实 TdxQuant、行情、紫黄线、交易时段、通知、多屏或安装卸载体验。
 
 ### Pending synchronization
 
-- v0.1 已本地完成，尚未同步 GitHub；该版本只证明 Mac + Mock/Replay，不证明 Windows、通达信或真实行情。
-- v0.2 已本地完成，尚未同步 GitHub；第二次 Human Visual Acceptance 仅覆盖 Mac + Mock/Replay 截图，不证明 Windows、通达信、真实行情、紫黄线、Windows 通知或安装包。
-- v0.3 前置代码仅在 Mac/fixture/离线构建契约下验证；真实 Windows、TdxQuant、紫黄线、完整交易时段和安装体验仍待现场 M0。
+- v0.1/v0.2 与 v0.3 前置交付候选已合入本地 `main`，并由单一 draft PR #2 镜像到私有 GitHub；PR 尚未合入 `origin/main`，不得称为远端已发布。
+- v0.3 已有 Mac 全量回归和独立真实 Windows 无终端工程/打包证据；真实 TdxQuant、行情、紫黄线、完整交易时段、通知/多屏和安装卸载体验仍待 Human Owner 现场 M0。
 
 ## [0.0.0] - 2026-07-22
 

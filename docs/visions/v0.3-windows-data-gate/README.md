@@ -1,6 +1,6 @@
 # v0.3-windows-data-gate：Windows TdxQuant 真实数据闸门
 
-> 状态：活跃（前置交付包已实现，等待 Windows 现场 M0）
+> 状态：活跃（前置交付候选已完成 Mac 回归与独立 Windows 无终端验证，等待 Human Owner 现场 TdxQuant M0）
 > 创建：2026-07-22 ｜ 路线收敛：2026-07-23 ｜ 计划 tag：`v0.3.0`
 
 ## 权威结论
@@ -9,6 +9,7 @@
 - HAZ-404 证明官方 TdxQuant 仍在维护，支持 `tqcenter` Python 调用和本机 `POST http://127.0.0.1:17709/`。本机 HTTP 不是供应商托管 HTTPS，不得开放到非回环地址。
 - 官方免费 64 位“金融终端（量化模拟）”不含券商交易，适合作为现场 M0 起点；技术可调用不等于已获多人展示、保存或派生结果授权。
 - Mac 只证明 Mock/Replay、归一化契约、离线测试和打包配置；不能证明 Windows、通达信、真实交易时段、紫黄线、性能或安装体验。
+- 独立真实 Windows v9 验证只证明冻结候选的 Python 3.11/3.12 工程与打包链；没有连接 TdxQuant 终端或行情，不能替代现场 M0。
 - 紫黄线、Level-2、`Zjl`、`Zjl_HB` 与公式口径在真实 M0 前全部保持 `unavailable`。
 
 ## HAZ-410 前置交付范围
@@ -63,15 +64,21 @@
 | 2026-07-23 | HAZ-418 修复板块/日历归一化、STALE 恢复门与 PowerShell 失败语义；新增 Python 3.11/3.12 `windows-latest` 无终端构建矩阵 | 候选分支验证中；不等于真实 TdxQuant M0 |
 | 2026-07-24 | HAZ-420 为冻结候选补齐 Windows `tzdata`、PowerShell 5.1 UTF-8 BOM 字节门禁，并将 macOS/Windows 无 TQ 服务预检测试改为显式宿主契约；Mac 全量门禁与离屏 Replay smoke 通过 | 源码候选已修复；仍待真实 Windows Builder 重打包与双版本矩阵复验 |
 | 2026-07-24 | HAZ-423 修复 PowerShell Setup 的内嵌 Python 版本判断语法，并以实际 `-c` 片段的 AST 回归锁定 3.11–3.12 支持范围 | 新冻结候选待 Windows Builder 重打包与双版本矩阵复验 |
+| 2026-07-24 | HAZ-430 对冻结候选 `7d5c8b07dd714d4f209528d23074692e8644103c` 完成独立真实 Windows v9 只读验收：23/23 步骤通过，Python 3.11/3.12 各 74 项测试，PowerShell、PyInstaller 与 Inno Setup 通过 | `PASS`；仅证明无终端工程/打包链 |
+| 2026-07-24 | HAZ-417 对 HAZ-415 三项 blocker 的唯一复审为 `PASS`；HAZ-416 将精确候选 fast-forward 合入本地 `main`，Mac 最终门禁 74 项测试与五状态 Replay smoke 通过，并复用单一 draft PR #2 做私有 GitHub 里程碑同步 | 本地候选收口；PR 待 Human Owner 审核/合入，真实 TdxQuant M0 待现场 |
 
 ## 验证边界
 
-- 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复、安全门、PyInstaller 配置与 Windows 包离线检查。
-- 当前未验证：Windows、真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏、安装器与卸载体验。
-- GitHub：本地 `main` 比 `origin/main` 领先；HAZ-418 仅为取得真实 `windows-latest` 证据推送候选分支并使用单一 draft 里程碑 PR，不合入本地 `main`。
+- 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复和安全门；独立真实 Windows 下 Python 3.11/3.12 的安装、导入、CLI、74 项测试、Ruff、Mypy、PowerShell 失败闭环、PyInstaller 与 Inno Setup。
+- 当前未验证：真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏，以及 Human Owner 机器上的安装与卸载体验。
+- GitHub：精确代码候选已合入本地 `main`；为避免重复分支/PR，里程碑同步复用 HAZ-418 已建立的 `fix/HAZ-418-blockers` 远端 head 与单一 draft PR #2。`origin/main` 在 PR 合入前仍未同步。
+
+GitHub Actions run `30062601762` 对候选 commit 的三个 jobs 均在 `steps=[]`、`runner_id=0` 时因账户 payment/spending limit 失败，不能表述为 CI PASS。Human Owner 已明确接受 HAZ-430 的独立真实 Windows v9 只读 `PASS` 作为该平台阻塞的替代工程证据；不得等待、规避或更改 billing。
 
 HAZ-410 在 macOS + Python 3.12 的前置验证：`uv sync --all-groups --frozen`、`uv lock --check`、62 项 pytest、Ruff、Mypy、workspace validation、Windows package offline contract、`git diff --check` 均通过；离屏 Replay smoke 生成 5 张状态图；PyInstaller 成功生成当前 macOS 架构目录且冻结程序 `--help` 可启动。这些结果不构成 Windows 构建或 TdxQuant 真机证据。
 
+HAZ-416 在最终文档树上的 macOS + Python 3.12 回归：`uv sync --all-groups --frozen`、`uv lock --check`、Provider/恢复/Windows 包定向 39 项与全量 74 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。真实 Windows 工程/打包证据仍以 HAZ-430 对代码候选 `7d5c8b07dd714d4f209528d23074692e8644103c` 的独立结果为准。
+
 ## Session Handoff
 
-下一位现场执行者先读本文件和 [Windows 一页交接](windows-handoff.md)，再在真实 Windows 运行 PowerShell 的“预检”和“M0 探针”。失败不得改接非官方数据源；按报告中的具体原因修复或给出 `FAIL`。
+Human Owner 到 Windows 后只需先读 [Windows 一页交接](windows-handoff.md)，安装并登录官方免费 64 位“金融终端（量化模拟）”，再运行 PowerShell 一键入口的“预检”和“M0 探针”。失败不得改接非官方数据源；按报告中的具体原因修复或给出 `FAIL`。

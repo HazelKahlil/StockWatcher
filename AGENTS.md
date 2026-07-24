@@ -7,7 +7,7 @@
 - 本地路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`
 - 当前开发电脑：Mac；没有可用于真实验证的 Windows 电脑。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：v0.1 Mac Replay Foundation 与 v0.2 Mac Local Alpha 均已本地完成、待同步 GitHub；`v0.3-windows-data-gate` 当前只推进 Windows + 官方 TdxQuant 单人只读测试路线（进行中）。
+- 当前状态：v0.1 Mac Replay Foundation、v0.2 Mac Local Alpha 与 v0.3 Windows 无终端交付候选已合入本地 `main`，由单一 draft PR #2 同步；`v0.3-windows-data-gate` 仍等待 Human Owner 在真实 Windows + 官方 TdxQuant 完成单人只读 M0。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。

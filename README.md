@@ -8,7 +8,7 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 
 - 项目治理与 V2.0 交接基线已建立。
 - 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1/v0.2 的 Mac Mock/Replay 范围已本地完成。
-- 当前活跃目标是 `v0.3-windows-data-gate`：Windows + 官方 TdxQuant 单人只读测试。Mac 继续承担开发、Mock/Replay 与离线契约验证，不购买或接入 Tushare/iFinD。
+- 当前活跃目标是 `v0.3-windows-data-gate`：Windows + 官方 TdxQuant 单人只读测试。前置代码已通过 Mac 回归和独立真实 Windows 的无终端工程/打包验证；Human Owner 的真实 TdxQuant M0 仍未执行。Mac 不购买或接入 Tushare/iFinD。
 - Windows 真机 M0 前不得声称紫黄线、真实交易时段、Windows 通知或安装体验已经验证。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
 
@@ -71,13 +71,13 @@ uv run python -m stock_watcher.ui.app
 
 ## Windows TdxQuant 现场入口
 
-Human Owner 只需安装并登录官方免费 64 位“金融终端（量化模拟）”，从私有 GitHub 取得交付包后运行：
+Human Owner 只需安装并登录官方免费 64 位“金融终端（量化模拟）”，从私有 GitHub 的单一 draft PR #2（合入后为 `main`）取得交付候选后运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
 ```
 
-该入口可安装/更新环境、执行 TQ 预检、启动安全诊断界面、导出脱敏 M0 报告及构建分发包。详见 [Windows 一页交接](docs/visions/v0.3-windows-data-gate/windows-handoff.md)。
+该入口可安装/更新环境、执行 TQ 预检、启动安全诊断界面、导出脱敏 M0 报告及构建分发包。Python 3.11/3.12、74 项测试、PowerShell 失败闭环、PyInstaller 和 Inno Setup 已在独立真实 Windows 无终端环境通过；这不等于真实 TdxQuant、行情、紫黄线、交易时段或安装体验已验证。详见 [Windows 一页交接](docs/visions/v0.3-windows-data-gate/windows-handoff.md)。
 
 ## 版本路线
 

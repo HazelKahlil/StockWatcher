@@ -3,7 +3,7 @@
 ## 你只需要做三件事
 
 1. 在 Windows 安装并登录通达信官网免费的 64 位“金融终端（量化模拟）”，保持终端运行并开启 TQ。
-2. 从 StockWatcher 私有 GitHub 取得交付包并解压。不要把 Windows 密码、通达信密码、token 或远程桌面权限交给 Agent。
+2. 从 StockWatcher 私有 GitHub 的单一 draft PR #2（合入后为 `main`）取得交付候选并解压。不要把 Windows 密码、通达信密码、token 或远程桌面权限交给 Agent。
 3. 在解压目录右键打开 PowerShell，运行：
 
 ```powershell
@@ -11,6 +11,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
 ```
 
 菜单依次执行“安装/更新”→“通达信预检”→“执行 M0 探针”。需要查看安全诊断界面时再选“启动应用”。
+
+## 到现场前已经验证
+
+- 冻结代码候选 `7d5c8b07dd714d4f209528d23074692e8644103c` 已由独立真实 Windows 只读任务完成无终端工程/打包验收。
+- Python 3.11/3.12 各完成冻结安装、30 项锁版本、74 项 pytest、Ruff、Mypy、PyInstaller 与 Inno Setup。
+- PowerShell Setup 已通过；不可用 loopback endpoint 的 Preflight 会按预期非零失败，不会假报成功。
+- 这些证据只减少现场工程风险，不证明真实 TdxQuant、行情、紫黄线、交易时段、通知、多屏或安装卸载体验。
 
 ## 不需要什么
 
@@ -48,4 +55,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
 - 卸载不会自动删除数据库、日志和 M0 报告，避免误删证据。确认已备份后再由用户手动删除运行目录。
 - 回滚时卸载当前版本并安装上一个已验证包；不得为恢复服务切换到未授权数据源。
 
-Windows、通达信、紫黄线、性能和安装体验只有在真实机器完成上述 M0 后才算验证。
+因此 Human Owner 到 Windows 后唯一剩余步骤，就是安装并登录官方免费终端，再运行上述一键入口完成真实 TdxQuant M0。通达信行情、紫黄线、性能和安装体验只有这次现场 M0 后才算验证。

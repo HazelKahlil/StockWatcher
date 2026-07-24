@@ -35,9 +35,9 @@
 | 数据库 | SQLite WAL；分钟数据可按验证结果使用 Parquet / DuckDB |
 | 配置 | YAML + Pydantic；锁定规则、软参数、用户设置和运行环境分层 |
 | 测试 | pytest + ReplayProvider + SyntheticScenarioBuilder；真实数据另做 M0/影子验证 |
-| 打包 | v0.3 提供 PyInstaller + Inno Setup 前置配置；Mac 只能验证配置、导入和离线契约，Windows 生成物与安装体验必须真机回读 |
+| 打包 | v0.3 提供 PyInstaller + Inno Setup 前置配置；独立真实 Windows 已验证双 Python 工程/构建链，Human Owner 仍须现场验证安装、卸载和真实 TdxQuant 运行 |
 | 部署 | 当前只有 Mac 本地开发环境，无生产部署；v0.3 交付 Windows 本地只读预检、M0 探针与诊断 UI，不接交易账户 |
-| 当前验证 | v0.2 已在 Mac + Mock/Replay 下本地收口；v0.3 前置代码可在 Mac 离线回归，Windows/TdxQuant 真实 M0 尚未进行 |
+| 当前验证 | v0.2 已在 Mac + Mock/Replay 下本地收口；v0.3 冻结候选已通过 Mac 全量回归与独立真实 Windows 无终端工程/打包验证，Windows/TdxQuant 真实 M0 尚未进行 |
 
 ## 计划模块表
 
