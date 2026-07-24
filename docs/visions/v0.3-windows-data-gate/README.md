@@ -62,6 +62,7 @@
 | 2026-07-23 | HAZ-410 完成 Provider/传输/预检/M0/PowerShell/打包前置与离线回归 | 实现完成，待 Windows 现场 |
 | 2026-07-23 | HAZ-418 修复板块/日历归一化、STALE 恢复门与 PowerShell 失败语义；新增 Python 3.11/3.12 `windows-latest` 无终端构建矩阵 | 候选分支验证中；不等于真实 TdxQuant M0 |
 | 2026-07-24 | HAZ-420 为冻结候选补齐 Windows `tzdata`、PowerShell 5.1 UTF-8 BOM 字节门禁，并将 macOS/Windows 无 TQ 服务预检测试改为显式宿主契约；Mac 全量门禁与离屏 Replay smoke 通过 | 源码候选已修复；仍待真实 Windows Builder 重打包与双版本矩阵复验 |
+| 2026-07-24 | HAZ-423 修复 PowerShell Setup 的内嵌 Python 版本判断语法，并以实际 `-c` 片段的 AST 回归锁定 3.11–3.12 支持范围 | 新冻结候选待 Windows Builder 重打包与双版本矩阵复验 |
 
 ## 验证边界
 

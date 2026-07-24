@@ -28,7 +28,7 @@ function Resolve-PythonLauncher {
         if (-not (Get-Command $candidate.Command -ErrorAction SilentlyContinue)) {
             continue
         }
-        & $candidate.Command @($candidate.Arguments) -c "import sys; raise SystemExit(0 if (3, 11) -le sys.version_info[:2] -le (3, 12) else 1)" *> $null
+        & $candidate.Command @($candidate.Arguments) -c "import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 12) else 1)" *> $null
         if ($LASTEXITCODE -eq 0) {
             return $candidate
         }
