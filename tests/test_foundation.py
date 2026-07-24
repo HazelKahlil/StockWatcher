@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,6 +16,31 @@ from stock_watcher.storage import SQLiteStore
 
 def builder() -> SyntheticScenarioBuilder:
     return SyntheticScenarioBuilder(datetime(2026, 7, 22, 9, 30, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+
+def test_frozen_runtime_resolves_shanghai_without_system_tzdata() -> None:
+    environment = os.environ.copy()
+    environment["PYTHONTZPATH"] = ""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from datetime import datetime\n"
+                "from zoneinfo import TZPATH, ZoneInfo\n"
+                "assert TZPATH == ()\n"
+                'zone = ZoneInfo("Asia/Shanghai")\n'
+                "assert datetime(2026, 7, 24, tzinfo=zone).utcoffset().total_seconds() == 28800\n"
+                "print(zone.key)\n"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.stdout.strip() == "Asia/Shanghai"
 
 
 def event_at(

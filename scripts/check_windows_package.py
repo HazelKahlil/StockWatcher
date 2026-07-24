@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+import codecs
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read_utf8_bom(path: Path, errors: list[str]) -> str:
+    content = path.read_bytes()
+    bom_count = content.count(codecs.BOM_UTF8)
+    if not content.startswith(codecs.BOM_UTF8) or bom_count != 1:
+        errors.append(
+            f"{path.relative_to(ROOT)} must start with exactly one UTF-8 BOM"
+        )
+    payload = content[len(codecs.BOM_UTF8) :] if content.startswith(codecs.BOM_UTF8) else content
+    try:
+        return payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        errors.append(f"{path.relative_to(ROOT)} must be strict UTF-8 after its BOM: {error}")
+        return ""
 
 
 def main() -> int:
@@ -17,7 +33,7 @@ def main() -> int:
     if errors:
         print("\n".join(errors))
         return 1
-    powershell = required[0].read_text(encoding="utf-8")
+    powershell = _read_utf8_bom(required[0], errors)
     for action in ("Setup", "Preflight", "Run", "Probe", "Build"):
         if f'"{action}"' not in powershell:
             errors.append(f"PowerShell entry is missing action {action}")

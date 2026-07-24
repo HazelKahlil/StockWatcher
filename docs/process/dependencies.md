@@ -1,6 +1,6 @@
 # v0.3 依赖审计
 
-> 最后更新：2026-07-22 ｜ 范围：`pyproject.toml` 的直接与开发依赖；精确解析版本见 `uv.lock`。
+> 最后更新：2026-07-24 ｜ 范围：`pyproject.toml` 的直接与开发依赖；精确解析版本见 `uv.lock`。
 
 TdxQuant 默认使用 Python 标准库访问官方本机回环服务；可选 `tqcenter` 由官方 Windows 终端环境提供并延迟加载，不写入跨平台锁文件。本版不引入交易 SDK、交易账户、凭证或通知 SDK。
 
@@ -9,6 +9,7 @@ TdxQuant 默认使用 Python 标准库访问官方本机回环服务；可选 `t
 | `pydantic` | 运行时；版本化配置与输入校验 | MIT | 仅本地解析；不得把配置中的秘密写入日志、数据库或 Git。 |
 | `PySide6` | 运行时；Mac Mock/Replay 主窗口、详情、历史只读视图和低打扰弹窗 | LGPL-3.0/GPL-2.0-or-later | 仅本地桌面 UI；不连接交易账户、供应商或外部通知；版本锁定在 `uv.lock`。发布时需随包提供对应许可证与 LGPL 履约材料。 |
 | `PyYAML` | 运行时；读取受控 YAML 配置 | MIT | YAML 只使用 `safe_load`；禁止加载不可信对象。 |
+| `tzdata` | 运行时；为 Windows 等缺少系统 IANA 时区数据库的冻结环境提供 `Asia/Shanghai` 数据 | Apache-2.0 | 仅提供锁定的时区数据；不增加供应商、账户、交易或网络能力。 |
 | `hatchling` | 构建后端；生成 Python 包 | MIT | 仅构建时使用；锁文件固定解析。 |
 | `pytest` | 开发；确定性回归测试 | MIT | 仅开发期；测试不得使用真实用户、行情或凭证。 |
 | `ruff` | 开发；静态检查与 import 排序 | MIT | 仅开发期；不访问供应商或账户。 |

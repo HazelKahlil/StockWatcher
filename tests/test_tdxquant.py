@@ -404,6 +404,7 @@ def test_non_trading_session_classification(moment: datetime, expected: bool) ->
 def test_preflight_on_mac_is_explicit_offline_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("stock_watcher.providers.tdxquant_preflight.sys.platform", "darwin")
     monkeypatch.setattr(
         "stock_watcher.providers.tdxquant_preflight.socket.create_connection",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("refused")),
@@ -413,6 +414,27 @@ def test_preflight_on_mac_is_explicit_offline_evidence(
     assert not report.windows_live_verified
     assert report.fund_module == "unavailable"
     service = next(check for check in report.checks if check.name == "tq_service")
+    assert service.reason is TdxFailureReason.SERVICE_UNREACHABLE
+
+
+def test_preflight_on_windows_without_tq_service_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("stock_watcher.providers.tdxquant_preflight.sys.platform", "win32")
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.socket.create_connection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("refused")),
+    )
+    report = run_preflight(require_windows=True, attempt_api=False)
+    assert report.status is CheckStatus.FAIL
+    assert not report.windows_live_verified
+    assert report.fund_module == "unavailable"
+    operating_system = next(
+        check for check in report.checks if check.name == "operating_system"
+    )
+    assert operating_system.status is CheckStatus.PASS
+    service = next(check for check in report.checks if check.name == "tq_service")
+    assert service.status is CheckStatus.FAIL
     assert service.reason is TdxFailureReason.SERVICE_UNREACHABLE
 
 
