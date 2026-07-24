@@ -31,7 +31,13 @@ from stock_watcher.providers import (
 )
 from stock_watcher.providers.tdxquant import FAILURE_MESSAGES_ZH, is_continuous_trading_session
 from stock_watcher.providers.tdxquant_m0 import M0Report, _timed, write_report
-from stock_watcher.providers.tdxquant_preflight import CheckStatus, main, run_preflight
+from stock_watcher.providers.tdxquant_preflight import (
+    CheckStatus,
+    PreflightCheck,
+    PreflightReport,
+    main,
+    run_preflight,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tdxquant"
 
@@ -444,6 +450,114 @@ class ReachableSocket:
 
     def __exit__(self, *_args: object) -> None:
         return None
+
+
+def _prepare_passing_windows_preflight(
+    monkeypatch: pytest.MonkeyPatch, terminal_path: Path
+) -> None:
+    terminal_path.mkdir()
+    monkeypatch.setattr("stock_watcher.providers.tdxquant_preflight.sys.platform", "win32")
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.importlib.util.find_spec",
+        lambda _name: object(),
+    )
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.socket.create_connection",
+        lambda *_args, **_kwargs: ReachableSocket(),
+    )
+
+
+@pytest.mark.parametrize(
+    "api_result",
+    (
+        {"unexpected": "opaque"},
+        {"stock_list": {"ErrorId": "1", "ErrorMsg": "vendor-secret"}},
+        {"stock_list": []},
+        ["600000.SH", {"code": "000001.SZ"}],
+        ["not-a-stock-code"],
+    ),
+)
+def test_preflight_rejects_malformed_nonempty_stock_list_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, api_result: object
+) -> None:
+    terminal_path = tmp_path / "official-terminal"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call",
+        lambda *_args, **_kwargs: api_result,
+    )
+
+    report = run_preflight(terminal_path=terminal_path)
+
+    api_session = next(check for check in report.checks if check.name == "api_session")
+    assert api_session.status is CheckStatus.FAIL
+    assert api_session.reason in {
+        TdxFailureReason.INVALID_RESPONSE,
+        TdxFailureReason.NOT_LOGGED_IN,
+    }
+    assert report.status is CheckStatus.FAIL
+    assert not report.windows_live_verified
+    assert "vendor-secret" not in report.to_json()
+
+
+def test_preflight_without_api_check_cannot_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "official-terminal"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+
+    report = run_preflight(terminal_path=terminal_path, attempt_api=False)
+
+    assert all(check.status is CheckStatus.PASS for check in report.checks)
+    assert all(check.name != "api_session" for check in report.checks)
+    assert report.status is CheckStatus.FAIL
+    assert not report.windows_live_verified
+
+
+def test_valid_stock_list_produces_exactly_one_passing_api_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "official-terminal"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call",
+        lambda *_args, **_kwargs: ["600000.SH", "000001.SZ", "920000.BJ"],
+    )
+
+    report = run_preflight(terminal_path=terminal_path)
+
+    api_checks = tuple(check for check in report.checks if check.name == "api_session")
+    assert len(api_checks) == 1
+    assert api_checks[0].status is CheckStatus.PASS
+    assert report.status is CheckStatus.PASS
+    assert report.windows_live_verified
+
+
+@pytest.mark.parametrize(
+    "api_checks",
+    (
+        (),
+        (
+            PreflightCheck("api_session", CheckStatus.PASS, "ok"),
+            PreflightCheck("api_session", CheckStatus.PASS, "duplicate"),
+        ),
+        (PreflightCheck("api_session", CheckStatus.FAIL, "failed"),),
+    ),
+)
+def test_preflight_report_enforces_api_session_terminal_invariant(
+    api_checks: tuple[PreflightCheck, ...],
+) -> None:
+    report = PreflightReport(
+        status=CheckStatus.PASS,
+        platform="Windows-test-fixture",
+        python_version="3.12",
+        endpoint="http://127.0.0.1:17709/",
+        checks=(PreflightCheck("operating_system", CheckStatus.PASS, "ok"), *api_checks),
+        windows_live_verified=True,
+    )
+
+    assert report.status is CheckStatus.FAIL
+    assert not report.windows_live_verified
 
 
 @pytest.mark.parametrize(

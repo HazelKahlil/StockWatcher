@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import platform
+import re
 import socket
 import sys
 from dataclasses import asdict, dataclass
@@ -43,6 +44,27 @@ class PreflightReport:
     fund_module: str = "unavailable"
     windows_live_verified: bool = False
 
+    def __post_init__(self) -> None:
+        statuses = {self.status, *(check.status for check in self.checks)}
+        if CheckStatus.FAIL in statuses:
+            final_status = CheckStatus.FAIL
+        elif CheckStatus.WARN in statuses:
+            final_status = CheckStatus.WARN
+        else:
+            final_status = CheckStatus.PASS
+        api_checks = tuple(check for check in self.checks if check.name == "api_session")
+        api_session_passed = (
+            len(api_checks) == 1 and api_checks[0].status is CheckStatus.PASS
+        )
+        if final_status is CheckStatus.PASS and not api_session_passed:
+            final_status = CheckStatus.FAIL
+        object.__setattr__(self, "status", final_status)
+        object.__setattr__(
+            self,
+            "windows_live_verified",
+            self.windows_live_verified and api_session_passed,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -59,15 +81,37 @@ def _aggregate(checks: list[PreflightCheck]) -> CheckStatus:
     return CheckStatus.PASS
 
 
+_STOCK_CODE_PATTERN = re.compile(r"\d{6}\.(?:SH|SZ|BJ)", re.IGNORECASE)
+
+
+def _require_nonempty_stock_list(raw: object) -> None:
+    if isinstance(raw, dict):
+        known_lists = [raw[key] for key in ("stock_list", "Stocks") if key in raw]
+        if len(known_lists) == 1:
+            raw = known_lists[0]
+        elif raw and all(
+            isinstance(code, str) and _STOCK_CODE_PATTERN.fullmatch(code)
+            for code in raw
+        ):
+            raw = tuple(raw)
+        else:
+            raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE)
+    if not isinstance(raw, (list, tuple)):
+        raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE)
+    if not raw:
+        raise TdxTransportError(TdxFailureReason.NOT_LOGGED_IN)
+    if not all(
+        isinstance(code, str) and _STOCK_CODE_PATTERN.fullmatch(code) for code in raw
+    ):
+        raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE)
+
+
 def _check_api_session(endpoint: str, timeout_seconds: float) -> PreflightCheck:
     try:
         raw = TdxHttpTransport(endpoint, timeout_seconds).call(
             "get_stock_list", {"market": "5"}
         )
-        if not isinstance(raw, (list, tuple, dict)):
-            raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE)
-        if not raw:
-            raise TdxTransportError(TdxFailureReason.NOT_LOGGED_IN)
+        _require_nonempty_stock_list(raw)
     except TdxTransportError as error:
         return PreflightCheck(
             "api_session",
