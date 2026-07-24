@@ -29,9 +29,9 @@ from stock_watcher.providers import (
     TdxTransportError,
     provider_descriptor,
 )
-from stock_watcher.providers.tdxquant import is_continuous_trading_session
+from stock_watcher.providers.tdxquant import FAILURE_MESSAGES_ZH, is_continuous_trading_session
 from stock_watcher.providers.tdxquant_m0 import M0Report, _timed, write_report
-from stock_watcher.providers.tdxquant_preflight import CheckStatus, run_preflight
+from stock_watcher.providers.tdxquant_preflight import CheckStatus, main, run_preflight
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tdxquant"
 
@@ -436,6 +436,137 @@ def test_preflight_on_windows_without_tq_service_fails_closed(
     service = next(check for check in report.checks if check.name == "tq_service")
     assert service.status is CheckStatus.FAIL
     assert service.reason is TdxFailureReason.SERVICE_UNREACHABLE
+
+
+class ReachableSocket:
+    def __enter__(self) -> ReachableSocket:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("api_result", "expected_reason"),
+    (
+        (
+            TdxTransportError(
+                TdxFailureReason.NOT_LOGGED_IN,
+                "ErrorMsg=账号 demo-user token=vendor-secret C:\\Users\\demo",
+            ),
+            TdxFailureReason.NOT_LOGGED_IN,
+        ),
+        ("unexpected raw response password=vendor-secret", TdxFailureReason.INVALID_RESPONSE),
+        (RuntimeError("host=DESKTOP-DEMO detail=vendor-secret"), TdxFailureReason.INVALID_RESPONSE),
+    ),
+)
+def test_preflight_api_failures_are_fail_closed_and_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+    api_result: object,
+    expected_reason: TdxFailureReason,
+) -> None:
+    monkeypatch.setattr("stock_watcher.providers.tdxquant_preflight.sys.platform", "win32")
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.socket.create_connection",
+        lambda *_args, **_kwargs: ReachableSocket(),
+    )
+
+    def fake_call(*_args: object, **_kwargs: object) -> object:
+        if isinstance(api_result, Exception):
+            raise api_result
+        return api_result
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call", fake_call
+    )
+    report = run_preflight()
+
+    api_session = next(check for check in report.checks if check.name == "api_session")
+    assert report.status is CheckStatus.FAIL
+    assert not report.windows_live_verified
+    assert api_session.status is CheckStatus.FAIL
+    assert api_session.reason is expected_reason
+    assert api_session.message == FAILURE_MESSAGES_ZH[expected_reason]
+    rendered = report.to_json().lower()
+    for forbidden in (
+        "errormsg",
+        "demo-user",
+        "vendor-secret",
+        "desktop-demo",
+        "c:\\\\users",
+        "password",
+        "token",
+    ):
+        assert forbidden not in rendered
+
+
+@pytest.mark.parametrize("signal", (KeyboardInterrupt(), SystemExit(7)))
+def test_preflight_does_not_swallow_process_control_signals(
+    monkeypatch: pytest.MonkeyPatch, signal: BaseException
+) -> None:
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.socket.create_connection",
+        lambda *_args, **_kwargs: ReachableSocket(),
+    )
+
+    def interrupt(*_args: object, **_kwargs: object) -> object:
+        raise signal
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call", interrupt
+    )
+    with pytest.raises(type(signal)):
+        run_preflight(require_windows=False)
+
+
+def test_preflight_main_writes_sanitized_failure_report_before_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "官方 终端目录"
+    output_path = tmp_path / "脱敏 报告目录" / "预检 结果.json"
+    terminal_path.mkdir()
+    monkeypatch.setattr("stock_watcher.providers.tdxquant_preflight.sys.platform", "win32")
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.socket.create_connection",
+        lambda *_args, **_kwargs: ReachableSocket(),
+    )
+
+    def vendor_failure(*_args: object, **_kwargs: object) -> object:
+        raise TdxTransportError(
+            TdxFailureReason.NOT_LOGGED_IN,
+            "ErrorMsg=请先登录 account=demo token=vendor-secret",
+        )
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call",
+        vendor_failure,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tdxquant_preflight",
+            "--terminal-path",
+            str(terminal_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert main() == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    api_session = next(check for check in payload["checks"] if check["name"] == "api_session")
+    assert payload["status"] == "FAIL"
+    assert api_session == {
+        "name": "api_session",
+        "status": "FAIL",
+        "message": FAILURE_MESSAGES_ZH[TdxFailureReason.NOT_LOGGED_IN],
+        "reason": "not_logged_in",
+    }
+    rendered = output_path.read_text(encoding="utf-8").lower()
+    assert "errormsg" not in rendered
+    assert "vendor-secret" not in rendered
+    assert "account=demo" not in rendered
 
 
 def test_sanitized_report_contains_no_secret_or_raw_payload(tmp_path: Path) -> None:

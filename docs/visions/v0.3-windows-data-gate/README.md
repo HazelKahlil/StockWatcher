@@ -66,6 +66,7 @@
 | 2026-07-24 | HAZ-423 修复 PowerShell Setup 的内嵌 Python 版本判断语法，并以实际 `-c` 片段的 AST 回归锁定 3.11–3.12 支持范围 | 新冻结候选待 Windows Builder 重打包与双版本矩阵复验 |
 | 2026-07-24 | HAZ-430 对冻结候选 `7d5c8b07dd714d4f209528d23074692e8644103c` 完成独立真实 Windows v9 只读验收：23/23 步骤通过，Python 3.11/3.12 各 74 项测试，PowerShell、PyInstaller 与 Inno Setup 通过 | `PASS`；仅证明无终端工程/打包链 |
 | 2026-07-24 | HAZ-417 对 HAZ-415 三项 blocker 的唯一复审为 `PASS`；HAZ-416 将精确候选 fast-forward 合入本地 `main`，Mac 最终门禁 74 项测试与五状态 Replay smoke 通过，并复用单一 draft PR #2 做私有 GitHub 里程碑同步 | 本地候选收口；PR 待 Human Owner 审核/合入，真实 TdxQuant M0 待现场 |
+| 2026-07-24 | HAZ-439 修复真实 Windows 暴露的 Preflight 失败报告缺失与供应商 detail 泄漏风险：API 会话失败统一使用稳定 reason 和固定脱敏消息，安全兜底异常先形成 `FAIL` 报告再非零退出；Windows 矩阵增加失败报告回读及中文/空格路径合约 | Mac fixture/offline 门禁通过；新冻结候选仍待独立真实 Windows + 官方 TdxQuant 复验 |
 
 ## 验证边界
 
@@ -78,6 +79,8 @@ GitHub Actions run `30062601762` 对候选 commit 的三个 jobs 均在 `steps=[
 HAZ-410 在 macOS + Python 3.12 的前置验证：`uv sync --all-groups --frozen`、`uv lock --check`、62 项 pytest、Ruff、Mypy、workspace validation、Windows package offline contract、`git diff --check` 均通过；离屏 Replay smoke 生成 5 张状态图；PyInstaller 成功生成当前 macOS 架构目录且冻结程序 `--help` 可启动。这些结果不构成 Windows 构建或 TdxQuant 真机证据。
 
 HAZ-416 在最终文档树上的 macOS + Python 3.12 回归：`uv sync --all-groups --frozen`、`uv lock --check`、Provider/恢复/Windows 包定向 39 项与全量 74 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。真实 Windows 工程/打包证据仍以 HAZ-430 对代码候选 `7d5c8b07dd714d4f209528d23074692e8644103c` 的独立结果为准。
+
+HAZ-439 在 macOS + Python 3.12 的修复回归：`uv sync --all-groups --frozen`、`uv lock --check`、Preflight/Windows 包定向 36 项与全量 82 项 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、离屏 Replay 五状态 smoke 与 `git diff --check` 均通过。测试以 fixture/monkeypatch 覆盖供应商非零错误、意外响应、兜底异常、进程控制信号、失败报告落盘/脱敏和中文/空格路径；这些 Mac/静态结果不构成真实 Windows PowerShell 或 TdxQuant 现场证据。
 
 ## Session Handoff
 

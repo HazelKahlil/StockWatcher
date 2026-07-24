@@ -56,8 +56,14 @@ jobs:
         run: |
           pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Setup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Preflight
+          $terminalPath = Join-Path $env:RUNNER_TEMP "官方 终端目录"
+          New-Item -ItemType Directory -Force -Path $terminalPath | Out-Null
+          pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Preflight -TdxInstallPath $terminalPath
           if ($LASTEXITCODE -eq 0) { throw "Preflight unexpectedly passed without TdxQuant" }
+          $reportPath = Join-Path $env:LOCALAPPDATA "StockWatcher\reports\tdxquant-preflight.json"
+          if (-not (Test-Path $reportPath)) { throw "Failed preflight did not write a report" }
+          $report = Get-Content -Raw -Encoding UTF8 $reportPath | ConvertFrom-Json
+          if ($report.status -ne "FAIL") { throw "Failed preflight report is not FAIL" }
           python scripts/check_windows_package.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install Inno Setup

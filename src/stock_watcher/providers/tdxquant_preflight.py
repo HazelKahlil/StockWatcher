@@ -59,6 +59,39 @@ def _aggregate(checks: list[PreflightCheck]) -> CheckStatus:
     return CheckStatus.PASS
 
 
+def _check_api_session(endpoint: str, timeout_seconds: float) -> PreflightCheck:
+    try:
+        raw = TdxHttpTransport(endpoint, timeout_seconds).call(
+            "get_stock_list", {"market": "5"}
+        )
+        if not isinstance(raw, (list, tuple, dict)):
+            raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE)
+        if not raw:
+            raise TdxTransportError(TdxFailureReason.NOT_LOGGED_IN)
+    except TdxTransportError as error:
+        return PreflightCheck(
+            "api_session",
+            CheckStatus.FAIL,
+            FAILURE_MESSAGES_ZH[error.reason],
+            error.reason,
+        )
+    except Exception:
+        # Vendor/runtime details can contain responses, account identifiers, paths,
+        # or credentials. Fail closed with a stable category and fixed message.
+        reason = TdxFailureReason.INVALID_RESPONSE
+        return PreflightCheck(
+            "api_session",
+            CheckStatus.FAIL,
+            FAILURE_MESSAGES_ZH[reason],
+            reason,
+        )
+    return PreflightCheck(
+        "api_session",
+        CheckStatus.PASS,
+        "官方股票列表接口可调用；这不代表字段、授权或性能 M0 已通过。",
+    )
+
+
 def run_preflight(
     *,
     endpoint: str = "http://127.0.0.1:17709/",
@@ -151,23 +184,7 @@ def run_preflight(
     else:
         checks.append(PreflightCheck("tq_service", CheckStatus.PASS, "TQ 本机端口可达。"))
     if attempt_api:
-        try:
-            raw = TdxHttpTransport(endpoint, timeout_seconds).call(
-                "get_stock_list", {"market": "5"}
-            )
-            has_rows = isinstance(raw, (list, tuple, dict)) and bool(raw)
-            if not has_rows:
-                raise TdxTransportError(TdxFailureReason.NOT_LOGGED_IN, "empty stock list")
-        except TdxTransportError as error:
-            checks.append(PreflightCheck("api_session", CheckStatus.FAIL, str(error), error.reason))
-        else:
-            checks.append(
-                PreflightCheck(
-                    "api_session",
-                    CheckStatus.PASS,
-                    "官方股票列表接口可调用；这不代表字段、授权或性能 M0 已通过。",
-                )
-            )
+        checks.append(_check_api_session(endpoint, timeout_seconds))
     return PreflightReport(
         status=_aggregate(checks),
         platform=platform.platform(),
