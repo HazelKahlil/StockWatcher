@@ -16,7 +16,7 @@
 - STOPPED 恢复来源时间门：拒绝并计数不晚于 STOPPED 截止线的延迟样本，防止旧数据重新放行候选。
 - v0.2 Mac Local Alpha：固定三只候选、确定性回放提醒与可追溯 SQLite 记录，以及基于 Mock/Replay 的 Mac 本地界面（当前观察、三只提醒、数据中断、详情和历史）。
 - v0.3 TdxQuant 前置交付包：官方本机 HTTP/可选 Python 传输、行情归一化、健康与恢复门、Windows 一键入口、脱敏 M0 报告和 PyInstaller/Inno Setup 配置。
-- 当前单机内部自用的离线便携入口：完整解压后双击一次，复用目标机已允许且验签通过的官方 Python 3.12/Pythonw，自动检查或尝试启动验签通过的官方通达信，并在最小只读 TQ 检查成功后打开安全诊断界面；不要求管理员权限、不改 PATH、不首次联网安装依赖。
+- 当前单机内部自用的离线便携候选：ZIP 纳入完整应用树、PySide6 UI 和原生 TdxQuant Preflight；复用目标机已允许且验签通过的官方 Python 3.12/Pythonw，启动前只读检查预置依赖，且仅在严格原生 PASS 合同成立时打开真实诊断界面；不要求管理员权限、不改 PATH、不首次联网安装依赖。
 
 ### Fixed
 

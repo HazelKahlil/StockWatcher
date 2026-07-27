@@ -33,6 +33,9 @@ def main() -> int:
         ROOT / "packaging" / "windows" / "portable" / "第一次使用.md",
         ROOT / "packaging" / "windows" / "portable" / "DEPENDENCIES.md",
         ROOT / "scripts" / "build_internal_portable.py",
+        ROOT / "src" / "stock_watcher" / "__main__.py",
+        ROOT / "src" / "stock_watcher" / "providers" / "tdxquant_preflight.py",
+        ROOT / "src" / "stock_watcher" / "ui" / "app.py",
     )
     errors = [f"missing {path.relative_to(ROOT)}" for path in required if not path.is_file()]
     if errors:
@@ -79,15 +82,26 @@ def main() -> int:
         errors.append("portable entry must verify the official Python signature")
     if "ExecutionPolicy" in portable_entry or "pip" in portable_entry.lower():
         errors.append("portable entry must not install dependencies or bypass execution policy")
-    if '"list_type": 0' not in portable_runtime or '"market": "5"' not in portable_runtime:
-        errors.append("portable runtime must use the locked minimal TQ request")
     if (
         "OFFICIAL_PUBLISHERS" not in portable_runtime
         or "Get-AuthenticodeSignature" not in portable_runtime
     ):
         errors.append("portable runtime must verify the official terminal signature before launch")
-    if "候选生成：关闭" not in portable_runtime:
-        errors.append("portable runtime must keep candidate generation visibly fail-closed")
+    if "stock_watcher.providers.tdxquant_preflight" not in portable_runtime:
+        errors.append("portable runtime must execute the packaged native preflight")
+    if (
+        "windows_live_verified" not in portable_runtime
+        or 'getattr(check, "name", None) == "api_session"' not in portable_runtime
+    ):
+        errors.append("portable runtime must enforce the strict native preflight success contract")
+    if "stock_watcher.ui.app" not in portable_runtime:
+        errors.append("portable success path must launch the packaged StockWatcher UI")
+    builder = required[8].read_text(encoding="utf-8")
+    if (
+        'ROOT / "src" / "stock_watcher"' not in builder
+        or 'staging / "app" / "src" / "stock_watcher"' not in builder
+    ):
+        errors.append("portable ZIP must contain the complete stock_watcher application tree")
     installer = required[3].read_text(encoding="utf-8")
     if "PrivilegesRequired=lowest" not in installer:
         errors.append("installer must use per-user, non-admin installation")

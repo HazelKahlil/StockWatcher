@@ -74,12 +74,13 @@
 | 2026-07-24 | HAZ-452 修复 Preflight 成功语义：仅固定、完整、无重复的 canonical checks 全部 `PASS` 且 `windows_live_verified=true` 才能零退出；不完整/fallback/单项成功、未知或重复检查、顶层聚合矛盾及 live 双向矛盾均 fail-closed | macOS Python/离线门禁通过；本机无 PowerShell，行为用例如实跳过，仍待独立真实 Windows PowerShell 7.x 零跳过复核与最终 Gate |
 | 2026-07-27 | HAZ-511 基于真实官方 TQ `ErrorId=10 → 0` 证据，在 Preflight 与运行期 Provider 的 `get_stock_list` 请求中固定补齐整数 `list_type: 0`；回归覆盖旧参数失败、新参数成功、两条调用路径及供应商非零错误 fail-closed | 后继源码候选完成 macOS 离线回归；仍待 Authenticode 签名、目标 Windows 安装/启动与独立原生 Preflight，不等于客户交付或交易时段 M0 通过 |
 | 2026-07-27 | HAZ-512 基于 HAZ-511 候选增加内部单机离线便携入口：验签官方 Python 3.12/Pythonw 后无控制台启动，TQ 不可达时只尝试启动验签官方终端，固定最小只读参数检查，提供中文重试、单实例和可选普通用户桌面快捷方式 | macOS 标准库逻辑、静态安全契约及中文/空格隔离打包回归；目标 Windows VBS/Pythonw、Application Control、终端启动和真实 TQ 仍待独立验证 |
+| 2026-07-27 | HAZ-515 修复 HAZ-512 便携 ZIP 只有探测外壳的 blocker：包内纳入完整应用树、依赖声明、PySide6 UI 与原生 Preflight；启动前只读检查依赖，且仅在整体 `PASS`、恰好一个 `api_session=PASS`、`windows_live_verified=true` 时进入真实 TdxQuant UI | Mac 离线机械合同与全新目录解包/import smoke；仍待 HAZ-497 在同一冻结 ZIP 上复验目标 Windows Pythonw、依赖、原生报告、UI 与 Application Control |
 
 ## 验证边界
 
 - 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复和安全门；独立真实 Windows 下 Python 3.11/3.12 的安装、导入、CLI、74 项测试、Ruff、Mypy、PowerShell 失败闭环、PyInstaller 与 Inno Setup。
 - 当前未验证：真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏，以及 Human Owner 机器上的安装与卸载体验。
-- HAZ-512 便携候选在 Mac 仅验证标准库探测/失败分类、打包完整性与静态安全契约；VBS、官方 Pythonw/Tcl-Tk、单实例、Authenticode、快捷方式、路径含中文/空格和真实 TQ 恢复流程必须由后续目标 Windows 任务按同一冻结 ZIP 验证。
+- HAZ-515 完整便携候选在 Mac 仅验证应用树/原生 Preflight/UI 入包、启动门、依赖 fail-closed、全新目录 import、manifest 和中文/空格路径合同；VBS、官方 Pythonw、预置依赖、Authenticode、Application Control、原生报告与真实 UI 必须由 HAZ-497 按同一冻结 ZIP 在目标 Windows 复验。
 - GitHub：精确代码候选已合入本地 `main`；为避免重复分支/PR，里程碑同步复用 HAZ-418 已建立的 `fix/HAZ-418-blockers` 远端 head 与单一 draft PR #2。`origin/main` 在 PR 合入前仍未同步。
 
 GitHub Actions run `30062601762` 对候选 commit 的三个 jobs 均在 `steps=[]`、`runner_id=0` 时因账户 payment/spending limit 失败，不能表述为 CI PASS。Human Owner 已明确接受 HAZ-430 的独立真实 Windows v9 只读 `PASS` 作为该平台阻塞的替代工程证据；不得等待、规避或更改 billing。
@@ -99,6 +100,8 @@ HAZ-449 在 macOS + Python 3.12 与 PowerShell 7.5.2 的返修回归：Build/Pre
 HAZ-452 在 macOS + Python 3.12 的返修回归：`uv sync --all-groups --frozen`、`uv lock --check`、定向 Preflight/Windows 包测试、全量 105 项通过/20 项 PowerShell 宿主跳过的 pytest、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、Replay 五状态 smoke 与 `git diff --check` 均通过。新增直接反例覆盖不完整/fallback/仅 `api_session=PASS`、重复/未知/缺失检查、顶层聚合矛盾、完整 PASS + `live=false`、非 PASS + `live=true` 及子进程终态矛盾；本机未发现可调用的 `pwsh`，因此不能复用 HAZ-449 的 PowerShell 7.5.2 证据，也不构成真实 Windows、TdxQuant、行情或 M0 证据。
 
 HAZ-511 在 macOS + Python 3.12.11 的参数修复回归：`uv sync --all-groups --frozen`、`uv lock --check`、全量 pytest（109 passed、20 skipped；跳过项均因本机无 `pwsh`）、Ruff、Mypy（37 个源文件）、Windows 包离线契约、workspace validation（27 个必需文件）、Replay 五状态 smoke、PyInstaller 当前 macOS 架构构建与冻结程序 `--help`、`git diff --check` 均通过。模拟当前官方桥时，旧 `{"market":"5"}` 请求被供应商非零错误拒绝，显式整数 `{"market":"5","list_type":0}` 成功；Preflight 与运行期 Provider 均固定传递新参数，供应商 `ErrorId != 0` 继续形成整体 `FAIL` 且 `windows_live_verified=false`。本轮结果仅为 Mac 离线契约与源码候选证据；未执行真实 Windows PowerShell 5.1/7.x、PyInstaller/Inno Setup、Authenticode 签名、目标 Windows 安装/启动、真实官方 TQ 原生 Preflight、交易时段 M0 或客户交付验证。
+
+HAZ-515 在 macOS + Python 3.12.11 的完整便携修复回归：冻结依赖检查、全量 pytest（117 passed、20 skipped；跳过项均为当前宿主缺少 `pwsh`）、Ruff、Mypy（41 个源文件）、Windows 包离线合同、workspace validation（27 个必需文件）、Replay 五状态 smoke、`git diff --check` 与全新中文/空格目录解包/import/入口解析均通过。ZIP 机械检查覆盖完整应用树、原生 Preflight、真实 UI 入口、缺应用/缺 Preflight/缺依赖、严格 PASS 门、供应商非零/畸形结果和全量 payload manifest；这些 macOS/静态证据仍不构成目标 Windows Pythonw、Application Control、官方 TdxQuant 或真实 UI 验证。
 
 ## Session Handoff
 

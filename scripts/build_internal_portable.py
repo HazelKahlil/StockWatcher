@@ -10,12 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PORTABLE_SOURCE = ROOT / "packaging" / "windows" / "portable"
-PAYLOAD_FILES = (
-    "启动 StockWatcher.vbs",
-    "portable/stockwatcher_portable.py",
-    "第一次使用.md",
-    "DEPENDENCIES.md",
-)
+APPLICATION_SOURCE = ROOT / "src" / "stock_watcher"
 
 
 def _sha256(path: Path) -> str:
@@ -41,6 +36,7 @@ def build(output: Path) -> tuple[Path, str, int]:
     with tempfile.TemporaryDirectory(prefix="stockwatcher-portable-") as temporary:
         staging = Path(temporary) / root_name
         (staging / "portable").mkdir(parents=True)
+        (staging / "app" / "src").mkdir(parents=True)
         source_map = {
             "启动 StockWatcher.vbs": PORTABLE_SOURCE / "启动 StockWatcher.vbs",
             "portable/stockwatcher_portable.py": PORTABLE_SOURCE
@@ -50,11 +46,22 @@ def build(output: Path) -> tuple[Path, str, int]:
         }
         for relative, source in source_map.items():
             shutil.copyfile(source, staging / relative)
+        shutil.copytree(
+            APPLICATION_SOURCE,
+            staging / "app" / "src" / "stock_watcher",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        shutil.copyfile(ROOT / "pyproject.toml", staging / "app" / "pyproject.toml")
+        shutil.copyfile(ROOT / "uv.lock", staging / "app" / "uv.lock")
         (staging / "SOURCE_COMMIT.txt").write_text(
             f"commit={commit}\nparent={parent}\n",
             encoding="utf-8",
         )
-        manifest_targets = (*PAYLOAD_FILES, "SOURCE_COMMIT.txt")
+        manifest_targets = tuple(
+            path.relative_to(staging).as_posix()
+            for path in sorted(staging.rglob("*"))
+            if path.is_file()
+        )
         manifest = "".join(
             f"{_sha256(staging / relative)}  {relative}\n" for relative in manifest_targets
         )
@@ -69,7 +76,7 @@ def build(output: Path) -> tuple[Path, str, int]:
                 if path.is_file():
                     archive.write(path, path.relative_to(staging.parent))
         temporary_zip.replace(output)
-    return output, _sha256(output), 6
+    return output, _sha256(output), len(manifest_targets) + 1
 
 
 def main() -> int:

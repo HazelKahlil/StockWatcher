@@ -73,9 +73,11 @@ uv run python -m stock_watcher.ui.app
 
 当前单机内部自用优先使用 `StockWatcher-Internal-Portable.zip`：完整解压后双击
 **启动 StockWatcher.vbs**。入口复用目标机已允许的 python.org 官方签名 Python 3.12/Pythonw，
-不弹控制台、不要求管理员权限、不改 PATH，也不在首次启动联网安装依赖。它会先检查
-`127.0.0.1:17709`，使用 `{"market":"5","list_type":0}` 做最小只读检查；只有检查成功才显示
-“TQ 已连接”，真实字段 M0 完成前候选仍保持关闭。详见包内《第一次使用》。
+不弹控制台、不要求管理员权限、不改 PATH，也不在首次启动联网安装依赖。ZIP 包含完整
+`stock_watcher` 应用树、PySide6 UI、原生 Preflight 和冻结 `app/uv.lock`；目标机须提前按该 lock 准备运行依赖，
+并可导入与官方终端匹配的 TdxQuant `tqcenter` 模块。只有原生报告整体 `PASS`、恰好一个
+`api_session=PASS` 且 `windows_live_verified=true` 时才启动
+真实 TdxQuant 诊断 UI，真实字段 M0 完成前候选仍保持关闭。详见包内《第一次使用》。
 
 开发、完整 Preflight、M0 探针和构建仍使用 PowerShell 工程入口：
 

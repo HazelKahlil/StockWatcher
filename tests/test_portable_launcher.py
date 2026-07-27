@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
-import io
-import json
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from types import ModuleType
-from typing import Any
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -30,73 +29,13 @@ def _load_module() -> ModuleType:
     return _load_path("stockwatcher_portable", MODULE_PATH)
 
 
-class _Response:
-    def __init__(self, payload: object) -> None:
-        self._payload = payload
-
-    def __enter__(self) -> _Response:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self) -> bytes:
-        return json.dumps(self._payload).encode("utf-8")
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
-def test_portable_probe_uses_exact_read_only_contract() -> None:
-    module = _load_module()
-    captured: dict[str, Any] = {}
-
-    def opener(request: object, *, timeout: float) -> _Response:
-        captured["request"] = request
-        captured["timeout"] = timeout
-        return _Response(
-            {"result": {"ErrorId": 0, "Value": ["000001.SZ", "600000.SH"]}}
-        )
-
-    result = module.probe_tq(opener=opener)
-
-    assert result.connected is True
-    request = captured["request"]
-    assert request.full_url == "http://127.0.0.1:17709/"
-    assert request.method == "POST"
-    assert json.loads(request.data) == {
-        "id": 1,
-        "method": "get_stock_list",
-        "params": {"market": "5", "list_type": 0},
-    }
-
-
-@pytest.mark.parametrize(
-    ("payload", "expected"),
-    [
-        ({"result": {"ErrorId": 10}}, "api_rejected"),
-        ({"result": {"ErrorId": 0, "Value": []}}, "api_rejected"),
-        ({"result": {"ErrorId": 0, "Value": {"unexpected": 1}}}, "api_rejected"),
-        ({"bad": "shape"}, "api_rejected"),
-    ],
-)
-def test_portable_probe_fails_closed(payload: object, expected: str) -> None:
-    module = _load_module()
-    result = module.probe_tq(opener=lambda *_args, **_kwargs: _Response(payload))
-    assert result.state == expected
-    assert result.connected is False
-
-
-def test_portable_probe_classifies_unreachable_without_details() -> None:
-    module = _load_module()
-
-    def unavailable(*_args: object, **_kwargs: object) -> object:
-        raise OSError("account=alice path=C:\\Users\\alice body=secret")
-
-    result = module.probe_tq(opener=unavailable)
-    assert result.state == "service_unavailable"
-    assert "alice" not in module.STATE_TEXT[result.state][1]
-    assert "secret" not in module.STATE_TEXT[result.state][1]
-
-
-def test_unique_entry_is_hidden_and_does_not_bypass_policy() -> None:
+def test_unique_entry_is_hidden_signed_python_312_only() -> None:
     source = (
         ROOT / "packaging" / "windows" / "portable" / "启动 StockWatcher.vbs"
     ).read_text(encoding="utf-8")
@@ -109,6 +48,7 @@ def test_unique_entry_is_hidden_and_does_not_bypass_policy() -> None:
     assert "ExecutionPolicy" not in source
     assert "pip" not in source.lower()
     assert "http" not in source.lower()
+    assert "未找到数字签名有效" in source
 
 
 def test_portable_runtime_contains_no_install_or_security_bypass() -> None:
@@ -122,32 +62,210 @@ def test_portable_runtime_contains_no_install_or_security_bypass() -> None:
         "http://0.0.0.0",
     )
     assert all(item.casefold() not in source.casefold() for item in forbidden)
-    assert "127.0.0.1:17709" in source
+    assert "127.0.0.1:17709" not in source
     assert "_system_executable" in source
-    assert '"powershell.exe",' not in source
-    assert '["tasklist.exe"' not in source
-    assert "candidate generation" not in source.lower()
-    assert "候选生成：关闭" in source
+    assert "run_native_preflight" in source
+    assert "launch_stockwatcher_ui" in source
 
 
-def test_build_portable_zip_supports_unicode_and_space_path(tmp_path: Path) -> None:
+def test_missing_application_or_native_preflight_is_rejected(tmp_path: Path) -> None:
+    module = _load_module()
+    script = tmp_path / "完整 包" / "portable" / "stockwatcher_portable.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# fixture", encoding="utf-8")
+    layout = module.portable_layout(script)
+
+    with pytest.raises(module.PortableLaunchError, match="缺少 StockWatcher 应用"):
+        module.validate_application(layout)
+
+    package = layout.application_src / "stock_watcher"
+    (package / "providers").mkdir(parents=True)
+    (package / "ui").mkdir(parents=True)
+    for path in (
+        package / "__init__.py",
+        package / "__main__.py",
+        package / "ui" / "app.py",
+        layout.project_metadata,
+        layout.dependency_lock,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    with pytest.raises(module.PortableLaunchError, match="原生预检"):
+        module.validate_application(layout)
+
+
+def test_dependency_check_reports_exact_runtime_prerequisites() -> None:
+    module = _load_module()
+    missing = module.missing_dependencies(
+        lambda name: None if name in {"PySide6", "yaml"} else object(),
+        lambda _distribution: {
+            "pydantic": "2.13.4",
+            "tzdata": "2026.3",
+        }.get(_distribution, "fixture"),
+    )
+    assert missing == (
+        "PySide6 6.11.1",
+        "PyYAML 6.0.3",
+    )
+    message = module._dependency_message(missing)
+    assert "不会联网安装依赖" in message
+    assert "PySide6 6.11.1" in message
+    assert "PyYAML 6.0.3" in message
+
+
+def test_only_strict_native_preflight_pass_allows_ui() -> None:
+    module = _load_module()
+    pass_status = SimpleNamespace(PASS="PASS")
+
+    valid = SimpleNamespace(
+        status="PASS",
+        windows_live_verified=True,
+        checks=(SimpleNamespace(name="api_session", status="PASS"),),
+    )
+    assert module._strict_preflight_pass(valid, pass_status) is True
+
+    invalid_reports = (
+        SimpleNamespace(
+            status="PASS",
+            windows_live_verified=False,
+            checks=(SimpleNamespace(name="api_session", status="PASS"),),
+        ),
+        SimpleNamespace(
+            status="PASS",
+            windows_live_verified=True,
+            checks=(
+                SimpleNamespace(name="api_session", status="PASS"),
+                SimpleNamespace(name="api_session", status="PASS"),
+            ),
+        ),
+        SimpleNamespace(
+            status="PASS",
+            windows_live_verified=True,
+            checks=(SimpleNamespace(name="api_session", status="FAIL"),),
+        ),
+        SimpleNamespace(status="PASS", windows_live_verified=True, checks=()),
+    )
+    assert all(
+        module._strict_preflight_pass(report, pass_status) is False
+        for report in invalid_reports
+    )
+
+
+def test_success_path_calls_real_ui_only_after_native_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    terminal = ROOT / "fixture-TdxW.exe"
+    monkeypatch.setattr(module, "validate_application", lambda _layout: calls.append("layout"))
+    monkeypatch.setattr(module, "missing_dependencies", lambda: ())
+    monkeypatch.setattr(module, "find_official_terminal", lambda: terminal)
+
+    def preflight(_layout: object, *, terminal: Path) -> bool:
+        calls.append("preflight")
+        return True
+
+    def ui(_layout: object) -> int:
+        calls.append("ui")
+        return 0
+
+    monkeypatch.setattr(module, "run_native_preflight", preflight)
+    monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
+
+    assert module.launch_once(module.portable_layout()) == 0
+    assert calls == ["layout", "preflight", "ui"]
+
+
+def test_failed_native_preflight_never_calls_ui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(module, "validate_application", lambda _layout: None)
+    monkeypatch.setattr(module, "missing_dependencies", lambda: ())
+    monkeypatch.setattr(module, "find_official_terminal", lambda: ROOT / "TdxW.exe")
+    monkeypatch.setattr(module, "run_native_preflight", lambda *_args, **_kwargs: False)
+    def start_terminal() -> bool:
+        calls.append("terminal")
+        return True
+
+    def ui(_layout: object) -> int:
+        calls.append("ui")
+        return 0
+
+    monkeypatch.setattr(module, "attempt_start_official_terminal", start_terminal)
+    monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
+
+    with pytest.raises(module.PortableLaunchError, match="原生 TdxQuant 预检未通过"):
+        module.launch_once(module.portable_layout())
+    assert calls == ["terminal"]
+
+
+def test_build_portable_zip_contains_complete_app_and_verified_manifest(
+    tmp_path: Path,
+) -> None:
     builder = _load_path(
         "build_internal_portable", ROOT / "scripts" / "build_internal_portable.py"
     )
-
     output = tmp_path / "中文 目录 with spaces" / "StockWatcher-Internal-Portable.zip"
     path, digest, count = builder.build(output)
     assert path == output
-    assert len(digest) == 64
-    assert count == 6
+    assert digest == _sha256(path)
+
+    extract_root = tmp_path / "全新 解包"
     with zipfile.ZipFile(path) as archive:
-        names = archive.namelist()
-        assert len(names) == 6
-        assert all(name.startswith("StockWatcher-Internal-Portable/") for name in names)
-        assert names.count(
-            "StockWatcher-Internal-Portable/启动 StockWatcher.vbs"
-        ) == 1
-        manifest = archive.read(
-            "StockWatcher-Internal-Portable/MANIFEST.sha256"
-        ).decode("utf-8")
-        assert len(io.StringIO(manifest).readlines()) == 5
+        names = set(archive.namelist())
+        assert len(names) == count
+        required = {
+            "StockWatcher-Internal-Portable/启动 StockWatcher.vbs",
+            "StockWatcher-Internal-Portable/portable/stockwatcher_portable.py",
+            "StockWatcher-Internal-Portable/app/pyproject.toml",
+            "StockWatcher-Internal-Portable/app/uv.lock",
+            "StockWatcher-Internal-Portable/app/src/stock_watcher/__main__.py",
+            (
+                "StockWatcher-Internal-Portable/app/src/stock_watcher/"
+                "providers/tdxquant_preflight.py"
+            ),
+            "StockWatcher-Internal-Portable/app/src/stock_watcher/ui/app.py",
+            "StockWatcher-Internal-Portable/MANIFEST.sha256",
+        }
+        assert required <= names
+        archive.extractall(extract_root)
+
+    package_root = extract_root / "StockWatcher-Internal-Portable"
+    manifest_lines = (package_root / "MANIFEST.sha256").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    manifest_paths: set[str] = set()
+    for line in manifest_lines:
+        expected, relative = line.split("  ", 1)
+        target = package_root / relative
+        assert target.is_file()
+        assert _sha256(target) == expected
+        manifest_paths.add(relative)
+    delivered_payload = {
+        path.relative_to(package_root).as_posix()
+        for path in package_root.rglob("*")
+        if path.is_file() and path.name != "MANIFEST.sha256"
+    }
+    assert manifest_paths == delivered_payload
+
+    app_src = package_root / "app" / "src"
+    code = (
+        "import pathlib,sys;"
+        f"root=pathlib.Path({str(app_src)!r}).resolve();"
+        "sys.path.insert(0,str(root));"
+        "import stock_watcher;"
+        "from stock_watcher.providers import tdxquant_preflight;"
+        "from stock_watcher.ui import app;"
+        "assert pathlib.Path(stock_watcher.__file__).resolve().is_relative_to(root);"
+        "assert callable(tdxquant_preflight.run_preflight);"
+        "assert callable(app.run)"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr

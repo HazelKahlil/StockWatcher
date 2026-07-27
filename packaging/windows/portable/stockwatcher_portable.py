@@ -1,127 +1,102 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.metadata
+import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
-import threading
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
-ENDPOINT = "http://127.0.0.1:17709/"
-TQ_REQUEST = {"id": 1, "method": "get_stock_list", "params": {"market": "5", "list_type": 0}}
 OFFICIAL_PUBLISHERS = (
     "深圳市财富趋势科技股份有限公司",
     "Shenzhen Fortune Trend Technology",
 )
-CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
-STOCK_CODE_PATTERN = re.compile(r"\d{6}\.(?:SH|SZ|BJ)", re.IGNORECASE)
-
-
-class PortableState(StrEnum):
-    CHECKING = "checking"
-    TERMINAL_STARTED = "terminal_started"
-    SERVICE_UNAVAILABLE = "service_unavailable"
-    API_REJECTED = "api_rejected"
-    CONNECTED = "connected"
-
-
-STATE_TEXT: dict[PortableState, tuple[str, str]] = {
-    PortableState.CHECKING: ("正在检测", "正在检查官方通达信和 TQ 本机服务，请稍候。"),
-    PortableState.TERMINAL_STARTED: (
-        "等待本人登录",
-        "已启动验签通过的官方通达信。请在官方终端内由本人完成登录，然后点“重新检测”。",
-    ),
-    PortableState.SERVICE_UNAVAILABLE: (
-        "TQ 尚未连接",
-        "未检测到可用的 TQ 本机服务。请确认官方通达信已登录并开启 TQ，然后重新检测。",
-    ),
-    PortableState.API_REJECTED: (
-        "TQ 检查未通过",
-        "TQ 已响应，但最小只读检查未成功。请检查终端登录、版本和权限，然后重新检测。",
-    ),
-    PortableState.CONNECTED: (
-        "TQ 已连接",
-        "最小只读检查已通过。StockWatcher 已打开；真实字段 M0 完成前不会生成新候选。",
-    ),
+REQUIRED_DEPENDENCIES = {
+    "PySide6": ("PySide6", "6.11.1"),
+    "pydantic": ("pydantic", "2.13.4"),
+    "yaml": ("PyYAML", "6.0.3"),
+    "tzdata": ("tzdata", "2026.3"),
+    "tqcenter": ("tqcenter", None),
 }
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+REPORT_RELATIVE_PATH = Path("StockWatcher") / "reports" / "tdxquant-preflight.json"
+
+
+class PortableLaunchError(RuntimeError):
+    """Expected fail-closed launch error with a fixed, user-safe message."""
 
 
 @dataclass(frozen=True, slots=True)
-class ProbeResult:
-    state: PortableState
+class PortableLayout:
+    root: Path
+    application_src: Path
+    preflight: Path
+    ui_entry: Path
+    project_metadata: Path
+    dependency_lock: Path
 
-    @property
-    def connected(self) -> bool:
-        return self.state is PortableState.CONNECTED
+
+def portable_layout(script: Path | None = None) -> PortableLayout:
+    launcher = (script or Path(__file__)).resolve()
+    root = launcher.parents[1]
+    application_src = root / "app" / "src"
+    package = application_src / "stock_watcher"
+    return PortableLayout(
+        root=root,
+        application_src=application_src,
+        preflight=package / "providers" / "tdxquant_preflight.py",
+        ui_entry=package / "ui" / "app.py",
+        project_metadata=root / "app" / "pyproject.toml",
+        dependency_lock=root / "app" / "uv.lock",
+    )
+
+
+def validate_application(layout: PortableLayout) -> None:
+    required = (
+        layout.application_src / "stock_watcher" / "__init__.py",
+        layout.application_src / "stock_watcher" / "__main__.py",
+        layout.preflight,
+        layout.ui_entry,
+        layout.project_metadata,
+        layout.dependency_lock,
+    )
+    if not all(path.is_file() for path in required):
+        raise PortableLaunchError(
+            "便携包缺少 StockWatcher 应用、原生预检或 UI 入口，程序未启动。"
+            "请重新取得并核对完整冻结 ZIP。"
+        )
+
+
+def missing_dependencies(
+    finder: Callable[[str], object | None] = importlib.util.find_spec,
+    version_getter: Callable[[str], str] = importlib.metadata.version,
+) -> tuple[str, ...]:
+    problems: list[str] = []
+    for module, (distribution, expected) in REQUIRED_DEPENDENCIES.items():
+        if finder(module) is None:
+            suffix = f" {expected}" if expected else "（官方 TdxQuant 客户端）"
+            problems.append(f"{distribution}{suffix}")
+            continue
+        if expected is not None:
+            try:
+                actual = version_getter(distribution)
+            except importlib.metadata.PackageNotFoundError:
+                problems.append(f"{distribution} {expected}")
+                continue
+            if actual != expected:
+                problems.append(f"{distribution} {expected}（当前 {actual}）")
+    return tuple(problems)
 
 
 def _system_executable(relative: str) -> str:
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     return str(Path(system_root) / "System32" / relative)
-
-
-def _extract_stock_list(payload: object) -> object:
-    if not isinstance(payload, dict):
-        raise ValueError("invalid response")
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        raise ValueError("invalid result")
-    if str(result.get("ErrorId", "0")) not in {"", "0", "None"}:
-        raise PermissionError("vendor rejected request")
-    value = result.get("Value", result)
-    if isinstance(value, dict):
-        if "stock_list" in value:
-            value = value["stock_list"]
-        elif "Stocks" in value:
-            value = value["Stocks"]
-        elif value and all(
-            isinstance(code, str) and STOCK_CODE_PATTERN.fullmatch(code) for code in value
-        ):
-            value = list(value)
-    if not isinstance(value, (list, tuple)) or not value:
-        raise ValueError("empty stock list")
-    if not all(
-        isinstance(code, str) and STOCK_CODE_PATTERN.fullmatch(code) for code in value
-    ):
-        raise ValueError("invalid stock list")
-    return value
-
-
-def probe_tq(
-    *,
-    endpoint: str = ENDPOINT,
-    timeout_seconds: float = 2.0,
-    opener: Callable[..., object] = urllib.request.urlopen,
-) -> ProbeResult:
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(TQ_REQUEST, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with opener(request, timeout=timeout_seconds) as response:  # type: ignore[attr-defined]
-            payload = json.loads(response.read().decode("utf-8"))
-        _extract_stock_list(payload)
-    except PermissionError:
-        return ProbeResult(PortableState.API_REJECTED)
-    except (
-        OSError,
-        TimeoutError,
-        urllib.error.URLError,
-        urllib.error.HTTPError,
-    ):
-        return ProbeResult(PortableState.SERVICE_UNAVAILABLE)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
-        return ProbeResult(PortableState.API_REJECTED)
-    return ProbeResult(PortableState.CONNECTED)
 
 
 def _powershell_json(command: str, *, environment: dict[str, str] | None = None) -> object:
@@ -183,8 +158,7 @@ def _registry_terminal_candidates() -> tuple[Path, ...]:
     for hive, key_name in roots:
         try:
             with winreg.OpenKey(hive, key_name) as uninstall:
-                count = winreg.QueryInfoKey(uninstall)[0]
-                for index in range(count):
+                for index in range(winreg.QueryInfoKey(uninstall)[0]):
                     try:
                         with winreg.OpenKey(uninstall, winreg.EnumKey(uninstall, index)) as item:
                             display_name = str(
@@ -237,10 +211,10 @@ def find_official_terminal() -> Path | None:
             Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "tdx" / "TdxW.exe",
         ]
     )
-    for candidate in dict.fromkeys(candidates):
-        if _signature_is_official(candidate):
-            return candidate
-    return None
+    return next(
+        (candidate for candidate in dict.fromkeys(candidates) if _signature_is_official(candidate)),
+        None,
+    )
 
 
 def attempt_start_official_terminal() -> bool:
@@ -258,23 +232,47 @@ def attempt_start_official_terminal() -> bool:
     return True
 
 
-def create_desktop_shortcut(entry: Path) -> bool:
-    if sys.platform != "win32":
-        return False
-    environment = os.environ.copy()
-    environment["STOCKWATCHER_ENTRY"] = str(entry)
-    result = _powershell_json(
-        "$desktop=[Environment]::GetFolderPath('Desktop');"
-        "$shell=New-Object -ComObject WScript.Shell;"
-        "$shortcut=$shell.CreateShortcut((Join-Path $desktop '启动 StockWatcher.lnk'));"
-        "$shortcut.TargetPath=(Join-Path $env:WINDIR 'System32\\wscript.exe');"
-        "$shortcut.Arguments='\"'+$env:STOCKWATCHER_ENTRY+'\"';"
-        "$shortcut.WorkingDirectory=(Split-Path $env:STOCKWATCHER_ENTRY);"
-        "$shortcut.Description='启动 StockWatcher';$shortcut.Save();"
-        "'true'|ConvertTo-Json -Compress",
-        environment=environment,
+def _load_application_module(layout: PortableLayout, name: str) -> ModuleType:
+    sys.path.insert(0, str(layout.application_src))
+    return __import__(name, fromlist=["*"])
+
+
+def _report_path() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        raise PortableLaunchError("无法定位当前用户的本地数据目录，StockWatcher 未启动。")
+    return Path(local_app_data) / REPORT_RELATIVE_PATH
+
+
+def _strict_preflight_pass(report: object, check_status: Any) -> bool:
+    status = getattr(report, "status", None)
+    checks = getattr(report, "checks", ())
+    api_checks = tuple(check for check in checks if getattr(check, "name", None) == "api_session")
+    return (
+        status is check_status.PASS
+        and getattr(report, "windows_live_verified", False) is True
+        and len(api_checks) == 1
+        and getattr(api_checks[0], "status", None) is check_status.PASS
     )
-    return result is True
+
+
+def run_native_preflight(
+    layout: PortableLayout,
+    *,
+    terminal: Path | None = None,
+) -> bool:
+    module = _load_application_module(
+        layout, "stock_watcher.providers.tdxquant_preflight"
+    )
+    report = module.run_preflight(terminal_path=terminal)
+    module.write_preflight_report(report, _report_path())
+    return _strict_preflight_pass(report, module.CheckStatus)
+
+
+def launch_stockwatcher_ui(layout: PortableLayout) -> int:
+    app = _load_application_module(layout, "stock_watcher.ui.app")
+    sys.argv = ["StockWatcher", "--provider", "tdxquant"]
+    return int(app.run())
 
 
 class _SingleInstance:
@@ -296,122 +294,57 @@ def _message_box(text: str, title: str = "StockWatcher") -> None:
         ctypes.windll.user32.MessageBoxW(None, text, title, 0x10)
 
 
-def run_gui() -> int:
-    try:
-        import tkinter as tk
-        from tkinter import messagebox
-    except ImportError:
-        _message_box("官方 Python 3.12 缺少桌面组件（Tcl/Tk），StockWatcher 未启动。")
-        return 2
+def _dependency_message(missing: tuple[str, ...]) -> str:
+    joined = "；".join(missing)
+    return (
+        "目标机缺少 StockWatcher 运行依赖，程序未启动。\n\n"
+        f"缺少：{joined}。\n"
+        "请由管理员按《第一次使用》中的锁定前提离线准备；本入口不会联网安装依赖。"
+    )
 
+
+def launch_once(layout: PortableLayout | None = None) -> int:
+    if sys.version_info[:2] != (3, 12) or sys.maxsize <= 2**32:
+        raise PortableLaunchError(
+            "本便携候选只允许 64 位 Python 3.12 Pythonw，StockWatcher 未启动。"
+        )
+    resolved_layout = layout or portable_layout()
+    validate_application(resolved_layout)
+    missing = missing_dependencies()
+    if missing:
+        raise PortableLaunchError(_dependency_message(missing))
+    terminal = find_official_terminal()
+    if terminal is None:
+        raise PortableLaunchError(
+            "未找到数字签名有效且发布者匹配官方公司的通达信终端。"
+            "StockWatcher 未启动。"
+        )
+    if not run_native_preflight(resolved_layout, terminal=terminal):
+        attempt_start_official_terminal()
+        raise PortableLaunchError(
+            "原生 TdxQuant 预检未通过，StockWatcher 候选界面未启动。"
+            "请在官方终端由本人完成登录并开启 TQ 后，再双击主入口重试。"
+        )
+    return launch_stockwatcher_ui(resolved_layout)
+
+
+def main() -> int:
     instance = _SingleInstance()
     if not instance.acquire():
         _message_box("StockWatcher 已经在运行。", "StockWatcher")
         return 0
-
-    root = tk.Tk()
-    root.title("StockWatcher · 官方 TQ 连接检查")
-    root.geometry("620x390")
-    root.minsize(560, 360)
-    root.configure(bg="#f5f7fb")
-
-    title = tk.Label(
-        root,
-        text="StockWatcher",
-        font=("Microsoft YaHei UI", 24, "bold"),
-        bg="#f5f7fb",
-        fg="#142235",
-    )
-    title.pack(anchor="w", padx=34, pady=(30, 2))
-    subtitle = tk.Label(
-        root,
-        text="内部便携版 · 只读连接检查",
-        font=("Microsoft YaHei UI", 10),
-        bg="#f5f7fb",
-        fg="#748296",
-    )
-    subtitle.pack(anchor="w", padx=36)
-
-    card = tk.Frame(root, bg="#ffffff", highlightbackground="#d9e1ec", highlightthickness=1)
-    card.pack(fill="both", expand=True, padx=34, pady=22)
-    status = tk.Label(
-        card,
-        text="",
-        font=("Microsoft YaHei UI", 18, "bold"),
-        bg="#ffffff",
-        fg="#b87700",
-    )
-    status.pack(anchor="w", padx=24, pady=(24, 8))
-    detail = tk.Label(
-        card,
-        text="",
-        font=("Microsoft YaHei UI", 11),
-        bg="#ffffff",
-        fg="#405067",
-        wraplength=520,
-        justify="left",
-    )
-    detail.pack(anchor="w", padx=24)
-    safety = tk.Label(
-        card,
-        text="候选生成：关闭　｜　资金模块：未就绪　｜　交易能力：无",
-        font=("Microsoft YaHei UI", 10),
-        bg="#ffffff",
-        fg="#7d8999",
-    )
-    safety.pack(anchor="w", padx=24, pady=(18, 10))
-
-    button_row = tk.Frame(card, bg="#ffffff")
-    button_row.pack(anchor="w", padx=20, pady=(4, 20))
-    retry = tk.Button(button_row, text="重新检测", font=("Microsoft YaHei UI", 10))
-    retry.pack(side="left", padx=4)
-    shortcut = tk.Button(button_row, text="创建桌面快捷方式", font=("Microsoft YaHei UI", 10))
-    shortcut.pack(side="left", padx=4)
-
-    def apply_state(state: PortableState) -> None:
-        heading, explanation = STATE_TEXT[state]
-        status.configure(
-            text=heading,
-            fg="#178a4c" if state is PortableState.CONNECTED else "#b45f06",
+    try:
+        return launch_once()
+    except PortableLaunchError as error:
+        _message_box(str(error))
+        return 2
+    except Exception:
+        _message_box(
+            "StockWatcher 启动检查失败，程序未启动。"
+            "请重新核对完整 ZIP、运行前提和原生预检报告。"
         )
-        detail.configure(text=explanation)
-        retry.configure(state="normal")
-        if state is PortableState.CONNECTED:
-            root.title("StockWatcher · TQ 已连接（候选保持关闭）")
-
-    def finish_probe(result: ProbeResult) -> None:
-        if result.state is PortableState.SERVICE_UNAVAILABLE:
-            started = attempt_start_official_terminal()
-            apply_state(
-                PortableState.TERMINAL_STARTED if started else PortableState.SERVICE_UNAVAILABLE
-            )
-        else:
-            apply_state(result.state)
-
-    def check() -> None:
-        retry.configure(state="disabled")
-        apply_state(PortableState.CHECKING)
-        retry.configure(state="disabled")
-
-        def worker() -> None:
-            result = probe_tq()
-            root.after(0, finish_probe, result)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def make_shortcut() -> None:
-        entry = Path(__file__).resolve().parents[1] / "启动 StockWatcher.vbs"
-        if create_desktop_shortcut(entry):
-            messagebox.showinfo("StockWatcher", "桌面快捷方式已创建。")
-        else:
-            messagebox.showerror("StockWatcher", "未能创建快捷方式；程序和系统设置均未更改。")
-
-    retry.configure(command=check)
-    shortcut.configure(command=make_shortcut)
-    root.after(100, check)
-    root.mainloop()
-    return 0
+        return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(run_gui())
+    raise SystemExit(main())

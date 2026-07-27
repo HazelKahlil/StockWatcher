@@ -34,5 +34,5 @@ exitCode = shell.Run(command, 0, True)
 processEnvironment.Remove("STOCKWATCHER_PORTABLE_SCRIPT")
 
 If exitCode <> 0 Then
-    MsgBox "Official signed Python 3.12 was not found. StockWatcher did not start.", 16, "StockWatcher"
+    MsgBox "未找到数字签名有效、发布者匹配 Python Software Foundation 的 Python 3.12 Pythonw。StockWatcher 未启动。", 16, "StockWatcher"
 End If
