@@ -1,6 +1,6 @@
 Option Explicit
 
-Dim shell, fso, root, scriptPath, powershellPath, psCommand, command, exitCode, processEnvironment
+Dim shell, fso, root, scriptPath, powershellPath, psCommand, command, exitCode, processEnvironment, failureMessage
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set processEnvironment = shell.Environment("Process")
@@ -34,5 +34,12 @@ exitCode = shell.Run(command, 0, True)
 processEnvironment.Remove("STOCKWATCHER_PORTABLE_SCRIPT")
 
 If exitCode <> 0 Then
-    MsgBox "未找到数字签名有效、发布者匹配 Python Software Foundation 的 Python 3.12 Pythonw。StockWatcher 未启动。", 16, "StockWatcher"
+    failureMessage = ChrW(&H672A) & ChrW(&H627E) & ChrW(&H5230)
+    failureMessage = failureMessage & ChrW(&H6570) & ChrW(&H5B57) & ChrW(&H7B7E) & ChrW(&H540D)
+    failureMessage = failureMessage & ChrW(&H6709) & ChrW(&H6548) & ChrW(&H3001)
+    failureMessage = failureMessage & ChrW(&H53D1) & ChrW(&H5E03) & ChrW(&H8005)
+    failureMessage = failureMessage & ChrW(&H5339) & ChrW(&H914D) & " Python Software Foundation "
+    failureMessage = failureMessage & ChrW(&H7684) & " Python 3.12 Pythonw" & ChrW(&H3002)
+    failureMessage = failureMessage & "StockWatcher " & ChrW(&H672A) & ChrW(&H542F) & ChrW(&H52A8) & ChrW(&H3002)
+    MsgBox failureMessage, 16, "StockWatcher"
 End If

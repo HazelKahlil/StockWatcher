@@ -22,6 +22,17 @@ def _read_utf8_bom(path: Path, errors: list[str]) -> str:
         return ""
 
 
+def _read_ascii(path: Path, errors: list[str]) -> str:
+    try:
+        return path.read_bytes().decode("ascii", errors="strict")
+    except UnicodeDecodeError as error:
+        errors.append(
+            f"{path.relative_to(ROOT)} must be ASCII-safe for Windows Script Host: "
+            f"{error}"
+        )
+        return ""
+
+
 def main() -> int:
     required = (
         ROOT / "scripts" / "windows" / "stockwatcher.ps1",
@@ -69,7 +80,7 @@ def main() -> int:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
-    portable_entry = required[4].read_text(encoding="utf-8")
+    portable_entry = _read_ascii(required[4], errors)
     portable_runtime = required[5].read_text(encoding="utf-8")
     if "pythonw.exe" not in portable_entry or "Get-Command pyw.exe" not in portable_entry:
         errors.append("portable entry must reuse the approved Python 3.12 Pythonw runtime")
@@ -82,6 +93,8 @@ def main() -> int:
         errors.append("portable entry must verify the official Python signature")
     if "ExecutionPolicy" in portable_entry or "pip" in portable_entry.lower():
         errors.append("portable entry must not install dependencies or bypass execution policy")
+    if "ChrW(&H672A)" not in portable_entry or "MsgBox failureMessage" not in portable_entry:
+        errors.append("portable entry must construct its Chinese failure message safely")
     elevation_markers = (
         "runas",
         "-verb",

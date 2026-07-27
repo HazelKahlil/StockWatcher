@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import re
 import subprocess
 import sys
 import zipfile
@@ -36,9 +37,10 @@ def _sha256(path: Path) -> str:
 
 
 def test_unique_entry_is_hidden_signed_python_312_only() -> None:
-    source = (
+    entry = (
         ROOT / "packaging" / "windows" / "portable" / "启动 StockWatcher.vbs"
-    ).read_text(encoding="utf-8")
+    )
+    source = entry.read_bytes().decode("ascii")
     assert "pythonw.exe" in source
     assert "Get-Command pyw.exe" in source
     assert "'-3.12'" in source
@@ -48,7 +50,14 @@ def test_unique_entry_is_hidden_signed_python_312_only() -> None:
     assert "ExecutionPolicy" not in source
     assert "pip" not in source.lower()
     assert "http" not in source.lower()
-    assert "未找到数字签名有效" in source
+    encoded_text = "".join(
+        chr(int(codepoint, 16))
+        for codepoint in re.findall(r"ChrW\(&H([0-9A-F]{4})\)", source)
+    )
+    assert encoded_text == "未找到数字签名有效、发布者匹配的。未启动。"
+    assert '" Python Software Foundation "' in source
+    assert '" Python 3.12 Pythonw"' in source
+    assert '"StockWatcher "' in source
 
 
 def test_vbs_launcher_has_no_elevation_verb() -> None:
