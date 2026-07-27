@@ -1,11 +1,11 @@
 # 版本索引
 
-> 最后更新：2026-07-23
+> 最后更新：2026-07-27
 > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
 
 ## 活跃版本
 
-- **[v0.3-windows-data-gate](v0.3-windows-data-gate/README.md)** — Windows + 官方 TdxQuant 单人只读数据闸门；Mac 只做 Mock/Replay 与离线契约验证（状态：进行中；等待 Windows 现场 M0）。
+- **[v0.3-windows-data-gate](v0.3-windows-data-gate/README.md)** — Windows + 官方 TdxQuant 单人只读数据闸门；Mac 只做 Mock/Replay 与离线契约验证（状态：进行中；股票列表参数修复候选待签名、安装与独立 Preflight，随后进入现场 M0）。
 
 ## 同步状态
 
@@ -20,7 +20,7 @@
 | [v0.0-project-bootstrap](v0.0-project-bootstrap/README.md) | 建立仓库、治理骨架、版本路线并迁入 V2.0 交接基线 | 已封版 | 2026-07-22 |
 | [v0.1-mac-replay-foundation](v0.1-mac-replay-foundation/README.md) | 在 Mac 建立可复现的跨平台工程与 Replay 基础 | 本地完成，draft PR #2 待合入 | 2026-07-23 |
 | [v0.2-mac-local-alpha](v0.2-mac-local-alpha/README.md) | 交付基于 Mock/Replay 的 Mac 本地 Alpha | 本地完成，draft PR #2 待合入 | 2026-07-23 |
-| [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 以 Windows + 官方 TdxQuant 取得只读真实数据、授权和共享核心结论 | 进行中（前置交付包已实现，待真机 M0） | |
+| [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 以 Windows + 官方 TdxQuant 取得只读真实数据、授权和共享核心结论 | 进行中（参数修复源码候选待签名、安装与独立 Preflight） | |
 | [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | 在真实数据路线基础上接入完整 V1 功能 | 计划中 | |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
 

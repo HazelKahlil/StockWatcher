@@ -338,7 +338,9 @@ class TdxQuantProvider:
         return self.transport
 
     def stock_list(self, market: str = "5") -> tuple[Security, ...]:
-        raw = self._require_transport().call("get_stock_list", {"market": market})
+        raw = self._require_transport().call(
+            "get_stock_list", {"market": market, "list_type": 0}
+        )
         if isinstance(raw, dict):
             raw = raw.get("stock_list") or raw.get("Stocks") or list(raw)
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):

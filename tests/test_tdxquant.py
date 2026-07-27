@@ -129,6 +129,52 @@ def test_http_transport_restricts_endpoint_and_uses_official_envelope(
         TdxHttpTransport("http://127.0.0.1:8000/")
 
 
+def test_http_transport_current_official_bridge_requires_explicit_list_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_params: list[dict[str, object]] = []
+
+    class Response:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.payload
+
+    def current_official_bridge(request: object, timeout: float) -> Response:
+        assert timeout == 5.0
+        body = json.loads(getattr(request, "data").decode("utf-8"))
+        params = body["params"]
+        captured_params.append(params)
+        if params == {"market": "5", "list_type": 0} and type(params["list_type"]) is int:
+            result = {"ErrorId": 0, "Value": ["600000.SH"]}
+        else:
+            result = {"ErrorId": 10}
+        return Response(json.dumps({"id": body["id"], "result": result}).encode("utf-8"))
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant.urlopen", current_official_bridge
+    )
+    transport = TdxHttpTransport()
+
+    with pytest.raises(TdxTransportError) as old_request:
+        transport.call("get_stock_list", {"market": "5"})
+    assert old_request.value.reason is TdxFailureReason.INVALID_RESPONSE
+    assert transport.call(
+        "get_stock_list", {"market": "5", "list_type": 0}
+    ) == ["600000.SH"]
+    assert captured_params == [
+        {"market": "5"},
+        {"market": "5", "list_type": 0},
+    ]
+
+
 def test_http_transport_classifies_unreachable_and_vendor_login_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -170,6 +216,18 @@ def test_python_transport_is_delayed_and_missing_dependency_is_actionable(
     with pytest.raises(TdxTransportError) as caught:
         transport.call("get_stock_list", {"market": "5"})
     assert caught.value.reason is TdxFailureReason.DEPENDENCY_MISSING
+
+
+def test_provider_stock_list_fixes_official_list_type_parameter() -> None:
+    transport = FakeTransport({"get_stock_list": ("600000.SH",)})
+
+    securities = provider(transport).stock_list()
+
+    assert [security.code for security in securities] == ["600000.SH"]
+    assert transport.calls == [
+        ("get_stock_list", {"market": "5", "list_type": 0}),
+    ]
+    assert type(transport.calls[0][1]["list_type"]) is int
 
 
 def test_price_volume_mapping_preserves_versions_and_marks_missing_source_time() -> None:
@@ -531,6 +589,64 @@ def test_valid_stock_list_produces_exactly_one_passing_api_check(
     assert api_checks[0].status is CheckStatus.PASS
     assert report.status is CheckStatus.PASS
     assert report.windows_live_verified
+
+
+def test_preflight_fixes_official_stock_list_parameters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "official-terminal"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    def successful_stock_list(
+        _transport: object, method: str, params: Mapping[str, object]
+    ) -> object:
+        captured.append((method, dict(params)))
+        return ["600000.SH"]
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call",
+        successful_stock_list,
+    )
+
+    report = run_preflight(terminal_path=terminal_path)
+
+    assert captured == [
+        ("get_stock_list", {"market": "5", "list_type": 0}),
+    ]
+    assert type(captured[0][1]["list_type"]) is int
+    assert report.status is CheckStatus.PASS
+    assert report.windows_live_verified
+
+
+def test_preflight_vendor_error_is_fail_closed_and_never_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "official-terminal"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+
+    class VendorErrorResponse:
+        def __enter__(self) -> VendorErrorResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"id":1,"result":{"ErrorId":10}}'
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant.urlopen",
+        lambda *_args, **_kwargs: VendorErrorResponse(),
+    )
+
+    report = run_preflight(terminal_path=terminal_path)
+
+    api_session = next(check for check in report.checks if check.name == "api_session")
+    assert api_session.status is CheckStatus.FAIL
+    assert api_session.reason is TdxFailureReason.INVALID_RESPONSE
+    assert report.status is CheckStatus.FAIL
+    assert not report.windows_live_verified
 
 
 def _canonical_preflight_checks(

@@ -156,7 +156,7 @@ def _require_nonempty_stock_list(raw: object) -> None:
 def _check_api_session(endpoint: str, timeout_seconds: float) -> PreflightCheck:
     try:
         raw = TdxHttpTransport(endpoint, timeout_seconds).call(
-            "get_stock_list", {"market": "5"}
+            "get_stock_list", {"market": "5", "list_type": 0}
         )
         _require_nonempty_stock_list(raw)
     except TdxTransportError as error:
