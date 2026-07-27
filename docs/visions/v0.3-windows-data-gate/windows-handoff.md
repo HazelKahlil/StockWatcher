@@ -1,16 +1,22 @@
 # Windows TdxQuant 一页交接
 
-## 你只需要做三件事
+## 当前内部便携版：你只需要做三件事
 
 1. 在 Windows 安装并登录通达信官网免费的 64 位“金融终端（量化模拟）”，保持终端运行并开启 TQ。
-2. 从 StockWatcher 私有 GitHub 的单一 draft PR #2（合入后为 `main`）取得交付候选并解压。不要把 Windows 密码、通达信密码、token 或远程桌面权限交给 Agent。
-3. 在解压目录右键打开 PowerShell，运行：
+2. 取得冻结的 `StockWatcher-Internal-Portable.zip`，复核交付记录中的 SHA-256 后完整解压。不要把 Windows 密码、通达信密码、token 或远程桌面权限交给 Agent。
+3. 双击根目录唯一主入口 **启动 StockWatcher.vbs**。若界面提示等待登录，请由本人在官方终端完成登录，再点“重新检测”；不要运行命令，也不要修改安全策略。
+
+入口仅复用目标机已经允许执行的 python.org 官方签名 Python 3.12/Pythonw 和 Windows 系统组件，不携带未知解释器，不首次联网安装依赖。只有 `{"market":"5","list_type":0}` 的最小只读检查成功后才显示“TQ 已连接”；候选与资金模块在 M0 前继续关闭。
+
+## 开发与完整 M0 工程入口
+
+需要执行完整 Preflight、M0 探针或构建时，才在源码工程目录运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
+powershell -NoProfile -File .\scripts\windows\stockwatcher.ps1
 ```
 
-菜单依次执行“安装/更新”→“通达信预检”→“执行 M0 探针”。需要查看安全诊断界面时再选“启动应用”。
+该入口面向开发/验证，不是普通用户日常启动路径。若组织执行策略阻止脚本，应停止并由机器管理员按现有政策处理，不得使用 `Bypass`。菜单依次执行“安装/更新”→“通达信预检”→“执行 M0 探针”。
 
 ## 到现场前已经验证
 
@@ -55,4 +61,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\stockwatcher.ps1
 - 卸载不会自动删除数据库、日志和 M0 报告，避免误删证据。确认已备份后再由用户手动删除运行目录。
 - 回滚时卸载当前版本并安装上一个已验证包；不得为恢复服务切换到未授权数据源。
 
-因此 Human Owner 到 Windows 后唯一剩余步骤，就是安装并登录官方免费终端，再运行上述一键入口完成真实 TdxQuant M0。通达信行情、紫黄线、性能和安装体验只有这次现场 M0 后才算验证。
+因此 Human Owner 到 Windows 后先对冻结便携 ZIP 完成双击启动与最小只读检查，再由独立验证任务执行完整 Preflight/M0。通达信行情、紫黄线、性能和安装体验只有现场 M0 后才算验证。

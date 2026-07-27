@@ -28,6 +28,11 @@ def main() -> int:
         ROOT / "packaging" / "stockwatcher.spec",
         ROOT / "packaging" / "windows" / "version_info.txt",
         ROOT / "packaging" / "windows" / "StockWatcher.iss",
+        ROOT / "packaging" / "windows" / "portable" / "启动 StockWatcher.vbs",
+        ROOT / "packaging" / "windows" / "portable" / "stockwatcher_portable.py",
+        ROOT / "packaging" / "windows" / "portable" / "第一次使用.md",
+        ROOT / "packaging" / "windows" / "portable" / "DEPENDENCIES.md",
+        ROOT / "scripts" / "build_internal_portable.py",
     )
     errors = [f"missing {path.relative_to(ROOT)}" for path in required if not path.is_file()]
     if errors:
@@ -61,6 +66,28 @@ def main() -> int:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
+    portable_entry = required[4].read_text(encoding="utf-8")
+    portable_runtime = required[5].read_text(encoding="utf-8")
+    if "pythonw.exe" not in portable_entry or "Get-Command pyw.exe" not in portable_entry:
+        errors.append("portable entry must reuse the approved Python 3.12 Pythonw runtime")
+    if "shell.Run(command, 0, True)" not in portable_entry:
+        errors.append("portable entry must launch without a console window")
+    if (
+        "Get-AuthenticodeSignature" not in portable_entry
+        or "Python Software Foundation" not in portable_entry
+    ):
+        errors.append("portable entry must verify the official Python signature")
+    if "ExecutionPolicy" in portable_entry or "pip" in portable_entry.lower():
+        errors.append("portable entry must not install dependencies or bypass execution policy")
+    if '"list_type": 0' not in portable_runtime or '"market": "5"' not in portable_runtime:
+        errors.append("portable runtime must use the locked minimal TQ request")
+    if (
+        "OFFICIAL_PUBLISHERS" not in portable_runtime
+        or "Get-AuthenticodeSignature" not in portable_runtime
+    ):
+        errors.append("portable runtime must verify the official terminal signature before launch")
+    if "候选生成：关闭" not in portable_runtime:
+        errors.append("portable runtime must keep candidate generation visibly fail-closed")
     installer = required[3].read_text(encoding="utf-8")
     if "PrivilegesRequired=lowest" not in installer:
         errors.append("installer must use per-user, non-admin installation")

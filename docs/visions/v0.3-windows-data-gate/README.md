@@ -1,6 +1,6 @@
 # v0.3-windows-data-gate：Windows TdxQuant 真实数据闸门
 
-> 状态：活跃（股票列表参数修复后继源码候选已完成 Mac 回归，待签名、目标 Windows 安装与独立 Preflight，再进入现场 TdxQuant M0）
+> 状态：活跃（内部便携双击候选进入 Mac 离线收口，待目标 Windows 原生启动与独立 Preflight，再进入现场 TdxQuant M0）
 > 创建：2026-07-22 ｜ 路线收敛：2026-07-23 ｜ 计划 tag：`v0.3.0`
 
 ## 权威结论
@@ -47,6 +47,7 @@
 ## 入口与交付物
 
 - Human Owner 操作：[Windows 一页交接](windows-handoff.md)。
+- 内部便携双击入口：`packaging/windows/portable/启动 StockWatcher.vbs`；冻结 ZIP 由 `scripts/build_internal_portable.py` 生成。
 - PowerShell：`scripts/windows/stockwatcher.ps1`。
 - JSON/Markdown 探针：`python -m stock_watcher.providers.tdxquant_m0 --output <目录>`。
 - 报告口径：[M0 报告模板](m0-report-template.md)。
@@ -72,11 +73,13 @@
 | 2026-07-24 | HAZ-449 闭合独立复核发现的发布与 Preflight 语义缺口：全部发布路径继续使用短映射，双产物以备份/提交/回滚事务发布；Preflight 固定检查集合并重算聚合终态，子进程终态矛盾强制替换为固定脱敏 `FAIL` | macOS 上以真实 PowerShell 7.5.2 执行深路径、中文空格、重复发布、第二产物故障回滚及 Preflight 异常矩阵；仍待真实 Windows PowerShell 5.1/ISCC/App Control/TdxQuant 复验 |
 | 2026-07-24 | HAZ-452 修复 Preflight 成功语义：仅固定、完整、无重复的 canonical checks 全部 `PASS` 且 `windows_live_verified=true` 才能零退出；不完整/fallback/单项成功、未知或重复检查、顶层聚合矛盾及 live 双向矛盾均 fail-closed | macOS Python/离线门禁通过；本机无 PowerShell，行为用例如实跳过，仍待独立真实 Windows PowerShell 7.x 零跳过复核与最终 Gate |
 | 2026-07-27 | HAZ-511 基于真实官方 TQ `ErrorId=10 → 0` 证据，在 Preflight 与运行期 Provider 的 `get_stock_list` 请求中固定补齐整数 `list_type: 0`；回归覆盖旧参数失败、新参数成功、两条调用路径及供应商非零错误 fail-closed | 后继源码候选完成 macOS 离线回归；仍待 Authenticode 签名、目标 Windows 安装/启动与独立原生 Preflight，不等于客户交付或交易时段 M0 通过 |
+| 2026-07-27 | HAZ-512 基于 HAZ-511 候选增加内部单机离线便携入口：验签官方 Python 3.12/Pythonw 后无控制台启动，TQ 不可达时只尝试启动验签官方终端，固定最小只读参数检查，提供中文重试、单实例和可选普通用户桌面快捷方式 | macOS 标准库逻辑、静态安全契约及中文/空格隔离打包回归；目标 Windows VBS/Pythonw、Application Control、终端启动和真实 TQ 仍待独立验证 |
 
 ## 验证边界
 
 - 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复和安全门；独立真实 Windows 下 Python 3.11/3.12 的安装、导入、CLI、74 项测试、Ruff、Mypy、PowerShell 失败闭环、PyInstaller 与 Inno Setup。
 - 当前未验证：真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏，以及 Human Owner 机器上的安装与卸载体验。
+- HAZ-512 便携候选在 Mac 仅验证标准库探测/失败分类、打包完整性与静态安全契约；VBS、官方 Pythonw/Tcl-Tk、单实例、Authenticode、快捷方式、路径含中文/空格和真实 TQ 恢复流程必须由后续目标 Windows 任务按同一冻结 ZIP 验证。
 - GitHub：精确代码候选已合入本地 `main`；为避免重复分支/PR，里程碑同步复用 HAZ-418 已建立的 `fix/HAZ-418-blockers` 远端 head 与单一 draft PR #2。`origin/main` 在 PR 合入前仍未同步。
 
 GitHub Actions run `30062601762` 对候选 commit 的三个 jobs 均在 `steps=[]`、`runner_id=0` 时因账户 payment/spending limit 失败，不能表述为 CI PASS。Human Owner 已明确接受 HAZ-430 的独立真实 Windows v9 只读 `PASS` 作为该平台阻塞的替代工程证据；不得等待、规避或更改 billing。
