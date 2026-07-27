@@ -109,12 +109,14 @@ def test_http_transport_restricts_endpoint_and_uses_official_envelope(
         def read(self) -> bytes:
             return b'{"id": 1, "result": {"ErrorId": "0", "Value": ["600000.SH"]}}'
 
-    def fake_urlopen(request: object, timeout: float) -> Response:
+    def fake_open_loopback(request: object, timeout: float) -> Response:
         captured["data"] = getattr(request, "data")
         captured["timeout"] = timeout
         return Response()
 
-    monkeypatch.setattr("stock_watcher.providers.tdxquant.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant._open_loopback", fake_open_loopback
+    )
     transport = TdxHttpTransport(timeout_seconds=1.5)
     assert transport.call("get_stock_list", {"market": "5"}) == ["600000.SH"]
     assert isinstance(captured["data"], bytes)
@@ -127,6 +129,46 @@ def test_http_transport_restricts_endpoint_and_uses_official_envelope(
         TdxHttpTransport("https://example.com/")
     with pytest.raises(ValueError, match="17709"):
         TdxHttpTransport("http://127.0.0.1:8000/")
+
+
+def test_http_transport_never_uses_system_proxy_for_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"id":1,"result":{"ErrorId":0,"Value":["600000.SH"]}}'
+
+    class Opener:
+        def open(self, request: object, *, timeout: float) -> Response:
+            captured["url"] = getattr(request, "full_url")
+            captured["timeout"] = timeout
+            return Response()
+
+    def fake_build_opener(handler: object) -> Opener:
+        captured["proxies"] = getattr(handler, "proxies")
+        return Opener()
+
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant.build_opener", fake_build_opener
+    )
+    transport = TdxHttpTransport(timeout_seconds=1.5)
+
+    assert transport.call(
+        "get_stock_list", {"market": "5", "list_type": 0}
+    ) == ["600000.SH"]
+    assert captured == {
+        "proxies": {},
+        "url": "http://127.0.0.1:17709/",
+        "timeout": 1.5,
+    }
 
 
 def test_http_transport_current_official_bridge_requires_explicit_list_type(
@@ -159,7 +201,7 @@ def test_http_transport_current_official_bridge_requires_explicit_list_type(
         return Response(json.dumps({"id": body["id"], "result": result}).encode("utf-8"))
 
     monkeypatch.setattr(
-        "stock_watcher.providers.tdxquant.urlopen", current_official_bridge
+        "stock_watcher.providers.tdxquant._open_loopback", current_official_bridge
     )
     transport = TdxHttpTransport()
 
@@ -181,7 +223,7 @@ def test_http_transport_classifies_unreachable_and_vendor_login_error(
     def unavailable(*_args: object, **_kwargs: object) -> object:
         raise URLError("refused")
 
-    monkeypatch.setattr("stock_watcher.providers.tdxquant.urlopen", unavailable)
+    monkeypatch.setattr("stock_watcher.providers.tdxquant._open_loopback", unavailable)
     with pytest.raises(TdxTransportError) as caught:
         TdxHttpTransport().call("get_stock_list", {"market": "5"})
     assert caught.value.reason is TdxFailureReason.SERVICE_UNREACHABLE
@@ -197,7 +239,7 @@ def test_http_transport_classifies_unreachable_and_vendor_login_error(
             return '{"result":{"ErrorId":"1","ErrorMsg":"请先登录"}}'.encode()
 
     monkeypatch.setattr(
-        "stock_watcher.providers.tdxquant.urlopen",
+        "stock_watcher.providers.tdxquant._open_loopback",
         lambda *_args, **_kwargs: LoginResponse(),
     )
     with pytest.raises(TdxTransportError) as login:
@@ -636,7 +678,7 @@ def test_preflight_vendor_error_is_fail_closed_and_never_live(
             return b'{"id":1,"result":{"ErrorId":10}}'
 
     monkeypatch.setattr(
-        "stock_watcher.providers.tdxquant.urlopen",
+        "stock_watcher.providers.tdxquant._open_loopback",
         lambda *_args, **_kwargs: VendorErrorResponse(),
     )
 

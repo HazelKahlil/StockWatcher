@@ -13,7 +13,7 @@ from types import ModuleType
 from typing import Any, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from stock_watcher.domain import (
     SHANGHAI,
@@ -102,6 +102,12 @@ def _validate_loopback_endpoint(endpoint: str) -> None:
         raise ValueError("TdxQuant HTTP endpoint must not contain a path, query, or fragment")
 
 
+def _open_loopback(request: Request, timeout: float) -> Any:
+    """Open a validated loopback request without consulting system proxies."""
+    opener = build_opener(ProxyHandler({}))
+    return opener.open(request, timeout=timeout)  # noqa: S310
+
+
 @dataclass(slots=True)
 class TdxHttpTransport:
     """Official local TQ HTTP bridge documented by TdxQuant.
@@ -133,7 +139,7 @@ class TdxHttpTransport:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            with _open_loopback(request, self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except TimeoutError as error:
             raise TdxTransportError(TdxFailureReason.TIMEOUT) from error
