@@ -30,3 +30,4 @@
 - 已完成（本地待同步）：[visions/v0.2-mac-local-alpha/README.md](visions/v0.2-mac-local-alpha/README.md)
 - 活跃版本（Windows TdxQuant 数据闸门）：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)
 - Windows 一页交接：[visions/v0.3-windows-data-gate/windows-handoff.md](visions/v0.3-windows-data-gate/windows-handoff.md)
+- Windows Codex 直接交接：[visions/v0.3-windows-data-gate/session-handoff-windows-codex.md](visions/v0.3-windows-data-gate/session-handoff-windows-codex.md)

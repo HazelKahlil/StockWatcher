@@ -1,6 +1,6 @@
 # 项目长期事实索引
 
-> 最后更新：2026-07-23
+> 最后更新：2026-07-27
 > 这里只放长期为真的事实。单次改动进版本文档，规则和踩坑进 `docs/process/`。
 
 ## 项目是什么
@@ -35,9 +35,9 @@
 | 数据库 | SQLite WAL；分钟数据可按验证结果使用 Parquet / DuckDB |
 | 配置 | YAML + Pydantic；锁定规则、软参数、用户设置和运行环境分层 |
 | 测试 | pytest + ReplayProvider + SyntheticScenarioBuilder；真实数据另做 M0/影子验证 |
-| 打包 | v0.3 提供 PyInstaller + Inno Setup 前置配置；独立真实 Windows 已验证双 Python 工程/构建链，Human Owner 仍须现场验证安装、卸载和真实 TdxQuant 运行 |
+| 打包 | v0.3 提供 PyInstaller + Inno Setup 前置配置与内部便携 ZIP；独立真实 Windows 只验证过较早候选的双 Python 工程/构建链，HAZ-526 后继便携候选仍须在 Human Owner 的 Windows 上验证普通用户双击、UAC、退出与再次启动 |
 | 部署 | 当前只有 Mac 本地开发环境，无生产部署；v0.3 交付 Windows 本地只读预检、M0 探针与诊断 UI，不接交易账户 |
-| 当前验证 | v0.2 已在 Mac + Mock/Replay 下本地收口；v0.3 冻结候选已通过 Mac 全量回归与独立真实 Windows 无终端工程/打包验证，Windows/TdxQuant 真实 M0 尚未进行 |
+| 当前验证 | v0.2 已在 Mac + Mock/Replay 下本地收口；v0.3 的 HAZ-526 冻结候选已通过 Mac 全量回归、离线包合同、Replay smoke 与 38/38 payload 复核。HAZ-527 在候选下载前被 Windows `runner pipe-in` 阻断，故 HAZ-526 的 Windows 普通用户启动、UAC、原生 TdxQuant Preflight、UI 与交易时段 M0 均无 PASS/FAIL 结论 |
 
 ## 计划模块表
 

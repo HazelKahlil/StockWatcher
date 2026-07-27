@@ -17,6 +17,7 @@
 - v0.2 Mac Local Alpha：固定三只候选、确定性回放提醒与可追溯 SQLite 记录，以及基于 Mock/Replay 的 Mac 本地界面（当前观察、三只提醒、数据中断、详情和历史）。
 - v0.3 TdxQuant 前置交付包：官方本机 HTTP/可选 Python 传输、行情归一化、健康与恢复门、Windows 一键入口、脱敏 M0 报告和 PyInstaller/Inno Setup 配置。
 - 当前单机内部自用的离线便携候选：ZIP 纳入完整应用树、PySide6 UI 和原生 TdxQuant Preflight；复用目标机已允许且验签通过的官方 Python 3.12/Pythonw，启动前只读检查预置依赖，且仅在严格原生 PASS 合同成立时打开真实诊断界面；不要求管理员权限、不改 PATH、不首次联网安装依赖。
+- Windows Codex 直接交接文档：固定 HAZ-526 唯一线性后继、冻结 ZIP/manifest/payload 证据、HAZ-527 的 runner 阻断边界，以及 Human Owner 脱离 Multica 后可复制执行的 Windows 实机提示词。
 
 ### Fixed
 
@@ -33,8 +34,8 @@
 
 ### Pending synchronization
 
-- v0.1/v0.2 与 v0.3 前置交付候选已合入本地 `main`，并由单一 draft PR #2 镜像到私有 GitHub；PR 尚未合入 `origin/main`，不得称为远端已发布。
-- v0.3 已有 Mac 全量回归和独立真实 Windows 无终端工程/打包证据；真实 TdxQuant、行情、紫黄线、完整交易时段、通知/多屏和安装卸载体验仍待 Human Owner 现场 M0。
+- v0.1/v0.2 与较早 v0.3 前置候选已合入本地 `main`；HAZ-511/512/515/526 的唯一后继通过单一 draft PR #2 的远端 head 交接。PR 尚未合入 `origin/main`，不得称为远端已发布。
+- v0.3 已有 Mac 全量回归和较早候选的独立真实 Windows 无终端工程/打包证据；HAZ-527 在下载候选前被 `runner pipe-in` 阻断，因此 HAZ-526 的 Windows 普通用户启动、UAC、真实 TdxQuant Preflight/UI、行情、紫黄线、完整交易时段、通知/多屏和安装卸载体验仍未验证。
 
 ## [0.0.0] - 2026-07-22
 

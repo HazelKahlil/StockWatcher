@@ -1,6 +1,6 @@
 # v0.3-windows-data-gate：Windows TdxQuant 真实数据闸门
 
-> 状态：活跃（内部便携启动链移除自动终端启动并冻结后继候选，待目标 Windows 普通用户会话独立复验，再进入现场 TdxQuant M0）
+> 状态：活跃（HAZ-526 后继便携候选的 Mac 工程门已通过；HAZ-527 在候选下载前被 Windows runner 阻断，仍待 Human Owner 的 Windows 普通用户 live readback，再进入现场 TdxQuant M0）
 > 创建：2026-07-22 ｜ 路线收敛：2026-07-23 ｜ 计划 tag：`v0.3.0`
 
 ## 权威结论
@@ -47,6 +47,7 @@
 ## 入口与交付物
 
 - Human Owner 操作：[Windows 一页交接](windows-handoff.md)。
+- 跨环境执行：[Windows Codex 直接交接](session-handoff-windows-codex.md)。
 - 内部便携双击入口：`packaging/windows/portable/启动 StockWatcher.vbs`；冻结 ZIP 由 `scripts/build_internal_portable.py` 生成。
 - PowerShell：`scripts/windows/stockwatcher.ps1`。
 - JSON/Markdown 探针：`python -m stock_watcher.providers.tdxquant_m0 --output <目录>`。
@@ -76,14 +77,16 @@
 | 2026-07-27 | HAZ-512 基于 HAZ-511 候选增加内部单机离线便携入口：验签官方 Python 3.12/Pythonw 后无控制台启动，TQ 不可达时只尝试启动验签官方终端，固定最小只读参数检查，提供中文重试、单实例和可选普通用户桌面快捷方式 | macOS 标准库逻辑、静态安全契约及中文/空格隔离打包回归；目标 Windows VBS/Pythonw、Application Control、终端启动和真实 TQ 仍待独立验证 |
 | 2026-07-27 | HAZ-515 修复 HAZ-512 便携 ZIP 只有探测外壳的 blocker：包内纳入完整应用树、依赖声明、PySide6 UI 与原生 Preflight；启动前只读检查依赖，且仅在整体 `PASS`、恰好一个 `api_session=PASS`、`windows_live_verified=true` 时进入真实 TdxQuant UI | Mac 离线机械合同与全新目录解包/import smoke；仍待 HAZ-497 在同一冻结 ZIP 上复验目标 Windows Pythonw、依赖、原生报告、UI 与 Application Control |
 | 2026-07-27 | HAZ-526 移除原生 Preflight 失败后自动启动 `TdxW.exe` 的路径；终端未运行、TQ 未就绪或 Preflight 未通过时只中文 fail-closed，并以机械合同锁定 VBS/Python 链无 elevation verb | Mac 源码、单测和离线合同候选；不代表真实 Windows/UAC 已通过，须对新冻结 ZIP 开独立普通用户复验 |
+| 2026-07-27 | HAZ-527 三轮均在 Explorer 枚举前被 Windows Computer Use `runner pipe-in` 阻断；冻结附件未下载、未解压，候选、Preflight/API/TQ、UI、UAC 与 Windows 设置均未触碰 | 平台/运行时 blocker；对 HAZ-526 候选没有形成 PASS 或 FAIL，真实 Windows live readback 与 M0 继续未完成 |
+| 2026-07-27 | HAZ-536 将 `6e5dbed8eee027ef7d5478b18b1539b3c16a24ed` 作为 HAZ-511/512/515/526 的唯一线性后继，复核冻结 ZIP/manifest/payload，并建立脱离 Multica 后可直接交给 Windows Codex 的 handoff | GitHub 交接点；Mac 工程证据与 Windows 未验证门严格分开 |
 
 ## 验证边界
 
 - 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复和安全门；独立真实 Windows 下 Python 3.11/3.12 的安装、导入、CLI、74 项测试、Ruff、Mypy、PowerShell 失败闭环、PyInstaller 与 Inno Setup。
 - 当前未验证：真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏，以及 Human Owner 机器上的安装与卸载体验。
 - HAZ-515 完整便携候选在 Mac 仅验证应用树/原生 Preflight/UI 入包、启动门、依赖 fail-closed、全新目录 import、manifest 和中文/空格路径合同；VBS、官方 Pythonw、预置依赖、Authenticode、Application Control、原生报告与真实 UI 必须由 HAZ-497 按同一冻结 ZIP 在目标 Windows 复验。
-- HAZ-526 后继候选在 Mac 仅验证 Preflight 失败不会自动启动官方终端、VBS/Python 启动链无 elevation verb，以及新 ZIP 的离线完整性；UAC 请求者与普通用户真实启动结果仍须在全新 Windows 轮次确认。
-- GitHub：精确代码候选已合入本地 `main`；为避免重复分支/PR，里程碑同步复用 HAZ-418 已建立的 `fix/HAZ-418-blockers` 远端 head 与单一 draft PR #2。`origin/main` 在 PR 合入前仍未同步。
+- HAZ-526 后继候选在 Mac 仅验证 Preflight 失败不会自动启动官方终端、VBS/Python 启动链无 elevation verb，以及新 ZIP 的离线完整性；UAC 请求者与普通用户真实启动结果仍须在全新 Windows 轮次确认。HAZ-527 没有运行到候选下载，不得当作候选失败或通过。
+- GitHub：本地 `main` 仍停在较早候选 `6e193a3c20177220d89a7497004af281a7509270`；HAZ-511/512/515/526 形成其 9 个提交的线性后继 `6e5dbed8eee027ef7d5478b18b1539b3c16a24ed`。为避免重复分支/PR，交接复用 HAZ-418 已建立的 `fix/HAZ-418-blockers` 远端 head 与单一 draft PR #2；`origin/main` 在 PR 合入前仍未同步。
 
 GitHub Actions run `30062601762` 对候选 commit 的三个 jobs 均在 `steps=[]`、`runner_id=0` 时因账户 payment/spending limit 失败，不能表述为 CI PASS。Human Owner 已明确接受 HAZ-430 的独立真实 Windows v9 只读 `PASS` 作为该平台阻塞的替代工程证据；不得等待、规避或更改 billing。
 
@@ -109,4 +112,4 @@ HAZ-526 在 macOS 27.0 arm64 + Python 3.12.11 的启动链修复回归：`uv syn
 
 ## Session Handoff
 
-Human Owner 到 Windows 后只需先读 [Windows 一页交接](windows-handoff.md)，安装并登录官方免费 64 位“金融终端（量化模拟）”，再运行 PowerShell 一键入口的“预检”和“M0 探针”。失败不得改接非官方数据源；按报告中的具体原因修复或给出 `FAIL`。
+Human Owner 到 Windows 后先读 [Windows Codex 直接交接](session-handoff-windows-codex.md)；其中包含冻结输入、精确 GitHub ref、HAZ-527 边界和可直接复制的完整提示词。[Windows 一页交接](windows-handoff.md)继续作为操作速查。失败不得改接非官方数据源；按首个真实失败点保存证据并停止。
