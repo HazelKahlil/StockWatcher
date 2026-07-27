@@ -30,6 +30,18 @@ def _powershell() -> str:
     return executable
 
 
+def _create_directory_alias(alias: Path, target: Path) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(alias), str(target)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        return
+    alias.symlink_to(target, target_is_directory=True)
+
+
 def _run_powershell_harness(*arguments: str) -> dict[str, object]:
     completed = subprocess.run(
         [
@@ -400,7 +412,7 @@ def test_powershell_build_publish_transaction_executes_on_deep_unicode_tree(
         deep_root /= "深层 目录 with spaces repeated"
     deep_root.mkdir(parents=True)
     short_root = tmp_path / "短映射"
-    short_root.symlink_to(deep_root, target_is_directory=True)
+    _create_directory_alias(short_root, deep_root)
     source_root = short_root / ".swb" / "source"
     source_root.mkdir(parents=True)
     (source_root / "StockWatcher-setup.exe").write_text("new-installer", encoding="utf-8")
