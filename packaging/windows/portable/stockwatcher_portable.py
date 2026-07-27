@@ -124,20 +124,6 @@ def _powershell_json(command: str, *, environment: dict[str, str] | None = None)
         return None
 
 
-def _running_terminal() -> bool:
-    if sys.platform != "win32":
-        return False
-    completed = subprocess.run(
-        [_system_executable("tasklist.exe"), "/FI", "IMAGENAME eq TdxW.exe", "/NH"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=5,
-        creationflags=CREATE_NO_WINDOW,
-    )
-    return completed.returncode == 0 and "tdxw.exe" in completed.stdout.lower()
-
-
 def _registry_terminal_candidates() -> tuple[Path, ...]:
     if sys.platform != "win32":
         return ()
@@ -215,21 +201,6 @@ def find_official_terminal() -> Path | None:
         (candidate for candidate in dict.fromkeys(candidates) if _signature_is_official(candidate)),
         None,
     )
-
-
-def attempt_start_official_terminal() -> bool:
-    if _running_terminal():
-        return False
-    executable = find_official_terminal()
-    if executable is None:
-        return False
-    subprocess.Popen(
-        [str(executable)],
-        cwd=str(executable.parent),
-        close_fds=True,
-        creationflags=CREATE_NO_WINDOW,
-    )
-    return True
 
 
 def _load_application_module(layout: PortableLayout, name: str) -> ModuleType:
@@ -317,13 +288,14 @@ def launch_once(layout: PortableLayout | None = None) -> int:
     if terminal is None:
         raise PortableLaunchError(
             "未找到数字签名有效且发布者匹配官方公司的通达信终端。"
-            "StockWatcher 未启动。"
+            "StockWatcher 未启动。请由本人通过官方终端的正常入口启动并登录后重试。"
         )
     if not run_native_preflight(resolved_layout, terminal=terminal):
-        attempt_start_official_terminal()
         raise PortableLaunchError(
             "原生 TdxQuant 预检未通过，StockWatcher 候选界面未启动。"
-            "请在官方终端由本人完成登录并开启 TQ 后，再双击主入口重试。"
+            "本入口不会自动启动终端或请求管理员权限。"
+            "请由本人通过官方终端的正常入口完成启动、登录并开启 TQ 后，"
+            "再双击主入口重试。"
         )
     return launch_stockwatcher_ui(resolved_layout)
 

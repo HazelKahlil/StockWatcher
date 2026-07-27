@@ -51,6 +51,20 @@ def test_unique_entry_is_hidden_signed_python_312_only() -> None:
     assert "未找到数字签名有效" in source
 
 
+def test_vbs_launcher_has_no_elevation_verb() -> None:
+    source = (
+        ROOT / "packaging" / "windows" / "portable" / "启动 StockWatcher.vbs"
+    ).read_text(encoding="utf-8")
+    forbidden = (
+        "runas",
+        "-verb",
+        "shellexecute",
+        "requireadministrator",
+        "highestavailable",
+    )
+    assert all(item not in source.casefold() for item in forbidden)
+
+
 def test_portable_runtime_contains_no_install_or_security_bypass() -> None:
     source = MODULE_PATH.read_text(encoding="utf-8")
     forbidden = (
@@ -66,6 +80,8 @@ def test_portable_runtime_contains_no_install_or_security_bypass() -> None:
     assert "_system_executable" in source
     assert "run_native_preflight" in source
     assert "launch_stockwatcher_ui" in source
+    assert "subprocess.Popen" not in source
+    assert "attempt_start_official_terminal" not in source
 
 
 def test_missing_application_or_native_preflight_is_rejected(tmp_path: Path) -> None:
@@ -176,7 +192,7 @@ def test_success_path_calls_real_ui_only_after_native_preflight(
     assert calls == ["layout", "preflight", "ui"]
 
 
-def test_failed_native_preflight_never_calls_ui(
+def test_preflight_failure_does_not_start_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_module()
@@ -185,20 +201,21 @@ def test_failed_native_preflight_never_calls_ui(
     monkeypatch.setattr(module, "missing_dependencies", lambda: ())
     monkeypatch.setattr(module, "find_official_terminal", lambda: ROOT / "TdxW.exe")
     monkeypatch.setattr(module, "run_native_preflight", lambda *_args, **_kwargs: False)
-    def start_terminal() -> bool:
+
+    def start_terminal(*_args: object, **_kwargs: object) -> object:
         calls.append("terminal")
-        return True
+        return object()
 
     def ui(_layout: object) -> int:
         calls.append("ui")
         return 0
 
-    monkeypatch.setattr(module, "attempt_start_official_terminal", start_terminal)
+    monkeypatch.setattr(module.subprocess, "Popen", start_terminal)
     monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
 
     with pytest.raises(module.PortableLaunchError, match="原生 TdxQuant 预检未通过"):
         module.launch_once(module.portable_layout())
-    assert calls == ["terminal"]
+    assert calls == []
 
 
 def test_build_portable_zip_contains_complete_app_and_verified_manifest(

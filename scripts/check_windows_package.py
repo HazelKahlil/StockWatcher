@@ -82,11 +82,27 @@ def main() -> int:
         errors.append("portable entry must verify the official Python signature")
     if "ExecutionPolicy" in portable_entry or "pip" in portable_entry.lower():
         errors.append("portable entry must not install dependencies or bypass execution policy")
+    elevation_markers = (
+        "runas",
+        "-verb",
+        "shellexecute",
+        "requireadministrator",
+        "highestavailable",
+    )
+    if any(marker in portable_entry.casefold() for marker in elevation_markers):
+        errors.append("portable entry must not request elevation")
     if (
         "OFFICIAL_PUBLISHERS" not in portable_runtime
         or "Get-AuthenticodeSignature" not in portable_runtime
     ):
-        errors.append("portable runtime must verify the official terminal signature before launch")
+        errors.append(
+            "portable runtime must verify the official terminal signature before preflight"
+        )
+    if (
+        "subprocess.Popen" in portable_runtime
+        or "attempt_start_official_terminal" in portable_runtime
+    ):
+        errors.append("portable runtime must not automatically start the official terminal")
     if "stock_watcher.providers.tdxquant_preflight" not in portable_runtime:
         errors.append("portable runtime must execute the packaged native preflight")
     if (

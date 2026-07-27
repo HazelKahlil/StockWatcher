@@ -4,9 +4,9 @@
 
 1. 在 Windows 安装并登录通达信官网免费的 64 位“金融终端（量化模拟）”，保持终端运行并开启 TQ。
 2. 取得冻结的 `StockWatcher-Internal-Portable.zip`，复核交付记录中的 SHA-256 后完整解压。不要把 Windows 密码、通达信密码、token 或远程桌面权限交给 Agent。
-3. 先确认目标机已经按冻结 `uv.lock` 预置 Python 3.12 x64、PySide6、Pydantic、PyYAML、tzdata 及锁定传递依赖，并可导入官方 TdxQuant `tqcenter` 模块，再双击根目录唯一主入口 **启动 StockWatcher.vbs**。若提示原生预检失败，请由本人在官方终端完成登录并开启 TQ 后重新双击；不要修改安全策略。
+3. 先确认目标机已经按冻结 `uv.lock` 预置 Python 3.12 x64、PySide6、Pydantic、PyYAML、tzdata 及锁定传递依赖，并可导入官方 TdxQuant `tqcenter` 模块，再双击根目录唯一主入口 **启动 StockWatcher.vbs**。若提示原生预检失败，请由本人通过官方终端自身的正常入口完成启动、登录并开启 TQ 后重新双击；StockWatcher 不会自动启动 `TdxW.exe` 或请求管理员权限，不要修改安全策略。
 
-ZIP 携带完整 StockWatcher 应用、PySide6 UI 与原生 Preflight，但不携带解释器和第三方 wheel。入口仅复用目标机已经允许执行的 python.org 官方签名 Python 3.12/Pythonw，启动前只读检查预置依赖，不首次联网安装。只有固定原生报告整体 `PASS`、恰好一个 `api_session=PASS`、`windows_live_verified=true` 时才启动真实 TdxQuant 诊断 UI；候选与资金模块在 M0 前继续关闭。
+ZIP 携带完整 StockWatcher 应用、PySide6 UI 与原生 Preflight，但不携带解释器和第三方 wheel。入口仅复用目标机已经允许执行的 python.org 官方签名 Python 3.12/Pythonw，启动前只读检查预置依赖，不首次联网安装，不自动启动官方终端，也不使用 elevation verb。只有固定原生报告整体 `PASS`、恰好一个 `api_session=PASS`、`windows_live_verified=true` 时才启动真实 TdxQuant 诊断 UI；候选与资金模块在 M0 前继续关闭。
 
 ## 开发与完整 M0 工程入口
 
