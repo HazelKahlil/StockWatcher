@@ -22,6 +22,11 @@
 
 ### Fixed
 
+- Windows 自包含启动器现在优先只读识别当前交互会话中唯一运行、签名有效的
+  `TdxW.exe`，因此官方终端安装在自定义目录且卸载注册表不完整时也能启动；
+  多实例或签名不匹配仍然 fail-closed，程序不会自动启动终端；验签子进程从
+  固定的 Windows PowerShell 内置模块加载签名命令，不再受父进程
+  `PSModulePath` 污染影响。
 - Windows 现场首个单证券价量调用实测 5.858 秒，默认回环超时由 5 秒调整为有界的 15 秒，避免开盘冷调用被误判为服务中断；交易日历兼容官方 HTTP 返回的 `Date` 键。
 - PyInstaller spec 显式收集动态导入的真实 UI，并在冻结运行时跳过仅适用于源码便携包的外部 Python/依赖检查，同时继续执行官方终端签名、严格原生 Preflight、单实例和 fail-closed 门。
 - 自包含运行时以包内受限回环 HTTP 客户端满足 `python_client` 检查；不再因为目标机没有额外安装 `tqcenter` Python 模块而把已经通过端口和 API 会话的严格 Preflight 错判为失败。

@@ -171,12 +171,39 @@ def _registry_terminal_candidates() -> tuple[Path, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
+def _running_terminal_candidates() -> tuple[Path, ...]:
+    if sys.platform != "win32":
+        return ()
+    result = _powershell_json(
+        "$currentSession=(Get-Process -Id $PID).SessionId;"
+        "$paths=@(Get-Process -Name TdxW -ErrorAction SilentlyContinue"
+        "|Where-Object{$_.SessionId -eq $currentSession}"
+        "|ForEach-Object{[string]$_.Path});"
+        "ConvertTo-Json -InputObject $paths -Compress"
+    )
+    if isinstance(result, str):
+        values: object = [result]
+    else:
+        values = result
+    if not isinstance(values, list):
+        return ()
+    candidates = (
+        Path(value)
+        for value in values
+        if isinstance(value, str) and value.strip()
+    )
+    return tuple(dict.fromkeys(candidates))
+
+
 def _signature_is_official(executable: Path) -> bool:
     if sys.platform != "win32" or not executable.is_file():
         return False
     environment = os.environ.copy()
     environment["STOCKWATCHER_TDX_CANDIDATE"] = str(executable)
     result = _powershell_json(
+        "$securityModule=Join-Path $PSHOME "
+        "'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1';"
+        "Import-Module -Name $securityModule -ErrorAction Stop;"
         "$s=Get-AuthenticodeSignature -LiteralPath "
         "$env:STOCKWATCHER_TDX_CANDIDATE;"
         "@{status=[string]$s.Status;subject=[string]$s.SignerCertificate.Subject}"
@@ -190,6 +217,11 @@ def _signature_is_official(executable: Path) -> bool:
 
 
 def find_official_terminal() -> Path | None:
+    running = _running_terminal_candidates()
+    if running:
+        if len(running) != 1:
+            return None
+        return running[0] if _signature_is_official(running[0]) else None
     candidates = list(_registry_terminal_candidates())
     candidates.extend(
         [

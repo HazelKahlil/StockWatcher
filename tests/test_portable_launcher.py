@@ -93,6 +93,90 @@ def test_portable_runtime_contains_no_install_or_security_bypass() -> None:
     assert "attempt_start_official_terminal" not in source
 
 
+def test_running_terminal_discovery_uses_only_current_interactive_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    command: list[str] = []
+    custom_path = str(ROOT / "任意 安装目录" / "TdxW.exe")
+
+    def powershell_json(value: str, **_kwargs: object) -> object:
+        command.append(value)
+        return [custom_path, "", custom_path]
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setattr(module, "_powershell_json", powershell_json)
+
+    assert module._running_terminal_candidates() == (Path(custom_path),)
+    assert len(command) == 1
+    assert "SessionId -eq $currentSession" in command[0]
+    assert "Get-Process -Name TdxW" in command[0]
+
+
+def test_running_official_terminal_supports_arbitrary_install_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    terminal = ROOT / "自定义 目录" / "TdxW.exe"
+    monkeypatch.setattr(module, "_running_terminal_candidates", lambda: (terminal,))
+    monkeypatch.setattr(
+        module,
+        "_registry_terminal_candidates",
+        lambda: pytest.fail("running terminal must take precedence"),
+    )
+    monkeypatch.setattr(module, "_signature_is_official", lambda path: path == terminal)
+
+    assert module.find_official_terminal() == terminal
+
+
+def test_signature_check_loads_fixed_builtin_security_module(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    terminal = tmp_path / "任意目录" / "TdxW.exe"
+    terminal.parent.mkdir()
+    terminal.write_bytes(b"fixture")
+    commands: list[str] = []
+
+    def powershell_json(value: str, **_kwargs: object) -> object:
+        commands.append(value)
+        return {
+            "status": "Valid",
+            "subject": "CN=Shenzhen Fortune Trend Technology Co., Ltd",
+        }
+
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.setattr(module, "_powershell_json", powershell_json)
+
+    assert module._signature_is_official(terminal)
+    assert len(commands) == 1
+    assert "$PSHOME" in commands[0]
+    assert "Microsoft.PowerShell.Security.psd1" in commands[0]
+
+
+def test_multiple_or_unsigned_running_terminals_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    first = ROOT / "first" / "TdxW.exe"
+    second = ROOT / "second" / "TdxW.exe"
+    monkeypatch.setattr(
+        module,
+        "_registry_terminal_candidates",
+        lambda: pytest.fail("ambiguous running state must not fall back"),
+    )
+
+    monkeypatch.setattr(
+        module, "_running_terminal_candidates", lambda: (first, second)
+    )
+    assert module.find_official_terminal() is None
+
+    monkeypatch.setattr(module, "_running_terminal_candidates", lambda: (first,))
+    monkeypatch.setattr(module, "_signature_is_official", lambda _path: False)
+    assert module.find_official_terminal() is None
+
+
 def test_missing_application_or_native_preflight_is_rejected(tmp_path: Path) -> None:
     module = _load_module()
     script = tmp_path / "完整 包" / "portable" / "stockwatcher_portable.py"
