@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from stock_watcher.domain import SHANGHAI, HealthState
+from stock_watcher.providers.tdxquant import TdxFailureReason, TdxTransportError
 from stock_watcher.providers.tdxquant_preflight import (
     CheckStatus,
     PreflightCheck,
@@ -19,7 +20,7 @@ from stock_watcher.ui.presenter import (
     format_time,
     snapshot_from_batch,
 )
-from stock_watcher.ui.tdx_session import TdxDiagnosticSession
+from stock_watcher.ui.tdx_session import TdxDiagnosticSession, TqConnectionState
 
 
 def test_ui_snapshot_exposes_replay_fields_and_blocks_alerts_when_unhealthy() -> None:
@@ -115,6 +116,10 @@ def test_tdx_diagnostic_ui_never_relabels_replay_as_live(
     )
     assert session.batch is None
     assert session.state is HealthState.STOPPED
+    assert session.connection_state is TqConnectionState.DISCONNECTED
+    assert session.data_gate_label == "已阻断"
+    assert session.candidate_gate_label == "关闭"
+    assert session.status_issues == ("TQ 本机服务：TQ 本机服务不可达",)
     assert not view.alert_allowed
     assert view.candidates == ()
     assert "Mock" not in view.source_label
@@ -158,6 +163,12 @@ def test_tdx_diagnostic_ui_reuses_verified_terminal_without_duplicate_preflight(
 
     assert calls == []
     assert session.state is HealthState.WARMING
+    assert session.connection_state is TqConnectionState.CONNECTED
+    assert session.data_gate_label == "未就绪"
+    assert session.candidate_gate_label == "关闭"
+    assert any("分钟历史" in issue for issue in session.status_issues)
+    assert any("源时间戳" in issue for issue in session.status_issues)
+    assert any("M0" in issue for issue in session.status_issues)
     assert session.batch is None
     session.recover()
     assert calls == [
@@ -167,6 +178,85 @@ def test_tdx_diagnostic_ui_reuses_verified_terminal_without_duplicate_preflight(
         }
     ]
     assert session.state is HealthState.WARMING
+    assert session.connection_state is TqConnectionState.CONNECTED
+
+
+def test_tdx_manual_fetch_uses_normalized_read_only_list_and_keeps_candidates_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = tmp_path / "官方 终端" / "TdxW.exe"
+    fixed_now = datetime(2026, 7, 28, 10, 5, 6, tzinfo=SHANGHAI)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class RecordingTransport:
+        def call(self, method: str, params: dict[str, object]) -> object:
+            calls.append((method, params))
+            return ("600000.SH",)
+
+    def transport(endpoint: str, timeout_seconds: float) -> RecordingTransport:
+        assert endpoint == "http://127.0.0.1:17709/"
+        assert timeout_seconds == 5.0
+        return RecordingTransport()
+
+    monkeypatch.setattr("stock_watcher.ui.tdx_session.TdxHttpTransport", transport)
+    session = TdxDiagnosticSession(
+        tmp_path / "tdx.sqlite3",
+        "http://127.0.0.1:17709/",
+        terminal_path=terminal,
+        preflight_verified=True,
+        clock=lambda: fixed_now,
+    )
+
+    session.begin_manual_fetch()
+    assert str(session.connection_state) == TqConnectionState.CHECKING.value
+    session.manual_fetch()
+
+    assert calls == [
+        (
+            "get_stock_list",
+            {"market": "5", "list_type": 0},
+        )
+    ]
+    assert type(calls[0][1]["list_type"]) is int
+    assert str(session.connection_state) == TqConnectionState.CONNECTED.value
+    assert session.state is HealthState.WARMING
+    assert session.batch is None
+    assert session.last_fetch_at == fixed_now
+    assert session.last_connection_check == fixed_now
+    assert "成功" in session.last_fetch_detail
+    assert "未显示、未保存" in session.last_fetch_detail
+    assert session.candidate_gate_label == "关闭"
+
+
+def test_tdx_manual_fetch_redacts_transport_detail_and_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = tmp_path / "官方 终端" / "TdxW.exe"
+
+    class FailingTransport:
+        def call(self, _method: str, _params: dict[str, object]) -> object:
+            raise TdxTransportError(TdxFailureReason.TIMEOUT, "sensitive vendor detail")
+
+    monkeypatch.setattr(
+        "stock_watcher.ui.tdx_session.TdxHttpTransport",
+        lambda _endpoint, timeout_seconds: FailingTransport(),
+    )
+    session = TdxDiagnosticSession(
+        tmp_path / "tdx.sqlite3",
+        "http://127.0.0.1:17709/",
+        terminal_path=terminal,
+        preflight_verified=True,
+    )
+
+    session.manual_fetch()
+
+    assert session.connection_state is TqConnectionState.DISCONNECTED
+    assert session.state is HealthState.STOPPED
+    assert session.batch is None
+    assert session.candidate_gate_label == "关闭"
+    assert "响应超时" in session.last_fetch_detail
+    assert "sensitive vendor detail" not in session.last_fetch_detail
+    assert "sensitive vendor detail" not in " ".join(session.status_issues)
 
 
 def test_verified_tdx_ui_requires_terminal_path(tmp_path: Path) -> None:

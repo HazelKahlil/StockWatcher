@@ -26,9 +26,16 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 }
 #summaryCard { padding: 4px; }
 #summaryLabel, #candidateMeta, #metricLabel { color: #748296; font-size: 13px; }
-#summaryValue { font-size: 22px; font-weight: 700; color: #1c2d42; }
+#summaryValue { font-size: 18px; font-weight: 700; color: #1c2d42; }
+#summaryValue[state="connected"] { color: #17814f; }
+#summaryValue[state="checking"] { color: #1670df; }
+#summaryValue[state="disconnected"] { color: #c63f3f; }
+#summaryValue[state="not_applicable"] { color: #667487; }
 #candidateCard { min-height: 72px; }
 #candidateCard:hover { background: #fbfdff; border-color: #b8d4f8; }
+#cardsScroll, #cardsScroll > QWidget > QWidget, #cardsHost {
+    background: transparent; border: none;
+}
 #candidateCard[previous="true"] { background: #f8fafc; border-color: #e5e9ef; }
 #candidateCard[previous="true"] #candidateName,
 #candidateCard[previous="true"] #candidateChange,
@@ -48,15 +55,26 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #interruptCard { background: #fffaf0; border: 1px solid #f3dfac; border-radius: 14px; }
 #interruptTitle { color: #9a731d; font-size: 22px; font-weight: 750; }
 #interruptMessage { color: #39495d; font-size: 16px; }
+#issueList { color: #6e5b2d; font-size: 14px; }
 #interruptMeta { color: #7c8795; font-size: 14px; }
+#emptyState {
+    color: #6c798a; background: #f8fafc; border: 1px dashed #ced7e2;
+    border-radius: 12px; padding: 24px; font-size: 15px;
+}
 #sectionTitle { color: #405067; font-size: 17px; font-weight: 700; }
 #primaryButton, #secondaryButton { border-radius: 9px; padding: 11px 18px; font-size: 16px; }
 #primaryButton { background: #1679ed; border: 1px solid #1679ed; color: #ffffff; }
 #primaryButton:hover { background: #0b68d5; }
+#primaryButton:disabled { background: #9cbfe6; border-color: #9cbfe6; }
 #secondaryButton { background: #ffffff; border: 1px solid #d3dce8; color: #33445a; }
 #secondaryButton:hover { background: #eef5ff; border-color: #a8c7ee; }
+#secondaryButton:disabled { color: #a2acb9; background: #f5f7fa; }
 #footer { color: #7d8999; font-size: 13px; }
-#statusDot { color: #35b968; font-size: 14px; padding-right: 3px; }
+#statusDot { font-size: 14px; padding-right: 3px; }
+#statusDot[state="healthy"] { color: #35b968; }
+#statusDot[state="warming"] { color: #d59a25; }
+#statusDot[state="checking"] { color: #1679ed; }
+#statusDot[state="stopped"] { color: #d34a4a; }
 #alertPopup { background: #ffffff; border: 1px solid #d6e0ec; border-radius: 14px; }
 #popupTitle { font-size: 21px; font-weight: 750; }
 #popupSubtitle { color: #718096; font-size: 14px; }

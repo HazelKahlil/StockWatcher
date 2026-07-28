@@ -12,6 +12,11 @@
 
 ### Added
 
+- Windows TQ 只读界面现在始终分开展示连接状态、最近检测、数据门、候选状态和
+  当前验证阶段；默认每 60 秒自动执行严格连接检测，并提供“重新连接 TQ”和
+  “立即抓取（只读）”按钮。人工抓取只调用官方回环证券列表接口，显式使用整数
+  `list_type=0`，仅显示脱敏成败与问题位置，不显示或保存列表正文，也不绕过 M0
+  开放候选。
 - Windows 自包含 PyInstaller 候选改用与源码便携包相同的严格启动入口，包内携带固定 Python 3.12、PySide6 与运行依赖；冻结运行时不再要求目标机预装 Python 或源码树。
 - v0.1 Mac Replay Foundation：跨平台 Python 工程、Provider 协议、Mock/Replay/Synthetic、SQLite WAL/配置与脱敏滚动日志基础，以及确定性测试。
 - STOPPED 恢复来源时间门：拒绝并计数不晚于 STOPPED 截止线的延迟样本，防止旧数据重新放行候选。
