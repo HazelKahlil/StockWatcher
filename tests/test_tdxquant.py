@@ -642,6 +642,32 @@ def test_valid_stock_list_produces_exactly_one_passing_api_check(
     assert report.windows_live_verified
 
 
+def test_builtin_http_client_satisfies_python_client_check_without_tqcenter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    terminal_path = tmp_path / "official-terminal"
+    _prepare_passing_windows_preflight(monkeypatch, terminal_path)
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.importlib.util.find_spec",
+        lambda _name: None,
+    )
+    monkeypatch.setattr(
+        "stock_watcher.providers.tdxquant_preflight.TdxHttpTransport.call",
+        lambda *_args, **_kwargs: ["600000.SH"],
+    )
+
+    report = run_preflight(terminal_path=terminal_path)
+
+    python_client = next(
+        check for check in report.checks if check.name == "python_client"
+    )
+    assert python_client.status is CheckStatus.PASS
+    assert python_client.reason is None
+    assert "内置只读回环 HTTP 客户端" in python_client.message
+    assert report.status is CheckStatus.PASS
+    assert report.windows_live_verified
+
+
 def test_preflight_fixes_official_stock_list_parameters(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

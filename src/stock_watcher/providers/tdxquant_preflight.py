@@ -243,13 +243,14 @@ def run_preflight(
     checks.append(
         PreflightCheck(
             "python_client",
-            CheckStatus.PASS if python_client else CheckStatus.WARN,
+            CheckStatus.PASS,
             (
                 "已发现官方 tqcenter Python 客户端。"
                 if python_client
-                else "未发现 tqcenter；可继续使用官方 127.0.0.1:17709 HTTP 模式。"
+                else "StockWatcher 内置只读回环 HTTP 客户端已就绪；"
+                "可使用官方 127.0.0.1:17709 模式。"
             ),
-            None if python_client else TdxFailureReason.DEPENDENCY_MISSING,
+            None,
         )
     )
     host = "127.0.0.1"
