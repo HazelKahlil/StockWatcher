@@ -274,7 +274,8 @@ def test_success_path_calls_real_ui_only_after_native_preflight(
         calls.append("preflight")
         return True
 
-    def ui(_layout: object) -> int:
+    def ui(_layout: object, *, terminal: Path) -> int:
+        assert terminal == ROOT / "fixture-TdxW.exe"
         calls.append("ui")
         return 0
 
@@ -299,7 +300,7 @@ def test_preflight_failure_does_not_start_terminal(
         calls.append("terminal")
         return object()
 
-    def ui(_layout: object) -> int:
+    def ui(_layout: object, *, terminal: Path) -> int:
         calls.append("ui")
         return 0
 
@@ -335,8 +336,9 @@ def test_frozen_bundle_skips_external_python_and_source_layout(
         calls.append("preflight")
         return True
 
-    def ui(layout: object) -> int:
+    def ui(layout: object, *, terminal: Path) -> int:
         assert layout is None
+        assert terminal == ROOT / "fixture-TdxW.exe"
         calls.append("ui")
         return 0
 
@@ -345,6 +347,31 @@ def test_frozen_bundle_skips_external_python_and_source_layout(
 
     assert module.launch_once() == 0
     assert calls == ["preflight", "ui"]
+
+
+def test_verified_preflight_context_is_passed_to_ui_without_second_cli_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    terminal = ROOT / "自定义 安装目录" / "TdxW.exe"
+    observed: dict[str, object] = {}
+
+    def run(**kwargs: object) -> int:
+        observed.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        module,
+        "_load_application_module",
+        lambda _layout, _name: SimpleNamespace(run=run),
+    )
+
+    assert module.launch_stockwatcher_ui(None, terminal=terminal) == 0
+    assert observed == {
+        "preflight_verified": True,
+        "terminal_path": terminal,
+    }
+    assert module.sys.argv == ["StockWatcher", "--provider", "tdxquant"]
 
 
 def test_pyinstaller_bundle_uses_strict_windows_entry() -> None:

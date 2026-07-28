@@ -278,10 +278,14 @@ def run_native_preflight(
     return _strict_preflight_pass(report, module.CheckStatus)
 
 
-def launch_stockwatcher_ui(layout: PortableLayout | None) -> int:
+def launch_stockwatcher_ui(
+    layout: PortableLayout | None,
+    *,
+    terminal: Path,
+) -> int:
     app = _load_application_module(layout, "stock_watcher.ui.app")
     sys.argv = ["StockWatcher", "--provider", "tdxquant"]
-    return int(app.run())
+    return int(app.run(preflight_verified=True, terminal_path=terminal))
 
 
 class _SingleInstance:
@@ -338,7 +342,7 @@ def launch_once(layout: PortableLayout | None = None) -> int:
             "请由本人通过官方终端的正常入口完成启动、登录并开启 TQ 后，"
             "再双击主入口重试。"
         )
-    return launch_stockwatcher_ui(resolved_layout)
+    return launch_stockwatcher_ui(resolved_layout, terminal=terminal)
 
 
 def main() -> int:

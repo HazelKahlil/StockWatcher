@@ -84,7 +84,11 @@ QPushButton { border-radius: 9px; padding: 9px 14px; }
 """
 
 
-def run() -> int:
+def run(
+    *,
+    preflight_verified: bool = False,
+    terminal_path: Path | None = None,
+) -> int:
     parser = argparse.ArgumentParser(description="StockWatcher desktop application")
     parser.add_argument("--provider", choices=("replay", "tdxquant"), default="replay")
     parser.add_argument("--endpoint", default="http://127.0.0.1:17709/")
@@ -102,7 +106,10 @@ def run() -> int:
         paths = runtime_paths()
         paths.create()
         session: ReplaySession | TdxDiagnosticSession = TdxDiagnosticSession(
-            args.db or paths.database, args.endpoint
+            args.db or paths.database,
+            args.endpoint,
+            terminal_path=terminal_path,
+            preflight_verified=preflight_verified,
         )
     else:
         replay_db = args.db or (

@@ -118,3 +118,61 @@ def test_tdx_diagnostic_ui_never_relabels_replay_as_live(
     assert not view.alert_allowed
     assert view.candidates == ()
     assert "Mock" not in view.source_label
+
+
+def test_tdx_diagnostic_ui_reuses_verified_terminal_without_duplicate_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = tmp_path / "官方 终端" / "TdxW.exe"
+    calls: list[dict[str, object]] = []
+    passing = PreflightReport(
+        status=CheckStatus.PASS,
+        platform="Windows",
+        python_version="3.12",
+        endpoint="http://127.0.0.1:17709/",
+        checks=tuple(
+            PreflightCheck(name, CheckStatus.PASS, "通过")
+            for name in (
+                "operating_system",
+                "python",
+                "terminal_install",
+                "python_client",
+                "tq_service",
+                "api_session",
+            )
+        ),
+        windows_live_verified=True,
+    )
+
+    def preflight(**kwargs: object) -> PreflightReport:
+        calls.append(kwargs)
+        return passing
+
+    monkeypatch.setattr("stock_watcher.ui.tdx_session.run_preflight", preflight)
+    session = TdxDiagnosticSession(
+        tmp_path / "tdx.sqlite3",
+        passing.endpoint,
+        terminal_path=terminal,
+        preflight_verified=True,
+    )
+
+    assert calls == []
+    assert session.state is HealthState.WARMING
+    assert session.batch is None
+    session.recover()
+    assert calls == [
+        {
+            "endpoint": passing.endpoint,
+            "terminal_path": terminal,
+        }
+    ]
+    assert session.state is HealthState.WARMING
+
+
+def test_verified_tdx_ui_requires_terminal_path(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="official terminal path"):
+        TdxDiagnosticSession(
+            tmp_path / "tdx.sqlite3",
+            "http://127.0.0.1:17709/",
+            preflight_verified=True,
+        )

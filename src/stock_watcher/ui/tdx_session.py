@@ -17,14 +17,27 @@ class TdxDiagnosticSession:
     window_title = "A股观察提醒 · Windows TQ 预检版"
     is_replay = False
 
-    def __init__(self, store_path: Path, endpoint: str) -> None:
+    def __init__(
+        self,
+        store_path: Path,
+        endpoint: str,
+        *,
+        terminal_path: Path | None = None,
+        preflight_verified: bool = False,
+    ) -> None:
         self.store = SQLiteStore(store_path)
         self.store.initialize()
         self.endpoint = endpoint
+        self.terminal_path = terminal_path
         self.batch: CandidateBatch | None = None
         self.state = HealthState.WARMING
         self.health_detail = ""
-        self.recover()
+        if preflight_verified:
+            if terminal_path is None:
+                raise ValueError("verified TQ preflight requires an official terminal path")
+            self._mark_preflight_verified()
+        else:
+            self.recover()
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
@@ -35,7 +48,10 @@ class TdxDiagnosticSession:
         self.health_detail = "正在重新执行本机 TQ 预检。"
 
     def recover(self) -> None:
-        report = run_preflight(endpoint=self.endpoint)
+        report = run_preflight(
+            endpoint=self.endpoint,
+            terminal_path=self.terminal_path,
+        )
         if report.status is CheckStatus.FAIL:
             self.state = HealthState.STOPPED
             failure = next(
@@ -44,6 +60,9 @@ class TdxDiagnosticSession:
             )
             self.health_detail = failure
             return
+        self._mark_preflight_verified()
+
+    def _mark_preflight_verified(self) -> None:
         self.state = HealthState.WARMING
         self.health_detail = (
             "TQ 本机预检通过；真实 Windows M0 与字段授权尚未完成，"
