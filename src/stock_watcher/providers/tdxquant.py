@@ -117,7 +117,10 @@ class TdxHttpTransport:
     """
 
     endpoint: str = "http://127.0.0.1:17709/"
-    timeout_seconds: float = 5.0
+    # The official local bridge can take more than five seconds for the first
+    # live quote after the opening auction. Keep a bounded timeout, but allow
+    # that observed cold-call latency without turning it into a false outage.
+    timeout_seconds: float = 15.0
     name: str = "official-loopback-http"
     _request_id: int = 0
 
@@ -525,7 +528,7 @@ class TdxQuantProvider:
             {"market": "SH", "start_time": start, "end_time": end, "count": count},
         )
         if isinstance(raw, dict):
-            raw = raw.get("Dates") or raw.get("dates") or list(raw)
+            raw = raw.get("Date") or raw.get("Dates") or raw.get("dates") or list(raw)
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
             raise TdxTransportError(TdxFailureReason.INVALID_RESPONSE, "get_trading_dates")
         dates: list[TradingDate] = []

@@ -1,6 +1,6 @@
 # v0.3-windows-data-gate：Windows TdxQuant 真实数据闸门
 
-> 状态：活跃（HAZ-526 后继便携候选的 Mac 工程门已通过；HAZ-527 在候选下载前被 Windows runner 阻断，仍待 Human Owner 的 Windows 普通用户 live readback，再进入现场 TdxQuant M0）
+> 状态：活跃（2026-07-27 普通用户 Windows live readback 已通过；2026-07-28 首个交易时段 M0 严格失败已保留，正在修复现场兼容并构建自包含候选）
 > 创建：2026-07-22 ｜ 路线收敛：2026-07-23 ｜ 计划 tag：`v0.3.0`
 
 ## 权威结论
@@ -11,6 +11,7 @@
 - Mac 只证明 Mock/Replay、归一化契约、离线测试和打包配置；不能证明 Windows、通达信、真实交易时段、紫黄线、性能或安装体验。
 - 独立真实 Windows v9 验证只证明冻结候选的 Python 3.11/3.12 工程与打包链；没有连接 TdxQuant 终端或行情，不能替代现场 M0。
 - 紫黄线、Level-2、`Zjl`、`Zjl_HB` 与公式口径在真实 M0 前全部保持 `unavailable`。
+- 当前 Windows 已证明官方列表、三市场样本价量、三日日线、板块/成分与交易日历可读；官方分钟历史现场返回空，精确秒级源时间仍不可用，因此候选与资金模块继续关闭。
 
 ## HAZ-410 前置交付范围
 
@@ -27,13 +28,13 @@
 - [x] 代码不读取交易密码，不连接券商账户、持仓、订单或下单接口。
 - [x] HTTP 端点只允许回环地址和官方端口 17709。
 - [x] 资金字段保持 `unavailable`，未把 `Zjl`/`Zjl_HB` 或替代字段命名为紫黄线。
-- [ ] Human Owner 在 Windows 安装并登录官方免费 64 位“金融终端（量化模拟）”。
+- [x] Human Owner 在 Windows 安装并登录官方免费 64 位“金融终端（量化模拟）”。
 - [ ] 现场确认终端/TdxQuant 版本、账号授权范围及本项目内部使用边界。
 - [ ] 现场完成真实交易时段 M0，并形成 `PASS`、`PASS_WITH_LIMITS` 或 `FAIL`。
 
 ## Windows 现场验收
 
-- [ ] 预检区分未安装、终端未启动/未登录、TQ 服务不可达、接口/字段不可用、非交易时段、数据中断和用户暂停。
+- [x] 普通用户 Explorer 入口、无 UAC、官方终端不由应用新增、严格 Preflight 与第二次启动重跑已现场验证。
 - [ ] 全 A 股列表和批量价量覆盖沪深京；记录数量、字段、耗时、限频、错误率和 p50/p95。
 - [ ] 至少 3 只股票每 5 秒比对界面与程序值，连续不少于 30 分钟。
 - [ ] 验证三日分钟历史、行业/概念及成分、交易日历、开盘/午后、断网重连、补数和完整交易时段。
@@ -79,11 +80,14 @@
 | 2026-07-27 | HAZ-526 移除原生 Preflight 失败后自动启动 `TdxW.exe` 的路径；终端未运行、TQ 未就绪或 Preflight 未通过时只中文 fail-closed，并以机械合同锁定 VBS/Python 链无 elevation verb | Mac 源码、单测和离线合同候选；不代表真实 Windows/UAC 已通过，须对新冻结 ZIP 开独立普通用户复验 |
 | 2026-07-27 | HAZ-527 三轮均在 Explorer 枚举前被 Windows Computer Use `runner pipe-in` 阻断；冻结附件未下载、未解压，候选、Preflight/API/TQ、UI、UAC 与 Windows 设置均未触碰 | 平台/运行时 blocker；对 HAZ-526 候选没有形成 PASS 或 FAIL，真实 Windows live readback 与 M0 继续未完成 |
 | 2026-07-27 | HAZ-536 将 `6e5dbed8eee027ef7d5478b18b1539b3c16a24ed` 作为 HAZ-511/512/515/526 的唯一线性后继，复核冻结 ZIP/manifest/payload，并建立脱离 Multica 后可直接交给 Windows Codex 的 handoff | GitHub 交接点；Mac 工程证据与 Windows 未验证门严格分开 |
+| 2026-07-27 | 普通用户 Windows 对 proxy-fixed 候选完成 Explorer 首次一次双击与第二次启动：无 UAC、无新增 `TdxW.exe`、严格 Preflight 6/6 PASS、恰好一个 `api_session=PASS`、UI 可见并正常退出 | `PASS`；只代表 live readback，不代表 M0 或业务候选放行 |
+| 2026-07-28 | 09:30 权威 M0 在 5 秒价量超时严格失败；后续安全诊断证明同一单证券调用 5.858 秒成功，15 秒有界超时修复有效。新尝试进一步验证全 A 5,542 项、三市场日线、板块/成分和交易日历，官方分钟历史仍返回空 | M0 首次结论保持 `FAIL`；后续验证不得覆盖，分钟历史和秒级源时间保持限制 |
+| 2026-07-28 | PyInstaller 改为复用严格 Windows 启动入口并显式收集真实 UI，生成包含固定 Python/PySide6 的自包含目录；目标机不再要求另装 Python | 工程构建 PASS；EXE 尚未商业签名，跨机器与解锁后的 Explorer 首次双击待验证 |
 
 ## 验证边界
 
 - 当前可验证：Mac + Python 3.12 下的 Mock/Replay、TdxQuant fixture 契约、失败/恢复和安全门；独立真实 Windows 下 Python 3.11/3.12 的安装、导入、CLI、74 项测试、Ruff、Mypy、PowerShell 失败闭环、PyInstaller 与 Inno Setup。
-- 当前未验证：真实 TdxQuant、真实行情、终端登录、精确源时间、紫黄线、Level-2、完整交易时段、Windows 通知、多屏，以及 Human Owner 机器上的安装与卸载体验。
+- 当前未验证：精确秒级源时间、三日分钟历史、紫黄线、Level-2、完整交易时段、Windows 通知、多屏、商业代码签名，以及另一台干净 Windows 的安装与卸载体验。
 - HAZ-515 完整便携候选在 Mac 仅验证应用树/原生 Preflight/UI 入包、启动门、依赖 fail-closed、全新目录 import、manifest 和中文/空格路径合同；VBS、官方 Pythonw、预置依赖、Authenticode、Application Control、原生报告与真实 UI 必须由 HAZ-497 按同一冻结 ZIP 在目标 Windows 复验。
 - HAZ-526 后继候选在 Mac 仅验证 Preflight 失败不会自动启动官方终端、VBS/Python 启动链无 elevation verb，以及新 ZIP 的离线完整性；UAC 请求者与普通用户真实启动结果仍须在全新 Windows 轮次确认。HAZ-527 没有运行到候选下载，不得当作候选失败或通过。
 - GitHub：本地 `main` 仍停在较早候选 `6e193a3c20177220d89a7497004af281a7509270`；HAZ-511/512/515/526 形成其 9 个提交的线性后继 `6e5dbed8eee027ef7d5478b18b1539b3c16a24ed`。为避免重复分支/PR，交接复用 HAZ-418 已建立的 `fix/HAZ-418-blockers` 远端 head 与单一 draft PR #2；`origin/main` 在 PR 合入前仍未同步。

@@ -227,6 +227,49 @@ def test_preflight_failure_does_not_start_terminal(
     assert calls == []
 
 
+def test_frozen_bundle_skips_external_python_and_source_layout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    terminal = ROOT / "fixture-TdxW.exe"
+    monkeypatch.setattr(module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        module,
+        "validate_application",
+        lambda _layout: pytest.fail("frozen bundle must not require source layout"),
+    )
+    monkeypatch.setattr(
+        module,
+        "missing_dependencies",
+        lambda: pytest.fail("frozen bundle must not require external Python packages"),
+    )
+    monkeypatch.setattr(module, "find_official_terminal", lambda: terminal)
+
+    def preflight(layout: object, *, terminal: Path) -> bool:
+        assert layout is None
+        calls.append("preflight")
+        return True
+
+    def ui(layout: object) -> int:
+        assert layout is None
+        calls.append("ui")
+        return 0
+
+    monkeypatch.setattr(module, "run_native_preflight", preflight)
+    monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
+
+    assert module.launch_once() == 0
+    assert calls == ["preflight", "ui"]
+
+
+def test_pyinstaller_bundle_uses_strict_windows_entry() -> None:
+    source = (ROOT / "packaging" / "stockwatcher.spec").read_text(encoding="utf-8")
+    assert "stockwatcher_portable.py" in source
+    assert 'src" / "stock_watcher" / "__main__.py' not in source
+    assert '"stock_watcher.ui.app"' in source
+
+
 def test_build_portable_zip_contains_complete_app_and_verified_manifest(
     tmp_path: Path,
 ) -> None:

@@ -4,7 +4,15 @@ from pathlib import Path
 project_root = Path(SPECPATH).parent
 
 analysis = Analysis(
-    [str(project_root / "src" / "stock_watcher" / "__main__.py")],
+    [
+        str(
+            project_root
+            / "packaging"
+            / "windows"
+            / "portable"
+            / "stockwatcher_portable.py"
+        )
+    ],
     pathex=[str(project_root / "src")],
     binaries=[],
     datas=[],
@@ -12,6 +20,7 @@ analysis = Analysis(
         "stock_watcher.providers.tdxquant",
         "stock_watcher.providers.tdxquant_preflight",
         "stock_watcher.providers.tdxquant_m0",
+        "stock_watcher.ui.app",
         "stock_watcher.ui.tdx_session",
     ],
     hookspath=[],

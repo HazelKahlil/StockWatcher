@@ -190,7 +190,7 @@ def test_http_transport_current_official_bridge_requires_explicit_list_type(
             return self.payload
 
     def current_official_bridge(request: object, timeout: float) -> Response:
-        assert timeout == 5.0
+        assert timeout == 15.0
         body = json.loads(getattr(request, "data").decode("utf-8"))
         params = body["params"]
         captured_params.append(params)
@@ -371,6 +371,15 @@ def test_trading_calendar_rejects_malformed_date() -> None:
     with pytest.raises(TdxTransportError) as caught:
         provider(transport).trading_dates()
     assert caught.value.reason is TdxFailureReason.FIELD_UNAVAILABLE
+
+
+def test_http_calendar_date_key_maps_to_domain() -> None:
+    transport = FakeTransport({"get_trading_dates": {"Date": ["20251211", "20251212"]}})
+    dates = provider(transport).trading_dates()
+    assert [item.trading_date for item in dates] == [
+        date(2025, 12, 11),
+        date(2025, 12, 12),
+    ]
 
 
 def test_missing_source_timestamp_never_becomes_candidate_safe() -> None:

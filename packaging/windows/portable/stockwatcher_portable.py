@@ -203,8 +203,14 @@ def find_official_terminal() -> Path | None:
     )
 
 
-def _load_application_module(layout: PortableLayout, name: str) -> ModuleType:
-    sys.path.insert(0, str(layout.application_src))
+def _load_application_module(
+    layout: PortableLayout | None,
+    name: str,
+) -> ModuleType:
+    if not getattr(sys, "frozen", False):
+        if layout is None:
+            raise PortableLaunchError("无法定位 StockWatcher 应用源码，程序未启动。")
+        sys.path.insert(0, str(layout.application_src))
     return __import__(name, fromlist=["*"])
 
 
@@ -228,7 +234,7 @@ def _strict_preflight_pass(report: object, check_status: Any) -> bool:
 
 
 def run_native_preflight(
-    layout: PortableLayout,
+    layout: PortableLayout | None,
     *,
     terminal: Path | None = None,
 ) -> bool:
@@ -240,7 +246,7 @@ def run_native_preflight(
     return _strict_preflight_pass(report, module.CheckStatus)
 
 
-def launch_stockwatcher_ui(layout: PortableLayout) -> int:
+def launch_stockwatcher_ui(layout: PortableLayout | None) -> int:
     app = _load_application_module(layout, "stock_watcher.ui.app")
     sys.argv = ["StockWatcher", "--provider", "tdxquant"]
     return int(app.run())
@@ -275,15 +281,18 @@ def _dependency_message(missing: tuple[str, ...]) -> str:
 
 
 def launch_once(layout: PortableLayout | None = None) -> int:
-    if sys.version_info[:2] != (3, 12) or sys.maxsize <= 2**32:
+    frozen = bool(getattr(sys, "frozen", False))
+    if not frozen and (sys.version_info[:2] != (3, 12) or sys.maxsize <= 2**32):
         raise PortableLaunchError(
             "本便携候选只允许 64 位 Python 3.12 Pythonw，StockWatcher 未启动。"
         )
-    resolved_layout = layout or portable_layout()
-    validate_application(resolved_layout)
-    missing = missing_dependencies()
-    if missing:
-        raise PortableLaunchError(_dependency_message(missing))
+    resolved_layout = None if frozen else (layout or portable_layout())
+    if not frozen:
+        assert resolved_layout is not None
+        validate_application(resolved_layout)
+        missing = missing_dependencies()
+        if missing:
+            raise PortableLaunchError(_dependency_message(missing))
     terminal = find_official_terminal()
     if terminal is None:
         raise PortableLaunchError(
