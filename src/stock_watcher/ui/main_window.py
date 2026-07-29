@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
             self._auto_check_timer.setInterval(interval_ms)
             self._auto_check_timer.timeout.connect(self._auto_check_tq)
             self._auto_check_timer.start()
+            QTimer.singleShot(0, self._auto_check_tq)
         QTimer.singleShot(250, self._show_initial_alert)
 
     def _build(self) -> None:

@@ -3,21 +3,32 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit  # noqa: E402
 
+from stock_watcher.config import DataSourceSettings  # noqa: E402
+from stock_watcher.providers.tushare import (  # noqa: E402
+    ProviderError,
+    ProviderFailureReason,
+)
 from stock_watcher.security import (  # noqa: E402
     SUPER_CREDENTIAL,
     CredentialRef,
     MemoryCredentialStore,
 )
+from stock_watcher.ui import data_source_status  # noqa: E402
 from stock_watcher.ui.data_source_settings import (  # noqa: E402
     DataSourceSettingsController,
     DataSourceSettingsDialog,
 )
-from stock_watcher.ui.data_source_status import CredentialTestResult  # noqa: E402
+from stock_watcher.ui.data_source_status import (  # noqa: E402
+    CredentialTestResult,
+    TushareCredentialTester,
+)
 from stock_watcher.ui.tushare_session import TushareDiagnosticSession  # noqa: E402
 
 
@@ -30,6 +41,27 @@ class NoNetworkTester:
             permission_summary="测试摘要",
             expires_at="未知",
         )
+
+
+class RealtimeAvailableTester:
+    def test(self, profile: object, secret: str) -> CredentialTestResult:
+        return CredentialTestResult(
+            success=True,
+            tested_at=datetime.now().astimezone(),
+            status_text="基础与实时接口可达",
+            permission_summary="实时有数据",
+            expires_at="未知",
+            realtime_status="available",
+            realtime_records=100,
+            realtime_source_timestamp_present=True,
+        )
+
+
+class StaticPassRealtimeEmptyTransport:
+    def execute(self, request: object) -> object:
+        if getattr(request, "api_name") == "rt_k":
+            raise ProviderError(ProviderFailureReason.EMPTY_DATA)
+        return SimpleNamespace(http_status=200)
 
 
 class RejectingCredentialStore(MemoryCredentialStore):
@@ -94,9 +126,45 @@ def test_tushare_session_checks_saved_credential_without_opening_gate(
     )
     session.recover()
     assert session.connection_state.value == "已连接"
-    assert session.data_gate_label == "M0 未完成"
+    assert session.data_gate_label == "实时不可用"
     assert session.candidate_gate_label == "关闭"
     assert session.batch is None
+
+
+def test_tushare_session_reports_realtime_ready_but_keeps_m0_gate_closed(
+    tmp_path: Path,
+) -> None:
+    store = MemoryCredentialStore()
+    store.set(SUPER_CREDENTIAL, "test-only-secret")
+    session = TushareDiagnosticSession(
+        tmp_path / "tushare.sqlite3",
+        credential_store=store,
+        tester=RealtimeAvailableTester(),
+    )
+    session.recover()
+    assert session.connection_state.value == "已连接"
+    assert session.data_gate_label == "实时待 M0"
+    assert session.candidate_gate_label == "关闭"
+    assert session.batch is None
+    assert "30 分钟 M0" in session.status_issues[0]
+
+
+def test_credential_test_distinguishes_static_connection_from_empty_realtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        data_source_status,
+        "SuperTransport",
+        lambda *_args, **_kwargs: StaticPassRealtimeEmptyTransport(),
+    )
+    result = TushareCredentialTester().test(
+        DataSourceSettings().super_profile,
+        "test-only-secret",
+    )
+    assert result.success
+    assert result.realtime_status == "empty_data"
+    assert not result.realtime_source_timestamp_present
+    assert "实时快照为空" in result.permission_summary
 
 
 def test_failed_keyring_replacement_preserves_previous_credential() -> None:

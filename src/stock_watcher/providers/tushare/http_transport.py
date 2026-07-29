@@ -78,11 +78,14 @@ class BaseHttpTransport:
                         self.profile.read_timeout_seconds,
                     )
                 if request.method.upper() == "GET":
+                    query = dict(request.params)
+                    if request.fields:
+                        query["fields"] = ",".join(request.fields)
                     response = self._session.request(
                         request.method,
                         self._url(request.endpoint),
                         headers=headers,
-                        params=request.params or None,
+                        params=query or None,
                         timeout=timeout,
                     )
                 else:

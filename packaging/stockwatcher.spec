@@ -3,6 +3,22 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 project_root = Path(SPECPATH).parent
+icon_path = (
+    project_root
+    / "src"
+    / "stock_watcher"
+    / "ui"
+    / "assets"
+    / "stockwatcher.ico"
+)
+runtime_icon_path = (
+    project_root
+    / "src"
+    / "stock_watcher"
+    / "ui"
+    / "assets"
+    / "stockwatcher.png"
+)
 
 analysis = Analysis(
     [
@@ -16,7 +32,12 @@ analysis = Analysis(
     ],
     pathex=[str(project_root / "src")],
     binaries=[],
-    datas=[],
+    datas=[
+        (
+            str(runtime_icon_path),
+            "stock_watcher/ui/assets",
+        )
+    ],
     hiddenimports=[
         *collect_submodules("keyring.backends"),
         "stock_watcher.providers.tushare.capability_router",
@@ -48,6 +69,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon=str(icon_path),
     version=str(project_root / "packaging" / "windows" / "version_info.txt"),
 )
 collection = COLLECT(

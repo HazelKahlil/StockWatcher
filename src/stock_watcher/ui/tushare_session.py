@@ -14,7 +14,11 @@ from stock_watcher.security import (
 )
 from stock_watcher.storage import SQLiteStore
 
-from .data_source_status import CredentialTester, TushareCredentialTester
+from .data_source_status import (
+    CredentialTester,
+    CredentialTestResult,
+    TushareCredentialTester,
+)
 from .tdx_session import TqConnectionState
 
 
@@ -29,8 +33,8 @@ class TushareDiagnosticSession:
     supports_manual_fetch = True
     auto_check_interval_seconds = 60
     connection_name = "数据接口"
-    reconnect_label = "检查数据接口"
-    manual_fetch_label = "立即检测数据接口"
+    reconnect_label = "检查连接与实时"
+    manual_fetch_label = "立即检测实时数据"
     footer_label = "Tushare 兼容 HTTP · 凭据仅存系统安全存储 · 候选关闭"
 
     def __init__(
@@ -126,20 +130,67 @@ class TushareDiagnosticSession:
             else TqConnectionState.DISCONNECTED
         )
         self.connection_detail = result.status_text
-        self.data_gate_label = "M0 未完成" if result.success else "未就绪"
-        self.last_fetch_detail = (
-            "只读接口检测通过；未保存响应正文，真实候选仍关闭。"
-            if result.success
-            else "只读接口检测失败；旧数据不会用于候选。"
-        )
-        self.status_issues = (
-            (
-                "连接已通过；全市场、分钟、板块、时间戳和 30 分钟 M0 尚未验证。",
-                "真实候选和提醒保持关闭。",
-            )
-            if result.success
-            else (
+        if not result.success:
+            self.data_gate_label = "未就绪"
+            self.last_fetch_detail = "只读接口检测失败；旧数据不会用于候选。"
+            self.status_issues = (
                 result.safe_reason or "数据接口检测失败。",
                 "真实候选和提醒保持关闭。",
             )
+            return
+        self._apply_realtime_status(result, use_fast=use_fast)
+
+    def _apply_realtime_status(
+        self,
+        result: CredentialTestResult,
+        *,
+        use_fast: bool,
+    ) -> None:
+        realtime_status = result.realtime_status
+        source_timestamp_present = result.realtime_source_timestamp_present
+        if use_fast:
+            self.data_gate_label = "实时未验证"
+            self.last_fetch_detail = (
+                "基础接口检测通过；快速接口不承担实时主链路，未保存响应正文。"
+            )
+            self.status_issues = (
+                "快速接口实时能力未进入允许列表；实时请求不会自动回退或拼接。",
+                "真实候选和提醒保持关闭。",
+            )
+            return
+        if realtime_status == "available" and source_timestamp_present:
+            self.data_gate_label = "实时待 M0"
+            self.last_fetch_detail = (
+                "实时快照已有数据和供应商时间；未保存响应正文，候选仍关闭。"
+            )
+            self.status_issues = (
+                "实时快照可读；仍需全市场连续 30 分钟 M0、停滞与恢复验证。",
+                "M0 放行前真实候选和提醒保持关闭。",
+            )
+            return
+        if realtime_status == "source_timestamp_missing":
+            self.data_gate_label = "实时缺时间戳"
+            self.last_fetch_detail = (
+                "实时快照有数据但缺可信供应商时间；未保存响应正文。"
+            )
+            self.status_issues = (
+                "接收时间不能冒充供应商时间；无法证明数据新鲜度。",
+                "真实候选和提醒保持关闭。",
+            )
+            return
+        self.data_gate_label = "实时不可用"
+        safe_labels = {
+            "empty_data": "实时日线返回空数据；当前凭据通常尚未开通独立实时权限。",
+            "permission_denied": "当前凭据没有实时日线权限。",
+            "timeout": "实时接口响应超时。",
+            "rate_limited": "实时接口触发频率限制。",
+            "business_error": "实时接口返回业务错误。",
+            "not_checked": "当前连接测试尚未验证实时接口。",
+        }
+        self.last_fetch_detail = (
+            "基础接口连接通过，但实时快照不可用；未保存响应正文。"
+        )
+        self.status_issues = (
+            safe_labels.get(realtime_status, "实时接口未通过严格检测。"),
+            "官方实时日线/分钟属于独立权限；真实候选和提醒保持关闭。",
         )

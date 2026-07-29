@@ -141,6 +141,28 @@ def test_realtime_minute_time_field_is_treated_as_supplier_timestamp() -> None:
     assert result.provenance.freshness_seconds == 3.0
 
 
+def test_super_get_sends_requested_fields_as_query_parameter() -> None:
+    fake = FakeSession([response(200, {"code": 0, "data": [{"close": 10.5}]})])
+    transport = SuperTransport(
+        profile("super"),
+        lambda: "secret",
+        session=cast(requests.Session, fake),
+    )
+    transport.execute(
+        TransportRequest(
+            endpoint="/tushare/pro/rt_k",
+            params={"ts_code": "3*.SZ"},
+            fields=("ts_code", "close", "trade_time"),
+            method="GET",
+            realtime=True,
+        )
+    )
+    assert fake.requests[0]["params"] == {
+        "ts_code": "3*.SZ",
+        "fields": "ts_code,close,trade_time",
+    }
+
+
 def test_fast_transport_uses_expected_body_and_never_url_query() -> None:
     fake = FakeSession([response(200, {"code": 0, "data": [{"ok": True}]})])
     transport = FastTransport(

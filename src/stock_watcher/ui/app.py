@@ -5,6 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from stock_watcher.paths import runtime_paths
@@ -103,6 +104,10 @@ QPushButton { border-radius: 9px; padding: 9px 14px; }
 """
 
 
+def application_icon_path() -> Path:
+    return Path(__file__).with_name("assets") / "stockwatcher.png"
+
+
 def run(
     *,
     preflight_verified: bool = False,
@@ -124,6 +129,9 @@ def run(
     args = parser.parse_args()
     app = QApplication(sys.argv)
     app.setApplicationName("StockWatcher")
+    icon_path = application_icon_path()
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
     app.setStyleSheet(STYLE_SHEET)
     if args.provider == "tdxquant":
         paths = runtime_paths()

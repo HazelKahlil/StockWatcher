@@ -2,6 +2,7 @@
 #define MyAppVersion "0.3.1-alpha"
 #define MyAppPublisher "StockWatcher"
 #define MyAppExeName "StockWatcher.exe"
+#define MyAppIcon "..\..\src\stock_watcher\ui\assets\stockwatcher.ico"
 #ifndef StockWatcherBundleDir
   #define StockWatcherBundleDir "..\..\dist\StockWatcher"
 #endif
@@ -21,6 +22,7 @@ OutputDir={#StockWatcherOutputDir}
 OutputBaseFilename=StockWatcher-0.3.1-alpha-setup
 Compression=lzma2
 SolidCompression=yes
+SetupIconFile={#MyAppIcon}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}

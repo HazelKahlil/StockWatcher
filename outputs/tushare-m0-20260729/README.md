@@ -14,6 +14,11 @@
   runner 停止前共记录 5 轮，均为 `empty_data`，错误率 100%。
 - 后续小范围诊断确认：单只 `rt_k` 仍为空，三只 `rt_min` 返回 HTTP 400
   业务错误。因此失败不是全市场通配符本身造成的。
+- 13:13 后续诊断严格补上官方必填 `freq=1MIN`：Super 的单股/全市场 `rt_k`
+  均为 HTTP 200 空数据，`rt_min` 与 `rt_min_daily` 均超时；Fast 的独立
+  `rt_k` 诊断最终为业务错误。报告见 `realtime-diagnostics-20260729.json`。
+- 官方文档确认 `rt_k`、`rt_min` 为独立实时权限，`rt_min_daily` 随
+  `rt_min` 权限获得；普通积分、静态/历史可用不代表实时权限可用。
 
 ## 保留的首次失败
 

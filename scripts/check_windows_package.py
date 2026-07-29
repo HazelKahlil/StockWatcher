@@ -45,6 +45,8 @@ def main() -> int:
         ROOT / "packaging" / "windows" / "portable" / "DEPENDENCIES.md",
         ROOT / "scripts" / "build_internal_portable.py",
         ROOT / "src" / "stock_watcher" / "__main__.py",
+        ROOT / "src" / "stock_watcher" / "ui" / "assets" / "stockwatcher.ico",
+        ROOT / "src" / "stock_watcher" / "ui" / "assets" / "stockwatcher.png",
         ROOT / "src" / "stock_watcher" / "providers" / "tdxquant_preflight.py",
         ROOT / "src" / "stock_watcher" / "ui" / "app.py",
     )
@@ -66,6 +68,13 @@ def main() -> int:
         errors.append("PowerShell entry must fail closed on native command errors")
     if "subst.exe" not in powershell or "Assert-IsccPathBudget" not in powershell:
         errors.append("PowerShell build must enforce the short ISCC input path contract")
+    if "Resolve-Iscc" not in powershell or "Inno Setup 6\\ISCC.exe" not in powershell:
+        errors.append("PowerShell build must find Inno Setup without changing system PATH")
+    if (
+        "Ensure-PyInstaller" not in powershell
+        or '"sync", "--all-groups", "--project", $ProjectRoot' not in powershell
+    ):
+        errors.append("PowerShell build must use the locked uv build environment")
     if '".swb"' not in powershell or '"h449-$stageId"' not in powershell:
         errors.append("PowerShell build must use an issue-owned staging directory")
     if "Publish-BuildArtifactsTransaction" not in powershell:
@@ -139,6 +148,11 @@ def main() -> int:
     ):
         errors.append("portable ZIP must contain the complete stock_watcher application tree")
     installer = required[3].read_text(encoding="utf-8")
+    spec = required[1].read_text(encoding="utf-8")
+    if "stockwatcher.ico" not in spec or "stockwatcher.png" not in spec:
+        errors.append("PyInstaller bundle must embed the application icon")
+    if "SetupIconFile={#MyAppIcon}" not in installer:
+        errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:
         errors.append("installer must use per-user, non-admin installation")
     if "UninstallDelete" not in installer:
