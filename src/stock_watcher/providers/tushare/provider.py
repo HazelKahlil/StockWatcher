@@ -31,6 +31,11 @@ class TushareProvider:
     ) -> TransportResult:
         transport = self.router.select(capability)
         selected_endpoint = endpoint if transport.profile_name == "super" else "/"
+        selected_method = (
+            "GET"
+            if transport.profile_name == "super" and method == "POST"
+            else method
+        )
         result = transport.execute(
             TransportRequest(
                 endpoint=selected_endpoint,
@@ -38,7 +43,7 @@ class TushareProvider:
                 params=params or {},
                 fields=fields,
                 realtime=realtime,
-                method=method,
+                method=selected_method,
                 allow_empty=allow_empty,
             )
         )
@@ -101,8 +106,8 @@ class TushareProvider:
     def historical_minutes(self, **params: str | int | float | bool) -> TransportResult:
         return self._call(
             Capability.HISTORICAL_MINUTES,
-            f"{self.super_prefix}/a_share_mins",
-            api_name="a_share_mins",
+            f"{self.super_prefix}/stk_mins",
+            api_name="stk_mins",
             params=params,
         )
 

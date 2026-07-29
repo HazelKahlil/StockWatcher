@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-07-29T12:53:18.399165+08:00",
+  "verdict": "PASS_WITH_LIMITS",
+  "observations": [
+    {
+      "capability": "health",
+      "provider_profile": "super",
+      "http_status": 200,
+      "elapsed_ms": 1593.0,
+      "returned_records": 0,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": []
+    },
+    {
+      "capability": "status",
+      "provider_profile": "super",
+      "http_status": 404,
+      "elapsed_ms": 594.0,
+      "returned_records": 0,
+      "source_timestamp_present": false,
+      "status": "UNAVAILABLE",
+      "safe_reason": "endpoint_not_available",
+      "field_names": []
+    },
+    {
+      "capability": "catalog",
+      "provider_profile": "super",
+      "http_status": 200,
+      "elapsed_ms": 1078.0,
+      "returned_records": 1,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "blocked_api_patterns",
+        "cache_policy",
+        "categories",
+        "category_python_examples",
+        "code",
+        "examples",
+        "mode"
+      ]
+    },
+    {
+      "capability": "trade_cal",
+      "provider_profile": "super",
+      "http_status": 200,
+      "elapsed_ms": 1625.0,
+      "returned_records": 3,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "cal_date",
+        "exchange",
+        "is_open",
+        "pretrade_date"
+      ]
+    },
+    {
+      "capability": "stock_basic",
+      "provider_profile": "super",
+      "http_status": 200,
+      "elapsed_ms": 1906.0,
+      "returned_records": 5530,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "act_ent_type",
+        "act_name",
+        "area",
+        "cnspell",
+        "curr_type",
+        "delist_date",
+        "enname",
+        "exchange",
+        "fullname",
+        "industry",
+        "is_hs",
+        "list_date",
+        "list_status",
+        "market",
+        "name",
+        "symbol",
+        "ts_code"
+      ]
+    }
+  ],
+  "raw_payload_persisted": false,
+  "credential_persisted": false
+}

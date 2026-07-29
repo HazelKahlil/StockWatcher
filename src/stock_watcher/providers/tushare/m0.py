@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import requests
 
 from stock_watcher.config import DataSourceSettings
 from stock_watcher.security import (
@@ -54,7 +57,10 @@ class M0Report:
     def verdict(self) -> M0Verdict:
         if any(item.status == "FAIL" for item in self.observations):
             return M0Verdict.FAIL
-        if any(not item.source_timestamp_present for item in self.observations):
+        if any(
+            item.status == "UNAVAILABLE" or not item.source_timestamp_present
+            for item in self.observations
+        ):
             return M0Verdict.PASS_WITH_LIMITS
         return M0Verdict.PASS
 
@@ -96,21 +102,18 @@ def _transport(profile: str, secret: str) -> TushareTransport:
 def _capability_requests(profile: str) -> tuple[tuple[str, TransportRequest], ...]:
     if profile == "super":
         return (
-            ("health", TransportRequest(endpoint="/health", method="GET", allow_empty=True)),
-            ("status", TransportRequest(endpoint="/status", method="GET", allow_empty=True)),
-            (
-                "catalog",
-                TransportRequest(
-                    endpoint="/tushare/pro/catalog", method="GET", allow_empty=True
-                ),
-            ),
             (
                 "trade_cal",
                 TransportRequest(
                     endpoint="/tushare/pro/trade_cal",
                     api_name="trade_cal",
-                    params={"exchange": "SSE"},
+                    params={
+                        "exchange": "SSE",
+                        "start_date": "20260301",
+                        "end_date": "20260303",
+                    },
                     fields=("exchange", "cal_date", "is_open"),
+                    method="GET",
                 ),
             ),
             (
@@ -120,6 +123,7 @@ def _capability_requests(profile: str) -> tuple[tuple[str, TransportRequest], ..
                     api_name="stock_basic",
                     params={"list_status": "L"},
                     fields=("ts_code", "name", "market", "list_status"),
+                    method="GET",
                 ),
             ),
         )
@@ -138,10 +142,143 @@ def _capability_requests(profile: str) -> tuple[tuple[str, TransportRequest], ..
             TransportRequest(
                 endpoint="/",
                 api_name="daily",
-                params={"limit": 1},
+                params={
+                    "ts_code": "000001.SZ",
+                    "start_date": "20260101",
+                    "end_date": "20260110",
+                },
                 fields=("ts_code", "trade_date", "close"),
             ),
         ),
+    )
+
+
+def _super_metadata_observations(secret: str) -> tuple[CapabilityObservation, ...]:
+    settings = DataSourceSettings()
+    base_url = str(settings.super_profile.base_url).rstrip("/")
+    session = requests.Session()
+    session.trust_env = settings.super_profile.use_system_proxy
+    headers = {"X-API-Key": secret, "Accept": "application/json"}
+    observations: list[CapabilityObservation] = []
+    for capability, endpoint, response_kind in (
+        ("health", "/health", "plain_health"),
+        ("status", "/status", "json"),
+        ("catalog", "/tushare/pro/catalog", "json"),
+    ):
+        started = time.monotonic()
+        try:
+            response = session.get(
+                base_url + endpoint,
+                headers=headers,
+                timeout=(
+                    settings.super_profile.connect_timeout_seconds,
+                    settings.super_profile.read_timeout_seconds,
+                ),
+            )
+        except requests.Timeout:
+            observations.append(
+                _metadata_failure(capability, None, "timeout", started)
+            )
+            continue
+        except requests.RequestException:
+            observations.append(
+                _metadata_failure(capability, None, "network", started)
+            )
+            continue
+        elapsed_ms = round((time.monotonic() - started) * 1000, 3)
+        if capability == "status" and response.status_code == 404:
+            observations.append(
+                CapabilityObservation(
+                    capability=capability,
+                    provider_profile="super",
+                    http_status=404,
+                    elapsed_ms=elapsed_ms,
+                    returned_records=0,
+                    source_timestamp_present=False,
+                    status="UNAVAILABLE",
+                    safe_reason="endpoint_not_available",
+                )
+            )
+            continue
+        if response.status_code >= 400:
+            observations.append(
+                _metadata_failure(
+                    capability,
+                    response.status_code,
+                    "http_error",
+                    started,
+                )
+            )
+            continue
+        if response_kind == "plain_health":
+            healthy = response.text.strip().casefold() in {"ok", "healthy"}
+            observations.append(
+                CapabilityObservation(
+                    capability=capability,
+                    provider_profile="super",
+                    http_status=response.status_code,
+                    elapsed_ms=elapsed_ms,
+                    returned_records=0,
+                    source_timestamp_present=False,
+                    status="PASS" if healthy else "FAIL",
+                    safe_reason=None if healthy else "unexpected_health_response",
+                )
+            )
+            continue
+        try:
+            payload = response.json()
+        except requests.exceptions.JSONDecodeError:
+            observations.append(
+                _metadata_failure(
+                    capability,
+                    response.status_code,
+                    "invalid_json",
+                    started,
+                )
+            )
+            continue
+        if not isinstance(payload, dict):
+            observations.append(
+                _metadata_failure(
+                    capability,
+                    response.status_code,
+                    "schema_changed",
+                    started,
+                )
+            )
+            continue
+        observations.append(
+            CapabilityObservation(
+                capability=capability,
+                provider_profile="super",
+                http_status=response.status_code,
+                elapsed_ms=elapsed_ms,
+                returned_records=1,
+                source_timestamp_present=False,
+                status="PASS",
+                field_names=tuple(
+                    sorted(key for key in payload if isinstance(key, str))
+                ),
+            )
+        )
+    return tuple(observations)
+
+
+def _metadata_failure(
+    capability: str,
+    http_status: int | None,
+    safe_reason: str,
+    started: float,
+) -> CapabilityObservation:
+    return CapabilityObservation(
+        capability=capability,
+        provider_profile="super",
+        http_status=http_status,
+        elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+        returned_records=None,
+        source_timestamp_present=False,
+        status="FAIL",
+        safe_reason=safe_reason,
     )
 
 
@@ -163,6 +300,9 @@ def run_capability_m0(profile: str) -> M0Report:
             )
         )
         return report
+    if profile == "super":
+        for observation in _super_metadata_observations(secret):
+            report.add(observation)
     transport = _transport(profile, secret)
     for capability, request in _capability_requests(profile):
         try:

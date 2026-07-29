@@ -46,6 +46,25 @@ def test_m0_is_limited_when_source_timestamp_is_missing() -> None:
     assert result.verdict() is M0Verdict.PASS_WITH_LIMITS
 
 
+def test_m0_is_limited_when_optional_capability_is_unavailable() -> None:
+    result = report()
+    result.add(observation())
+    unavailable = observation()
+    result.add(
+        CapabilityObservation(
+            capability=unavailable.capability,
+            provider_profile=unavailable.provider_profile,
+            http_status=404,
+            elapsed_ms=unavailable.elapsed_ms,
+            returned_records=0,
+            source_timestamp_present=True,
+            status="UNAVAILABLE",
+            safe_reason="endpoint_not_available",
+        )
+    )
+    assert result.verdict() is M0Verdict.PASS_WITH_LIMITS
+
+
 def test_m0_sanitized_report_never_contains_payload_or_credentials() -> None:
     result = report()
     result.add(observation())

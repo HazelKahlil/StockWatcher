@@ -73,16 +73,26 @@ class BaseHttpTransport:
         response: requests.Response | None = None
         for attempt in range(attempts):
             try:
-                response = self._session.request(
-                    request.method,
-                    self._url(request.endpoint),
-                    headers=headers,
-                    json=body,
-                    timeout=(
+                timeout = (
                         self.profile.connect_timeout_seconds,
                         self.profile.read_timeout_seconds,
-                    ),
-                )
+                    )
+                if request.method.upper() == "GET":
+                    response = self._session.request(
+                        request.method,
+                        self._url(request.endpoint),
+                        headers=headers,
+                        params=request.params or None,
+                        timeout=timeout,
+                    )
+                else:
+                    response = self._session.request(
+                        request.method,
+                        self._url(request.endpoint),
+                        headers=headers,
+                        json=body,
+                        timeout=timeout,
+                    )
             except requests.Timeout as exc:
                 if attempt + 1 < attempts:
                     self._sleeper(0.25 * (2**attempt))
@@ -171,7 +181,7 @@ def _extract_source_timestamp(
 ) -> tuple[datetime | None, SourceTimestampKind]:
     if not records:
         return None, SourceTimestampKind.MISSING
-    for field in ("source_ts", "trade_time", "datetime", "timestamp"):
+    for field in ("source_ts", "trade_time", "time", "datetime", "timestamp"):
         value = records[0].get(field)
         if isinstance(value, str):
             try:

@@ -36,7 +36,17 @@ class TushareCredentialTester:
             if profile.name == "super":
                 transport: BaseHttpTransport = SuperTransport(profile, lambda: secret)
                 result = transport.execute(
-                    TransportRequest(endpoint="/health", method="GET", allow_empty=True)
+                    TransportRequest(
+                        endpoint="/tushare/pro/trade_cal",
+                        api_name="trade_cal",
+                        params={
+                            "exchange": "SSE",
+                            "start_date": "20260301",
+                            "end_date": "20260303",
+                        },
+                        fields=("exchange", "cal_date", "is_open"),
+                        method="GET",
+                    )
                 )
             else:
                 transport = FastTransport(profile, lambda: secret)

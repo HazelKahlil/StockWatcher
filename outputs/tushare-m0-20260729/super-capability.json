@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-07-29T12:45:39.776439+08:00",
+  "verdict": "FAIL",
+  "observations": [
+    {
+      "capability": "health",
+      "provider_profile": "super",
+      "http_status": null,
+      "elapsed_ms": null,
+      "returned_records": null,
+      "source_timestamp_present": false,
+      "status": "FAIL",
+      "safe_reason": "invalid_json",
+      "field_names": []
+    }
+  ],
+  "raw_payload_persisted": false,
+  "credential_persisted": false
+}

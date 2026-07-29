@@ -89,7 +89,12 @@ def test_super_transport_uses_header_and_parses_provenance() -> None:
         monotonic=monotonic([1.0, 1.2]),
     )
     result = transport.execute(
-        TransportRequest(endpoint="/tushare/pro/rt_k", realtime=True)
+        TransportRequest(
+            endpoint="/tushare/pro/rt_k",
+            params={"ts_code": "000001.SZ"},
+            method="GET",
+            realtime=True,
+        )
     )
     assert result.http_status == 200
     assert result.elapsed_seconds == pytest.approx(0.2)
@@ -97,7 +102,43 @@ def test_super_transport_uses_header_and_parses_provenance() -> None:
     assert result.provenance.quality.value == "HEALTHY"
     request = fake.requests[0]
     assert request["headers"] == {"X-API-Key": "new-secret", "Accept": "application/json"}
+    assert request["method"] == "GET"
+    assert request["params"] == {"ts_code": "000001.SZ"}
+    assert "json" not in request
     assert "new-secret" not in repr(result)
+
+
+def test_realtime_minute_time_field_is_treated_as_supplier_timestamp() -> None:
+    fake = FakeSession(
+        [
+            response(
+                200,
+                {
+                    "code": 0,
+                    "data": [
+                        {
+                            "time": "2026-07-29 10:00:00",
+                            "close": 10.5,
+                        }
+                    ],
+                },
+            )
+        ]
+    )
+    transport = SuperTransport(
+        profile("super"),
+        lambda: "secret",
+        session=cast(requests.Session, fake),
+        clock=fixed_clock,
+        monotonic=monotonic([1.0, 1.1]),
+    )
+    result = transport.execute(
+        TransportRequest(endpoint="/tushare/pro/rt_min", method="GET", realtime=True)
+    )
+    assert result.provenance.source_ts == datetime(
+        2026, 7, 29, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+    assert result.provenance.freshness_seconds == 3.0
 
 
 def test_fast_transport_uses_expected_body_and_never_url_query() -> None:
