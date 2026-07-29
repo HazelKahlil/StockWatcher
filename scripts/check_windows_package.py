@@ -48,7 +48,10 @@ def main() -> int:
         ROOT / "src" / "stock_watcher" / "ui" / "assets" / "stockwatcher.ico",
         ROOT / "src" / "stock_watcher" / "ui" / "assets" / "stockwatcher.png",
         ROOT / "src" / "stock_watcher" / "providers" / "tdxquant_preflight.py",
+        ROOT / "src" / "stock_watcher" / "providers" / "tushare" / "unified_provider.py",
+        ROOT / "src" / "stock_watcher" / "runtime" / "tushare_runtime.py",
         ROOT / "src" / "stock_watcher" / "ui" / "app.py",
+        ROOT / "src" / "stock_watcher" / "ui" / "tushare_v1_session.py",
     )
     errors = [f"missing {path.relative_to(ROOT)}" for path in required if not path.is_file()]
     if errors:
@@ -89,6 +92,8 @@ def main() -> int:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
+    if "StockWatcher-0.4.0-alpha" not in powershell or "0.3.1-alpha" in powershell:
+        errors.append("PowerShell build must publish only the current 0.4.0-alpha artifacts")
     portable_entry = _read_ascii(required[4], errors)
     portable_runtime = required[5].read_text(encoding="utf-8")
     if "pythonw.exe" not in portable_entry or "Get-Command pyw.exe" not in portable_entry:
@@ -158,11 +163,17 @@ def main() -> int:
         '"tushare.stock.cons"' not in spec
         or '"tushare.stock.rtq"' not in spec
         or "stock_watcher.providers.tushare.native_realtime_transport" not in spec
+        or "stock_watcher.providers.tushare.pro_proxy_transport" not in spec
+        or "stock_watcher.providers.tushare.unified_provider" not in spec
+        or "stock_watcher.runtime.tushare_runtime" not in spec
+        or "stock_watcher.ui.tushare_v1_session" not in spec
         or 'collect_submodules("tushare")' in spec
     ):
         errors.append(
-            "PyInstaller bundle must collect only the approved native realtime SDK route"
+            "PyInstaller bundle must collect the approved V1 Pro and native realtime routes"
         )
+    if "0.4.0-alpha" not in installer:
+        errors.append("installer must identify the V1 real-candidate build as 0.4.0-alpha")
     if "SetupIconFile={#MyAppIcon}" not in installer:
         errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:

@@ -14,7 +14,7 @@
 | `tqcenter` Python 模块 | 仅可选 TdxQuant 诊断；版本与目标终端匹配 | 否 | 以官方安装包和授权条款为准 | 不再是正常启动依赖；本项目不下载、重打包或替代该模块。 |
 | Windows Script Host | Windows 系统组件 | 否 | Microsoft Windows | 仅隐藏窗口启动验签 Pythonw；不请求提权。 |
 | Windows PowerShell 5.1 | Windows 系统组件 | 否 | Microsoft Windows | 仅做 Authenticode 发布者校验；不使用 ExecutionPolicy Bypass，不使用 elevation verb。 |
-| StockWatcher 应用、UI 与诊断模块 | 本 ZIP 中的 `app/src/stock_watcher` | 是 | 项目内部代码 | 默认 Tushare 数据闸门；TdxQuant 只读诊断可选；不记录账号、凭证、HTTP body 或行情。 |
+| StockWatcher 应用、UI 与诊断模块 | 本 ZIP 中的 `app/src/stock_watcher` | 是 | 项目内部代码 | 默认全市场真实 Top3；TdxQuant 只读诊断可选；不记录账号、凭证或 HTTP body。 |
 
 本包是内部单机便携候选：携带产品源码和 `app/uv.lock`，不携带解释器和第三方 wheel。
 管理员须在交付前按冻结 lock 离线准备直接和传递依赖。正常启动不需要通达信或 `tqcenter`；

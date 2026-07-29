@@ -8,11 +8,13 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from stock_watcher.config import DataSourceConfigRepository, DataSourceMode
 from stock_watcher.paths import runtime_paths
 
 from .main_window import MainWindow, ReplaySession, UiSession
 from .tdx_session import TdxDiagnosticSession
 from .tushare_session import TushareDiagnosticSession
+from .tushare_v1_session import TushareV1Session
 
 STYLE_SHEET = """
 QWidget { font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #172231; }
@@ -116,7 +118,7 @@ def run(
     parser = argparse.ArgumentParser(description="StockWatcher desktop application")
     parser.add_argument(
         "--provider",
-        choices=("tushare", "replay", "tdxquant"),
+        choices=("tushare", "replay", "tdxquant", "tushare-diagnostic"),
         default="tushare",
     )
     parser.add_argument("--endpoint", default="http://127.0.0.1:17709/")
@@ -147,10 +149,32 @@ def run(
             Path(tempfile.gettempdir()) / "stock-watcher-mac-replay-demo.sqlite3"
         )
         session = ReplaySession(replay_db)
-    else:
+    elif args.provider == "tushare-diagnostic":
         paths = runtime_paths()
         paths.create()
         session = TushareDiagnosticSession(args.db or paths.database)
+    else:
+        paths = runtime_paths()
+        paths.create()
+        settings = DataSourceConfigRepository(
+            paths.root / "config" / "data-sources.yaml"
+        ).load()
+        if settings.mode is DataSourceMode.REPLAY:
+            session = ReplaySession(args.db or paths.root / "replay-diagnostic.sqlite3")
+        elif settings.mode is DataSourceMode.ADVANCED_DIAGNOSTIC:
+            session = TushareDiagnosticSession(args.db or paths.database)
+        elif settings.mode is DataSourceMode.TDX_DIAGNOSTIC:
+            session = TdxDiagnosticSession(
+                args.db or paths.database,
+                args.endpoint,
+                terminal_path=terminal_path,
+                preflight_verified=preflight_verified,
+            )
+        else:
+            session = TushareV1Session(
+                args.db or paths.database,
+                settings=settings,
+            )
     window = MainWindow(session)
     window.show()
     return app.exec()

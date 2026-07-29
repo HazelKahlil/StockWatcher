@@ -29,6 +29,7 @@ Sleeper = Callable[[float], None]
 
 class BaseHttpTransport:
     version = "tushare-http-v1"
+    minimum_retry_interval_seconds = 0.25
 
     def __init__(
         self,
@@ -98,16 +99,31 @@ class BaseHttpTransport:
                     )
             except requests.Timeout as exc:
                 if attempt + 1 < attempts:
-                    self._sleeper(0.25 * (2**attempt))
+                    self._sleeper(
+                        max(
+                            self.minimum_retry_interval_seconds,
+                            0.25 * (2**attempt),
+                        )
+                    )
                     continue
                 raise ProviderError(ProviderFailureReason.TIMEOUT) from exc
             except requests.RequestException as exc:
                 if attempt + 1 < attempts:
-                    self._sleeper(0.25 * (2**attempt))
+                    self._sleeper(
+                        max(
+                            self.minimum_retry_interval_seconds,
+                            0.25 * (2**attempt),
+                        )
+                    )
                     continue
                 raise ProviderError(ProviderFailureReason.NETWORK) from exc
             if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < attempts:
-                self._sleeper(_retry_delay(response, attempt))
+                self._sleeper(
+                    max(
+                        self.minimum_retry_interval_seconds,
+                        _retry_delay(response, attempt),
+                    )
+                )
                 continue
             break
         assert response is not None

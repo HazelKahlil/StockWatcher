@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stock-watcher"
-version = "0.3.1a1"
-description = "Cross-platform StockWatcher with a Windows TdxQuant M0 adapter"
+version = "0.4.0a1"
+description = "Windows A-share market scanner with stable real-time Top3 candidates"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [

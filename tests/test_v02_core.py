@@ -97,7 +97,8 @@ def test_stopped_and_warming_produce_no_new_batch() -> None:
 def test_schedule_uses_injected_replay_clock_only() -> None:
     schedule = ReplaySchedule()
     assert schedule.due(stamp())
-    assert schedule.due(datetime(2026, 7, 23, 14, 50, tzinfo=SHANGHAI))
+    assert schedule.due(datetime(2026, 7, 23, 14, 45, tzinfo=SHANGHAI))
+    assert not schedule.due(datetime(2026, 7, 23, 14, 50, tzinfo=SHANGHAI))
     assert not schedule.due(stamp(44))
 
 
@@ -295,11 +296,11 @@ def test_corrupt_database_switches_to_read_only_degradation(tmp_path: Path) -> N
     assert store.read_only
 
 
-def test_sqlite_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> None:
+def test_sqlite_explicit_v1_to_v3_migration_is_idempotent(tmp_path: Path) -> None:
     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
     empty_store.initialize()
     with empty_store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (2,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (3,)
 
     path = tmp_path / "watcher.sqlite3"
     with sqlite3.connect(path) as connection:
@@ -313,7 +314,7 @@ def test_sqlite_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> Non
     store.initialize()
     store.initialize()
     with store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (2,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (3,)
         assert connection.execute("SELECT value FROM notes WHERE key = 'v1-data'").fetchone() == (
             "preserved",
         )
@@ -322,7 +323,15 @@ def test_sqlite_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> Non
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-    assert {"config_versions", "candidate_snapshots", "alert_events", "health_metrics"} <= tables
+    assert {
+        "config_versions",
+        "candidate_snapshots",
+        "candidate_items",
+        "alert_events",
+        "daily_summaries",
+        "app_settings",
+        "health_metrics",
+    } <= tables
     assert path.with_suffix(".sqlite3.pre-v2.bak").exists()
 
 

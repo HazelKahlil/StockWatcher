@@ -8,9 +8,9 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit  # noqa: E402
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit  # noqa: E402
 
-from stock_watcher.config import DataSourceSettings  # noqa: E402
+from stock_watcher.config import DataSourceMode, DataSourceSettings  # noqa: E402
 from stock_watcher.providers.tushare import (  # noqa: E402
     ProviderError,
     ProviderFailureReason,
@@ -30,7 +30,9 @@ from stock_watcher.ui.data_source_status import (  # noqa: E402
     CredentialTestResult,
     TushareCredentialTester,
 )
+from stock_watcher.ui.main_window import MainWindow  # noqa: E402
 from stock_watcher.ui.tushare_session import TushareDiagnosticSession  # noqa: E402
+from stock_watcher.ui.tushare_v1_session import TushareV1Session  # noqa: E402
 
 
 class NoNetworkTester:
@@ -79,7 +81,7 @@ def application() -> QApplication:
     return existing if isinstance(existing, QApplication) else QApplication([])
 
 
-def test_data_source_dialog_hides_both_credentials_and_lists_all_modes() -> None:
+def test_data_source_dialog_has_one_hidden_token_and_advanced_modes() -> None:
     app = application()
     controller = DataSourceSettingsController(
         store=MemoryCredentialStore(), tester=NoNetworkTester()
@@ -90,15 +92,25 @@ def test_data_source_dialog_hides_both_credentials_and_lists_all_modes() -> None
         for field in dialog.findChildren(QLineEdit)
         if field.echoMode() is QLineEdit.EchoMode.Password
     ]
-    assert len(password_fields) == 2
+    assert len(password_fields) == 1
     assert all(not field.text() for field in password_fields)
-    modes = dialog.findChildren(QComboBox)[0]
+    built_in_addresses = [
+        field
+        for field in dialog.findChildren(QLineEdit)
+        if field.text().startswith("https://")
+    ]
+    assert len(built_in_addresses) == 1
+    assert built_in_addresses[0].isReadOnly()
+    modes = next(
+        combo
+        for combo in dialog.findChildren(QComboBox)
+        if combo.findData(DataSourceMode.TUSHARE_15000) >= 0
+    )
     assert [modes.itemText(index) for index in range(modes.count())] == [
-        "超级接口",
-        "快速接口",
-        "智能路由",
-        "Mock / Replay",
-        "通达信诊断模式",
+        "Tushare 数据接口",
+        "Replay",
+        "旧接口诊断",
+        "通达信诊断",
     ]
     dialog.close()
     app.processEvents()
@@ -113,6 +125,23 @@ def test_tushare_session_starts_without_tdx_and_keeps_candidates_closed(
     assert session.data_gate_label == "未就绪"
     assert "Tushare" in session.source_label
     assert all("TQ" not in issue for issue in session.status_issues)
+
+
+def test_ordinary_v1_main_window_hides_provider_and_gate_jargon(tmp_path: Path) -> None:
+    app = application()
+    session = TushareV1Session(
+        tmp_path / "v1.sqlite3",
+        credential_store=MemoryCredentialStore(),
+    )
+    window = MainWindow(session)
+    app.processEvents()
+    visible_copy = " ".join(label.text() for label in window.findChildren(QLabel))
+    menu_copy = " ".join(action.text() for action in window.menuBar().actions())
+    for forbidden in ("M0", "Data Gate", "Provider", "Super", "Fast", "Native"):
+        assert forbidden not in visible_copy
+    assert "开发" not in menu_copy
+    window.close()
+    app.processEvents()
 
 
 def test_tushare_session_checks_saved_credential_without_opening_gate(

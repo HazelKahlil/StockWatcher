@@ -11,7 +11,11 @@ class FastTransport(BaseHttpTransport):
         if not request.api_name:
             raise ValueError("fast transport requires api_name")
         return (
-            {"Accept": "application/json", "Content-Type": "application/json"},
+            {
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+                "Content-Type": "application/json",
+            },
             {
                 "api_name": request.api_name,
                 "token": secret,

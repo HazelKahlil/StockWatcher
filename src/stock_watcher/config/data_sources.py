@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 class DataSourceMode(StrEnum):
+    TUSHARE_15000 = "tushare_15000"
+    ADVANCED_DIAGNOSTIC = "advanced_diagnostic"
     SUPER = "super"
     FAST = "fast"
     SMART = "smart"
@@ -42,11 +44,11 @@ class NativeRealtimeProfile(BaseModel):
 
     name: str = "native_realtime"
     verify_url: HttpUrl = HttpUrl("https://realtime.stockai888.top")
-    credential_ref: str = "StockWatcher/Tushare/Fast"
+    credential_ref: str = "StockWatcher/Tushare/Primary"
     source: Literal["sina"] = "sina"
     batch_size: int = Field(default=800, ge=1, le=800)
     min_interval_seconds: float = Field(default=0.5, ge=0.5, le=30)
-    stale_after_seconds: float = Field(default=10.0, gt=0, le=120)
+    stale_after_seconds: float = Field(default=60.0, gt=0, le=120)
 
     @field_validator("verify_url")
     @classmethod
@@ -59,12 +61,18 @@ class NativeRealtimeProfile(BaseModel):
 class DataSourceSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    schema_version: str = "v1"
-    mode: DataSourceMode = DataSourceMode.SUPER
+    schema_version: str = "v2"
+    mode: DataSourceMode = DataSourceMode.TUSHARE_15000
+    primary_profile: HttpProfile = HttpProfile(
+        name="tushare_15000",
+        base_url=HttpUrl("https://fastapic.stockai888.top"),
+        credential_ref="StockWatcher/Tushare/Primary",
+    )
     super_profile: HttpProfile = HttpProfile(
         name="super",
         base_url=HttpUrl("https://ai-tool.indevs.in"),
         credential_ref="StockWatcher/Tushare/Super",
+        enabled=False,
     )
     fast_profile: HttpProfile = HttpProfile(
         name="fast",
@@ -75,6 +83,10 @@ class DataSourceSettings(BaseModel):
     native_realtime_profile: NativeRealtimeProfile = NativeRealtimeProfile()
     super_pro_prefix: str = "/tushare/pro"
     realtime_warmup_cycles: int = Field(default=3, ge=3, le=30)
+    scan_target_seconds: float = Field(default=10.0, ge=5.0, le=60.0)
+    full_scan_max_seconds: float = Field(default=60.0, ge=10.0, le=120.0)
+    source_fresh_seconds: float = Field(default=60.0, gt=0, le=120.0)
+    source_stop_seconds: float = Field(default=120.0, ge=60.0, le=300.0)
 
     @field_validator("super_pro_prefix")
     @classmethod
@@ -94,7 +106,14 @@ class DataSourceConfigRepository:
         if not self.path.is_file():
             return DataSourceSettings()
         payload = yaml.safe_load(self.path.read_text(encoding="utf-8"))
-        return DataSourceSettings.model_validate(payload)
+        settings = DataSourceSettings.model_validate(payload)
+        if settings.mode in {
+            DataSourceMode.SUPER,
+            DataSourceMode.FAST,
+            DataSourceMode.SMART,
+        }:
+            return settings.model_copy(update={"mode": DataSourceMode.TUSHARE_15000})
+        return settings
 
     def save(self, settings: DataSourceSettings) -> None:
         payload = settings.model_dump(mode="json")

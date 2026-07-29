@@ -1,5 +1,6 @@
 from .credential_store import (
     FAST_CREDENTIAL,
+    PRIMARY_CREDENTIAL,
     SUPER_CREDENTIAL,
     CredentialRef,
     CredentialStore,
@@ -14,6 +15,7 @@ __all__ = [
     "KeyringCredentialStore",
     "MemoryCredentialStore",
     "FAST_CREDENTIAL",
+    "PRIMARY_CREDENTIAL",
     "SUPER_CREDENTIAL",
     "credential_fingerprint",
 ]

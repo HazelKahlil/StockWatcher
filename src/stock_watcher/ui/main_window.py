@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -7,6 +8,7 @@ from typing import Protocol
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFormLayout,
     QFrame,
@@ -26,6 +28,7 @@ from stock_watcher.domain import HealthState
 from stock_watcher.engine.candidates import CandidateBatch
 from stock_watcher.storage import SQLiteStore
 
+from .daily_summary import DailySummaryDialog
 from .data_source_settings import DataSourceSettingsDialog, runtime_data_source_controller
 from .demo import demo_batch, demo_clock, recovery_clock
 from .history import HistoryDialog
@@ -90,20 +93,25 @@ class CandidateCard(QFrame):
         layout.addLayout(quote)
 
         level = QLabel(row.level)
+        if row.is_supplement:
+            level.setText("近｜补位观察")
         level.setObjectName("levelBadge")
         level.setProperty("level", row.level)
         level.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        level.setFixedWidth(58)
+        level.setFixedWidth(112 if row.is_supplement else 58)
         layout.addWidget(level)
 
         sector = QVBoxLayout()
         sector.setSpacing(3)
-        sector_label = QLabel("所属板块")
+        sector_label = QLabel("最强板块")
         sector_label.setObjectName("candidateMeta")
         sector_value = QLabel(row.sector)
         sector_value.setObjectName("candidateSector")
         sector.addWidget(sector_label)
         sector.addWidget(sector_value)
+        fund = QLabel(row.fund_label)
+        fund.setObjectName("candidateMeta")
+        sector.addWidget(fund)
         layout.addLayout(sector, 1)
 
         arrow = QLabel("›")
@@ -137,10 +145,12 @@ class CandidateDetailDialog(QDialog):
         heading.addWidget(title)
         heading.addStretch()
         level = QLabel(row.level)
+        if row.is_supplement:
+            level.setText("近｜补位观察")
         level.setObjectName("levelBadge")
         level.setProperty("level", row.level)
         level.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        level.setFixedWidth(58)
+        level.setFixedWidth(112 if row.is_supplement else 58)
         heading.addWidget(level)
         root.addLayout(heading)
 
@@ -151,8 +161,8 @@ class CandidateDetailDialog(QDialog):
         for label, value, level_name in (
             ("当前价格", f"¥{row.price:.2f}", "neutral"),
             ("当前涨幅", format_change(row.change_pct), "up"),
-            ("涨速", format_change(row.velocity_pct), "medium"),
-            ("所属板块", row.sector, "neutral"),
+            ("1分钟涨速", format_change(row.velocity_pct), "medium"),
+            ("最强板块", row.sector, "neutral"),
         ):
             cell = QVBoxLayout()
             caption = QLabel(label)
@@ -185,7 +195,18 @@ class CandidateDetailDialog(QDialog):
             reason_layout.addLayout(line)
         root.addWidget(reasons)
 
-        conclusion = QLabel("符合本轮观察条件，可自行打开通达信进一步确认。")
+        status = QFrame()
+        status.setObjectName("reasonCard")
+        status_layout = QFormLayout(status)
+        status_layout.addRow("资金情况", QLabel(row.fund_label))
+        status_layout.addRow("三日趋势", QLabel(row.trend_label))
+        root.addWidget(status)
+
+        conclusion = QLabel(
+            "本轮属于补位观察，核心门槛尚未全部通过。"
+            if row.is_supplement
+            else "进入当前观察，可自行打开行情软件进一步确认。"
+        )
         conclusion.setObjectName("conclusion")
         conclusion.setWordWrap(True)
         root.addWidget(conclusion)
@@ -306,6 +327,7 @@ class ReplaySession:
     reconnect_label = "恢复回放"
     manual_fetch_label = "立即抓取（只读）"
     footer_label = "Mock / Replay · 不连接真实数据"
+    advanced_diagnostics = True
 
     def __init__(self, store_path: Path) -> None:
         self.store = SQLiteStore(store_path)
@@ -477,10 +499,10 @@ class MainWindow(QMainWindow):
         self._secondary_action.clicked.connect(self._open_history)
         if not self.session.is_replay:
             self._primary_action.setToolTip(
-                "重新检查当前数据接口；数据门完成前不会生成真实候选。"
+                "重新检查当前数据接口，并用新鲜数据恢复观察名单。"
             )
             self._manual_fetch_action.setToolTip(
-                "执行一次只读数据检查；不显示或保存原始响应，不开放候选。"
+                "执行一次只读数据检查；不显示或保存原始响应。"
             )
 
         footer = QHBoxLayout()
@@ -519,7 +541,12 @@ class MainWindow(QMainWindow):
         data_source = QAction("数据接口", self)
         data_source.triggered.connect(self._open_data_source_settings)
         settings.addAction(data_source)
+        summary = QAction("收盘总结", self)
+        summary.triggered.connect(self._open_daily_summary)
+        settings.addAction(summary)
 
+        if not getattr(self.session, "advanced_diagnostics", True):
+            return
         developer = self.menuBar().addMenu("开发")
         stop = QAction("模拟数据中断" if self.session.is_replay else "暂停实时观察", self)
         stop.triggered.connect(self._stop_replay)
@@ -558,8 +585,8 @@ class MainWindow(QMainWindow):
         connection = self.session.connection_state
         if self.session.is_replay:
             self._page_title.setText("当前观察" if healthy else "数据中断")
-        elif connection is TqConnectionState.CONNECTED:
-            self._page_title.setText(f"{self.session.connection_name}已连接")
+        elif connection is TqConnectionState.CONNECTED and healthy:
+            self._page_title.setText("当前观察")
         elif connection is TqConnectionState.CHECKING:
             self._page_title.setText(f"正在检测{self.session.connection_name}")
         else:
@@ -567,7 +594,7 @@ class MainWindow(QMainWindow):
 
         health_labels = {
             HealthState.HEALTHY: "正常",
-            HealthState.WARMING: "数据门未就绪",
+            HealthState.WARMING: "正在准备",
             HealthState.STALE: "数据已过期",
             HealthState.STOPPED: "已停止",
         }
@@ -599,9 +626,16 @@ class MainWindow(QMainWindow):
                 else "正在恢复数据，请稍候。"
             )
         else:
-            self._candidate_label.setText("候选输出（当前关闭）")
+            self._candidate_label.setText(
+                (
+                    f"当前3只观察｜"
+                    f"{'本轮整体偏弱' if snapshot.overall_label == '本轮整体偏弱' else '运行正常'}"
+                )
+                if healthy
+                else "上次结果，仅供参考"
+            )
             if connection is TqConnectionState.CONNECTED:
-                self._interrupt_title.setText("连接正常，数据门尚未完成")
+                self._interrupt_title.setText("连接正常，正在准备新结果")
             elif connection is TqConnectionState.CHECKING:
                 self._interrupt_title.setText("正在检测连接")
             else:
@@ -610,7 +644,7 @@ class MainWindow(QMainWindow):
 
         issues = self.session.status_issues
         self._issue_list.setText(
-            "问题位置：\n" + "\n".join(f"• {issue}" for issue in issues)
+            "说明：\n" + "\n".join(f"• {issue}" for issue in issues)
             if issues
             else ""
         )
@@ -629,8 +663,7 @@ class MainWindow(QMainWindow):
             self._cards.addWidget(card)
         if not rows:
             empty = QLabel(
-                "当前没有可显示的候选。数据接口连接不等于数据门通过；"
-                "在严格门完成前不会生成或提醒候选。"
+                "当前没有可显示的新结果。完成数据准备后会在这里持续显示3只观察股票。"
             )
             empty.setObjectName("emptyState")
             empty.setWordWrap(True)
@@ -679,25 +712,40 @@ class MainWindow(QMainWindow):
     def _show_initial_alert(self) -> None:
         snapshot = self._snapshot()
         if snapshot.alert_allowed:
-            self._show_alert(snapshot)
+            self._show_alert(snapshot, title="09:45 观察提醒")
 
-    def _show_alert(self, snapshot: UiSnapshot) -> None:
+    def _show_alert(
+        self,
+        snapshot: UiSnapshot,
+        *,
+        title: str,
+        subtitle: str | None = None,
+        force: bool = False,
+    ) -> None:
         signature = tuple(row.code for row in snapshot.candidates)
-        if signature == self._last_alert_signature and self._popup is not None:
+        if not force and signature == self._last_alert_signature and self._popup is not None:
             return
-        if signature == self._last_alert_signature:
+        if not force and signature == self._last_alert_signature:
             return
         self._last_alert_signature = signature
         if self._popup is not None:
             self._popup.close()
+        overall = (
+            "偏弱"
+            if snapshot.overall_label == "本轮整体偏弱"
+            else snapshot.overall_label
+        )
         self._popup = AlertPopup(
             snapshot.candidates,
-            (
-                f"{format_time(snapshot.last_updated)} · "
-                f"{('偏弱' if snapshot.overall_label == '整体偏弱' else snapshot.overall_label)}"
+            title,
+            subtitle
+            or (
+                f"{format_time(snapshot.last_updated)} · {overall}"
             ),
             self._open_detail_by_code,
+            parent=self,
         )
+        QApplication.beep()
         self._popup.show_at_bottom_right()
 
     def _stop_replay(self) -> None:
@@ -726,7 +774,7 @@ class MainWindow(QMainWindow):
         self._refresh()
         snapshot = self._snapshot()
         if snapshot.alert_allowed:
-            self._show_alert(snapshot)
+            self._show_alert(snapshot, title="本轮观察提醒")
 
     def _manual_check_tq(self) -> None:
         if self.session.is_replay:
@@ -769,6 +817,30 @@ class MainWindow(QMainWindow):
     def _on_tq_operation_finished(self) -> None:
         self._active_operation = None
         self._refresh()
+        consume = getattr(self.session, "consume_pending_alert", None)
+        pending = consume() if callable(consume) else None
+        snapshot = self._snapshot()
+        if pending is not None:
+            display_snapshot = snapshot
+            is_fixed = str(pending.trigger_type).startswith("scheduled-")
+            if (
+                not snapshot.alert_allowed
+                and is_fixed
+                and len(snapshot.previous_candidates) == 3
+            ):
+                display_snapshot = replace(
+                    snapshot,
+                    candidates=snapshot.previous_candidates,
+                    alert_allowed=True,
+                )
+            if not display_snapshot.alert_allowed:
+                return
+            self._show_alert(
+                display_snapshot,
+                title=str(pending.title),
+                subtitle=str(pending.subtitle),
+                force=True,
+            )
 
     @Slot()
     def _on_tq_thread_finished(self) -> None:
@@ -782,6 +854,9 @@ class MainWindow(QMainWindow):
 
     def _open_history(self) -> None:
         HistoryDialog(self.session.store.path, self).exec()
+
+    def _open_daily_summary(self) -> None:
+        DailySummaryDialog(self.session.store.path, self).exec()
 
     def _open_developer_info(self) -> None:
         DeveloperInfoDialog(self.session, self).exec()

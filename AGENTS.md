@@ -4,10 +4,12 @@
 
 ## 项目
 
-- 本地路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`
-- 当前开发电脑：Mac；没有可用于真实验证的 Windows 电脑。
+- 本地路径：`C:\Users\19580\Documents\Codex\StockWatcher\work\stockwatcher-fresh-1e370ee`
+- 当前开发电脑：Windows；真实交易时段、通知、安装和截图证据都必须来自本机。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：v0.1 Mac Replay Foundation、v0.2 Mac Local Alpha 与 v0.3 早期 Windows 无终端交付候选已合入本地 `main`；HAZ-511/512/515/526 的唯一后继冻结候选位于 `6e5dbed8eee027ef7d5478b18b1539b3c16a24ed`，通过单一 draft PR #2 的远端 head 交接。Mac 工程门已通过，真实 Windows 普通用户启动、TdxQuant live readback 与交易时段 M0 均未完成。
+- 当前状态：`feat/windows-v1-real-candidates` 从 `eef4c3d` 开发 Windows V1 真实
+  Top3 闭环；本轮禁止访问或修改远端。离线工程门已通过，真实交易时段 30 分钟、
+  固定提醒、实机截图与最终安装包证据仍待完成。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
@@ -16,7 +18,7 @@
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
 - 真实数据工作先读取活跃版本
-  `docs/visions/v0.3.1-windows-tushare-data-gate/README.md`；TdxQuant 只读历史与诊断继续
+  `docs/visions/v0.4-v1-feature-complete/README.md`；TdxQuant 只读历史与诊断继续
   参考 `v0.3-windows-data-gate`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
 - 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
@@ -25,7 +27,8 @@
 
 ## 本地优先模式
 
-- 本地 `main` 是日常开发的权威事实源；`origin/main` 是最近一次 GitHub 里程碑镜像。每次启动先运行 `git status -sb` 和 `git rev-list --left-right --count main...origin/main`，确认本地改动与未同步提交。
+- 本地工作区是本轮权威事实源。2026-07-29 Windows V1 任务期间不得 fetch、pull、push、
+  merge、tag 或 release，也不得用远端状态改变已核对基线。
 - 日常任务从本地 `main` 建短分支，完成验证和 diff review 后本地合并回 `main`。不自动 push，也不为每个小改动创建 PR。
 - 每个 session 收尾必须形成可恢复的本地提交；只留未提交工作时，必须在 handoff 中逐项列出，不能让下一位 Agent 猜。
 - 版本封版、需要远端备份/跨设备交接或用户明确要求时，从本地 `main` 创建 `publish/<version>`，统一 push 并用一个 PR 同步 GitHub。
@@ -42,18 +45,21 @@
 
 - 只做候选观察与异动提醒；禁止读取交易密码、连接交易账户、调用下单接口或生成自动交易行为。
 - 实时筛选必须是确定性、可回放的规则；大语言模型不得进入盘中主链路。
-- 2026-07-29 Human Owner 批准默认主路线改为跨平台 Tushare 兼容 HTTP：Super 默认，
-  Fast 仅在相同 API 的真实比较 M0 后按允许列表加速；Windows 先完成，Mac 复用同一核心。
+- 2026-07-29 Human Owner 最终确认 V1 主路线：普通/历史使用内置 Pro 代理
+  `https://fastapic.stockai888.top`；主实时使用
+  `tushare.realtime_quote(..., src="sina")`，校验地址
+  `https://realtime.stockai888.top`；两者共用一个 Token。旧 Super、Fast 命名路线与
+  TdxQuant 仅保留高级诊断。
 - TdxQuant 保留为可选诊断和资金字段实验；不得成为正常启动的必要前提。
 - 新供应商响应必须先归一化；同一候选批次不得拼接不同来源的同类实时字段。
-- Human Owner 于 2026-07-29 明确授权按供应商语雀文档使用 Tushare SDK
-  `realtime_quote(src="sina")` 原生实时路线。它必须作为独立
-  `native_realtime` provider，经交易时段 M0 后才能进入候选；不得扩展为任意网页抓取，
-  不得与 Super/Fast 的同类实时字段拼接。
+- Human Owner 于 2026-07-29 明确授权使用 Tushare SDK
+  `realtime_quote(src="sina")` 原生实时路线。它是生产主实时入口；不得扩展为任意
+  网页抓取，也不得与其他来源的同类实时字段拼接。
 - 凭据正式运行优先使用 Windows Credential Manager / macOS Keychain；不得进入配置、
   SQLite、日志、Git、bundle、截图或命令行。
 - TdxQuant 只读预检可使用官方 `tqcenter` 或 `http://127.0.0.1:17709/`；不得把本机 HTTP 误写成供应商托管 HTTPS，也不得开放到非回环地址。
-- 紫黄线、供应商字段、批量能力与授权必须通过 Windows M0。独立资金字段 M0 未通过时只能明确标记“资金模块未就绪”，不得用 `Zjl`、`Zjl_HB` 或替代字段冒充。
+- V1 不画紫黄线。moneyflow 和其他资金字段必须证明盘中持续更新后才能参与盘中评分；
+  日级数据只可作背景，缺失时标记“资金未确认”、计 0 分且不得阻塞候选。
 - Mac 上的 Mock/Replay、PySide6 和性能结果只证明 Mac 本地行为，不能充当 Windows/通达信 M0、Windows 通知或安装包证据。
 - 数据健康为 `STOPPED/RED` 时停止产生新候选；不得把旧数据包装成新结果。
 - 高风险区和人类确认门见 `docs/process/boundaries.md`。命中时先停、说明影响并取得确认。

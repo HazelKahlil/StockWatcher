@@ -7,36 +7,37 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 ## 当前状态
 
 - 项目治理与 V2.0 交接基线已建立。
-- 当前活跃目标是 `v0.3.1-windows-tushare-data-gate`：跨平台 Tushare 兼容 HTTP
-  主数据源，Windows 先完成，Mac 从同一 commit 复用 Provider、算法、SQLite 与核心 UI。
-- 超级接口是默认主接口；快速接口只有相同 API 的真实性能、一致性和稳定性 M0
-  通过后，才能进入明确允许列表。
-- Human Owner 已明确授权按供应商文档接入 Tushare SDK 原生实时行情路线。盘后工程探测
-  已覆盖全市场 5530 只且单轮小于 10 秒；20 只盘后交叉核对确认量为“股”、额为“元”。
-  交易时段 30 分钟 M0 和断线恢复尚未完成，因此当前不开放候选或异动提示。
+- 当前活跃目标是 `v0.4-v1-feature-complete`：在 Windows 全市场持续选出稳定三只真实
+  A 股，并完成固定时点与强异动提醒、详情、30 天历史和收盘总结。
+- 普通/历史数据使用内置 Tushare Pro 代理；主实时入口使用
+  `tushare.realtime_quote(..., src="sina")`。两者共用 Windows Credential Manager 中
+  的一个 Token。
+- 候选链路已经接入生产入口；交易时段 30 分钟、真实固定提醒、实机截图与安装包启动证据
+  仍是发布前严格验收门。
+- 2026-07-29 已使用当日真实收盘数据完成盘后回顾测试和总结视图；该证据只验证日线
+  回溯与呈现，不代替 Human Owner 后续安排的连续 30 分钟交易时段验收。
 - TdxQuant 保留为可选诊断和未来资金字段探索，不再是应用正常启动或真实候选的必要前提。
-- Tushare 真实 M0 通过前不得声称真实候选、分钟历史、板块、紫黄线或盘中提醒已完成。
+- 资金不可用时显示“资金未确认”且不阻塞候选；日级 moneyflow 不得冒充盘中增强。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
 
 ## 从这里开始
 
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
-3. 阅读 [锁定业务项](docs/reference/v2.0/requirements.lock.json) 和 [V2.0 规格](docs/reference/v2.0/SPEC_V2.0_AGENT.md)。
-4. 开始真实数据工作前，读取
-   [v0.3.1 Tushare 数据闸门](docs/visions/v0.3.1-windows-tushare-data-gate/README.md)
-   和规则路由表。
+3. 阅读 [V1 当前执行版本](docs/visions/v0.4-v1-feature-complete/README.md)；2026-07-29
+   Human Owner 交接包高于旧 V2.0 中冲突的范围。
+4. 阅读 [数据规则](docs/process/rules/data.md) 和安全边界。
 
 ## 项目基线
 
 | 项 | 当前约定 |
 | --- | --- |
-| 当前开发环境 | Mac 本地，Asia/Shanghai |
-| 原规格目标环境 | Windows 桌面端 + 通达信；当前无可用 Windows 电脑，留到独立环境门验证 |
+| 当前开发环境 | Windows 本地，Asia/Shanghai |
+| V1 目标环境 | Windows 桌面端；不要求通达信 |
 | 计划技术栈 | Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest |
 | v0.1 数据口径 | Mock / Replay / Synthetic；不接真实交易账户，不把模拟数据冒充实时行情 |
-| 完整版主数据口径 | 跨平台 Tushare；Super 默认，Fast 与经明确授权的 Tushare SDK 原生实时路线验证后可选；准确字段、单位与授权以真实 M0 为准 |
-| 默认提醒 | 09:45、14:50；盘中特别强异动最多 3 批/日 |
+| V1 主数据口径 | 内置 Tushare Pro 代理 + SDK 原生实时 `src="sina"`；单 Token |
+| 默认提醒 | 09:45、14:45；盘中特别强异动最多 3 批/日 |
 | 输出 | 数据健康时每批固定三只，标记“强 / 中 / 近” |
 | 安全边界 | 不读取账户，不自动交易，不用旧数据伪装正常结果 |
 
@@ -68,28 +69,29 @@ git diff --check
 项目支持 Python 3.11/3.12；`uv.lock` 锁定当前开发环境的依赖解析。不得将上述结果表述为 Windows、通达信、紫黄线或真实行情验证。
 直接与开发依赖的用途、许可证与安全影响见 [依赖审计](docs/process/dependencies.md)；变更后必须额外执行 `uv sync --all-groups --frozen` 与 `uv lock --check`。
 
-## 启动 Mac Replay UI Alpha
+## 启动 Windows V1
 
 ```bash
 uv sync --all-groups --frozen
 uv run python -m stock_watcher.ui.app
 ```
 
-窗口使用固定 Synthetic 场景写入临时 SQLite，并以小型“Mac 测试版”标签标明本地回放范围。普通界面只展示三只候选、当前状态、详情和历史；“模拟数据中断”“恢复回放”和开发诊断保留在“开发”菜单，历史窗口只读，资金模块继续保持未就绪。
+默认入口使用真实 Tushare V1 会话。没有已保存 Token 时，打开 **设置 → 数据接口**；
+默认测试与开发可显式选择 Replay，不需要真实 Token。
 
 ## Windows 数据接口
 
-正常启动进入 Tushare 数据闸门，不要求通达信或 TQ。打开 **设置 → 数据接口**：
+正常启动不要求通达信或 TQ。打开 **设置 → 数据接口**：
 
-- 在“超级接口”或“快速接口”输入 Human Owner 新换发的凭据；
+- 在唯一的隐藏 Token 输入框填写 Tushare 数据接口凭据；
 - 输入框默认隐藏；测试失败不会替换旧凭据；
 - 测试成功并再次确认后才写入 Windows Credential Manager；
 - Key 更换不需要重装或重新打包；
-- 切源或换 Key 会关闭候选门并清空实时基线，至少三周期新鲜预热后才能恢复。
+- 更换 Token 会重新建立实时基线，连续三周期新鲜数据后恢复。
 
-供应商文档中的 Tushare SDK 原生实时路线使用同一项本机 Fast 凭据，只允许通过受控
-Provider 调用、最多 800 只一批且批次起始间隔不少于 0.5 秒。它当前尚未接入生产候选链；
-交易时段 M0 通过前，界面仍应显示候选关闭，而不能用盘后快照或接收时间冒充实时。
+Tushare SDK 原生实时路线与 Pro 代理共用同一 Token，只允许通过受控 Provider 调用；
+最多 800 只一批且批次起始间隔不少于 0.5 秒。核心行情或板块过期时不产生新候选，
+保留上次三只并标记数据延迟；资金缺失只降级资金状态。
 
 不要把凭据写入命令行、配置、日志、SQLite 或仓库。真实测试使用显式
 `pytest -m live_tushare`，默认测试不需要 Key 或外网。
@@ -109,4 +111,5 @@ powershell -NoProfile -File .\scripts\windows\stockwatcher.ps1
 
 ## 版本路线
 
-项目先在 Mac 完成可回放基础与本地 Alpha，再进入真实 Windows/通达信数据闸门，之后接入完整 V1 并稳定化。详见 [版本索引](docs/visions/README.md)；本地与 GitHub 同步规则见 [release.md](docs/process/release.md)。
+当前先完成 Windows V1 的真实交易时段和安装验收，结束后停止并等待评审，不启动 Mac。
+详见 [版本索引](docs/visions/README.md)。
