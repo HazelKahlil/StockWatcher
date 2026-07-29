@@ -17,7 +17,9 @@ from stock_watcher.storage import SQLiteStore
 from .data_source_status import (
     CredentialTester,
     CredentialTestResult,
+    NativeRealtimeTester,
     TushareCredentialTester,
+    TushareNativeRealtimeTester,
 )
 from .tdx_session import TqConnectionState
 
@@ -43,12 +45,16 @@ class TushareDiagnosticSession:
         *,
         credential_store: CredentialStore | None = None,
         tester: CredentialTester | None = None,
+        native_realtime_tester: NativeRealtimeTester | None = None,
         settings: DataSourceSettings | None = None,
     ) -> None:
         self.store = SQLiteStore(store_path)
         self.store.initialize()
         self.credential_store = credential_store or KeyringCredentialStore()
-        self.tester = tester or TushareCredentialTester()
+        self.tester = tester or TushareCredentialTester(check_super_realtime=False)
+        self.native_realtime_tester = (
+            native_realtime_tester or TushareNativeRealtimeTester()
+        )
         self.settings = settings or DataSourceSettings()
         self.batch: CandidateBatch | None = None
         self.state = HealthState.WARMING
@@ -138,17 +144,47 @@ class TushareDiagnosticSession:
                 "真实候选和提醒保持关闭。",
             )
             return
+        if (
+            result.realtime_status == "available"
+            and result.realtime_source_timestamp_present
+        ):
+            self._apply_realtime_status(result, use_fast=use_fast)
+            return
+        native_result = self._check_native_realtime()
+        if native_result is not None:
+            self.connection_detail = (
+                f"{result.status_text}；{native_result.status_text}"
+            )
+            self._apply_realtime_status(
+                native_result,
+                use_fast=use_fast,
+                native_route=True,
+            )
+            return
         self._apply_realtime_status(result, use_fast=use_fast)
+
+    def _check_native_realtime(self) -> CredentialTestResult | None:
+        try:
+            secret = self.credential_store.get(FAST_CREDENTIAL)
+        except Exception:
+            secret = None
+        if not secret:
+            return None
+        return self.native_realtime_tester.test(
+            self.settings.native_realtime_profile,
+            secret,
+        )
 
     def _apply_realtime_status(
         self,
         result: CredentialTestResult,
         *,
         use_fast: bool,
+        native_route: bool = False,
     ) -> None:
         realtime_status = result.realtime_status
         source_timestamp_present = result.realtime_source_timestamp_present
-        if use_fast:
+        if use_fast and not native_route:
             self.data_gate_label = "实时未验证"
             self.last_fetch_detail = (
                 "基础接口检测通过；快速接口不承担实时主链路，未保存响应正文。"
@@ -161,10 +197,16 @@ class TushareDiagnosticSession:
         if realtime_status == "available" and source_timestamp_present:
             self.data_gate_label = "实时待 M0"
             self.last_fetch_detail = (
-                "实时快照已有数据和供应商时间；未保存响应正文，候选仍关闭。"
+                "文档原生实时快照已有数据和供应商时间；未保存响应正文，候选仍关闭。"
+                if native_route
+                else "实时快照已有数据和供应商时间；未保存响应正文，候选仍关闭。"
             )
             self.status_issues = (
-                "实时快照可读；仍需全市场连续 30 分钟 M0、停滞与恢复验证。",
+                (
+                    "原生实时快照可读；仍需全市场连续 30 分钟 M0、单位、停滞与恢复验证。"
+                    if native_route
+                    else "实时快照可读；仍需全市场连续 30 分钟 M0、停滞与恢复验证。"
+                ),
                 "M0 放行前真实候选和提醒保持关闭。",
             )
             return
@@ -188,7 +230,9 @@ class TushareDiagnosticSession:
             "not_checked": "当前连接测试尚未验证实时接口。",
         }
         self.last_fetch_detail = (
-            "基础接口连接通过，但实时快照不可用；未保存响应正文。"
+            "基础接口连接通过，但文档原生实时快照不可用；未保存响应正文。"
+            if native_route
+            else "基础接口连接通过，但实时快照不可用；未保存响应正文。"
         )
         self.status_issues = (
             safe_labels.get(realtime_status, "实时接口未通过严格检测。"),

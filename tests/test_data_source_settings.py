@@ -16,6 +16,7 @@ from stock_watcher.providers.tushare import (  # noqa: E402
     ProviderFailureReason,
 )
 from stock_watcher.security import (  # noqa: E402
+    FAST_CREDENTIAL,
     SUPER_CREDENTIAL,
     CredentialRef,
     MemoryCredentialStore,
@@ -147,6 +148,27 @@ def test_tushare_session_reports_realtime_ready_but_keeps_m0_gate_closed(
     assert session.candidate_gate_label == "关闭"
     assert session.batch is None
     assert "30 分钟 M0" in session.status_issues[0]
+
+
+def test_tushare_session_uses_approved_native_realtime_route_fail_closed(
+    tmp_path: Path,
+) -> None:
+    store = MemoryCredentialStore()
+    store.set(SUPER_CREDENTIAL, "test-only-super-secret")
+    store.set(FAST_CREDENTIAL, "test-only-fast-secret")
+    session = TushareDiagnosticSession(
+        tmp_path / "tushare.sqlite3",
+        credential_store=store,
+        tester=NoNetworkTester(),
+        native_realtime_tester=RealtimeAvailableTester(),
+    )
+    session.recover()
+    assert session.connection_state.value == "已连接"
+    assert session.data_gate_label == "实时待 M0"
+    assert session.candidate_gate_label == "关闭"
+    assert session.batch is None
+    assert "原生实时" in session.last_fetch_detail
+    assert "单位" in session.status_issues[0]
 
 
 def test_credential_test_distinguishes_static_connection_from_empty_realtime(

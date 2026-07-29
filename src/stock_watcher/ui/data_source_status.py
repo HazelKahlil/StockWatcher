@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from stock_watcher.config import HttpProfile
+from stock_watcher.config import HttpProfile, NativeRealtimeProfile
 from stock_watcher.providers.tushare.errors import ProviderError
 from stock_watcher.providers.tushare.fast_transport import FastTransport
 from stock_watcher.providers.tushare.http_transport import BaseHttpTransport
+from stock_watcher.providers.tushare.native_realtime_transport import (
+    NativeRealtimeTransport,
+)
 from stock_watcher.providers.tushare.super_transport import SuperTransport
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 
@@ -23,15 +26,25 @@ class CredentialTestResult:
     realtime_status: str = "not_checked"
     realtime_records: int = 0
     realtime_source_timestamp_present: bool = False
+    realtime_route: str = "super_rt_k"
 
 
 class CredentialTester(Protocol):
     def test(self, profile: HttpProfile, secret: str) -> CredentialTestResult: ...
 
 
+class NativeRealtimeTester(Protocol):
+    def test(
+        self,
+        profile: NativeRealtimeProfile,
+        secret: str,
+    ) -> CredentialTestResult: ...
+
+
 @dataclass(slots=True)
 class TushareCredentialTester:
     clock: type[datetime] = datetime
+    check_super_realtime: bool = True
 
     def test(self, profile: HttpProfile, secret: str) -> CredentialTestResult:
         tested_at = self.clock.now().astimezone()
@@ -54,36 +67,37 @@ class TushareCredentialTester:
                         method="GET",
                     )
                 )
-                try:
-                    realtime = transport.execute(
-                        TransportRequest(
-                            endpoint="/tushare/pro/rt_k",
-                            api_name="rt_k",
-                            params={"ts_code": "3*.SZ,6*.SH,0*.SZ,9*.BJ"},
-                            fields=(
-                                "ts_code",
-                                "pre_close",
-                                "close",
-                                "vol",
-                                "amount",
-                                "trade_time",
-                            ),
-                            method="GET",
-                            realtime=True,
+                if self.check_super_realtime:
+                    try:
+                        realtime = transport.execute(
+                            TransportRequest(
+                                endpoint="/tushare/pro/rt_k",
+                                api_name="rt_k",
+                                params={"ts_code": "3*.SZ,6*.SH,0*.SZ,9*.BJ"},
+                                fields=(
+                                    "ts_code",
+                                    "pre_close",
+                                    "close",
+                                    "vol",
+                                    "amount",
+                                    "trade_time",
+                                ),
+                                method="GET",
+                                realtime=True,
+                            )
                         )
-                    )
-                except ProviderError as exc:
-                    realtime_status = exc.reason.value
-                else:
-                    realtime_records = len(realtime.records)
-                    realtime_source_timestamp_present = (
-                        realtime.provenance.source_ts is not None
-                    )
-                    realtime_status = (
-                        "available"
-                        if realtime_source_timestamp_present
-                        else "source_timestamp_missing"
-                    )
+                    except ProviderError as exc:
+                        realtime_status = exc.reason.value
+                    else:
+                        realtime_records = len(realtime.records)
+                        realtime_source_timestamp_present = (
+                            realtime.provenance.source_ts is not None
+                        )
+                        realtime_status = (
+                            "available"
+                            if realtime_source_timestamp_present
+                            else "source_timestamp_missing"
+                        )
             else:
                 transport = FastTransport(profile, lambda: secret)
                 result = transport.execute(
@@ -113,6 +127,78 @@ class TushareCredentialTester:
             realtime_status=realtime_status,
             realtime_records=realtime_records,
             realtime_source_timestamp_present=realtime_source_timestamp_present,
+        )
+
+
+@dataclass(slots=True)
+class TushareNativeRealtimeTester:
+    """One-security availability probe for the explicitly approved SDK route."""
+
+    clock: type[datetime] = datetime
+
+    def test(
+        self,
+        profile: NativeRealtimeProfile,
+        secret: str,
+    ) -> CredentialTestResult:
+        tested_at = self.clock.now().astimezone()
+        try:
+            transport = NativeRealtimeTransport(profile, lambda: secret)
+            result = transport.execute(
+                TransportRequest(
+                    endpoint="realtime_quote",
+                    api_name="realtime_quote",
+                    params={"ts_code": "000001.SH"},
+                    fields=(
+                        "ts_code",
+                        "pre_close",
+                        "price",
+                        "vol",
+                        "amount",
+                        "source_ts",
+                    ),
+                    realtime=True,
+                )
+            )
+        except ProviderError as exc:
+            return CredentialTestResult(
+                success=False,
+                tested_at=tested_at,
+                status_text="文档原生实时检测未通过",
+                permission_summary="原生实时快照尚不可用",
+                expires_at="服务未返回可验证到期时间",
+                safe_reason=exc.reason.value,
+                realtime_status=exc.reason.value,
+                realtime_route="native_realtime",
+            )
+        except Exception:
+            return CredentialTestResult(
+                success=False,
+                tested_at=tested_at,
+                status_text="文档原生实时检测未通过",
+                permission_summary="原生实时运行依赖不可用",
+                expires_at="服务未返回可验证到期时间",
+                safe_reason="business_error",
+                realtime_status="business_error",
+                realtime_route="native_realtime",
+            )
+        timestamp_present = result.provenance.source_ts is not None
+        return CredentialTestResult(
+            success=True,
+            tested_at=tested_at,
+            status_text="文档原生实时接口有数据",
+            permission_summary=(
+                "原生实时快照有供应商时间；连续稳定性仍以 30 分钟 M0 为准"
+                if timestamp_present
+                else "原生实时快照缺可信供应商时间"
+            ),
+            expires_at="服务未返回可验证到期时间",
+            realtime_status=(
+                "available" if timestamp_present else "source_timestamp_missing"
+            ),
+            realtime_records=len(result.records),
+            realtime_source_timestamp_present=timestamp_present,
+            realtime_route="native_realtime",
         )
 
 

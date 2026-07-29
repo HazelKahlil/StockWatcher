@@ -9,6 +9,8 @@
 | tzdata 2026.3 | 目标机按 `uv.lock` 预置 | 否 | Apache-2.0 | 提供 Windows 时区数据，不访问网络。 |
 | requests 2.34.2 | 目标机按 `uv.lock` 预置 | 否 | Apache-2.0 | Tushare HTTPS 传输；TLS 验证开启，代理行为配置化。 |
 | keyring 25.7.0 | 目标机按 `uv.lock` 预置 | 否 | MIT | 正式凭据写入 Windows Credential Manager，不写配置、SQLite 或日志。 |
+| Tushare 1.4.29 | 目标机按 `uv.lock` 预置 | 否 | BSD | Human Owner 明确授权的原生实时 SDK 路线；只读新浪快照，不连接交易账户。 |
+| pandas 3.0.5 / NumPy 2.4.6 / lxml 6.1.1 | Tushare 锁定运行依赖 | 否 | BSD-3-Clause / BSD-3-Clause / BSD-3-Clause | 仅在内存解析和归一化实时快照；原始行情不落盘，NumPy 约束 `<2.5` 以保持 Python 3.11 Mypy 门。 |
 | `tqcenter` Python 模块 | 仅可选 TdxQuant 诊断；版本与目标终端匹配 | 否 | 以官方安装包和授权条款为准 | 不再是正常启动依赖；本项目不下载、重打包或替代该模块。 |
 | Windows Script Host | Windows 系统组件 | 否 | Microsoft Windows | 仅隐藏窗口启动验签 Pythonw；不请求提权。 |
 | Windows PowerShell 5.1 | Windows 系统组件 | 否 | Microsoft Windows | 仅做 Authenticode 发布者校验；不使用 ExecutionPolicy Bypass，不使用 elevation verb。 |

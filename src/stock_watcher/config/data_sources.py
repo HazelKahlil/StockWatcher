@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
@@ -34,6 +35,27 @@ class HttpProfile(BaseModel):
         return value
 
 
+class NativeRealtimeProfile(BaseModel):
+    """Tushare SDK realtime route explicitly approved by the Human Owner."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str = "native_realtime"
+    verify_url: HttpUrl = HttpUrl("https://realtime.stockai888.top")
+    credential_ref: str = "StockWatcher/Tushare/Fast"
+    source: Literal["sina"] = "sina"
+    batch_size: int = Field(default=800, ge=1, le=800)
+    min_interval_seconds: float = Field(default=0.5, ge=0.5, le=30)
+    stale_after_seconds: float = Field(default=10.0, gt=0, le=120)
+
+    @field_validator("verify_url")
+    @classmethod
+    def require_https(cls, value: HttpUrl) -> HttpUrl:
+        if value.scheme != "https":
+            raise ValueError("native realtime verification URL must use HTTPS")
+        return value
+
+
 class DataSourceSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -50,6 +72,7 @@ class DataSourceSettings(BaseModel):
         credential_ref="StockWatcher/Tushare/Fast",
         enabled=False,
     )
+    native_realtime_profile: NativeRealtimeProfile = NativeRealtimeProfile()
     super_pro_prefix: str = "/tushare/pro"
     realtime_warmup_cycles: int = Field(default=3, ge=3, le=30)
 

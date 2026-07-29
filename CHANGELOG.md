@@ -7,8 +7,9 @@
 ### Changed
 
 - Tushare 主界面启动后立即、随后每 60 秒自动区分基础连接与实时快照状态；
-  人工按钮改为“立即检测实时数据”，空数据、超时、权限、频控和缺供应商时间均
-  给出明确问题位置，候选继续 fail-closed。
+  人工按钮改为“立即检测实时数据”；经授权的原生实时路线使用本机 Fast 凭据
+  执行单证券脱敏探测，空数据、超时、权限、频控和缺供应商时间均给出明确问题
+  位置，候选继续 fail-closed。
 - Windows 构建复用锁定的 `uv` 环境，不再假设环境含 `pip` 或临时升级
   PyInstaller；Inno Setup 不在 PATH 时只读查找官方默认安装目录。
 - 默认数据路线调整为跨平台 Tushare 兼容 HTTPS：超级接口作为主接口，快速接口仅在
@@ -21,6 +22,10 @@
 
 ### Added
 
+- 经 Human Owner 明确授权的 Tushare SDK 原生实时 Provider：固定供应商验证入口、
+  800 只批次上限、0.5 秒最小请求间隔、供应商日期/时间来源校验、脱敏全市场 M0
+  工具和冻结运行时依赖收集。2026-07-29 盘后工程探测覆盖 5530/5530，只作为
+  `NON_AUTHORITATIVE_ENGINEERING_CHECK`；交易时段 M0、单位核对与候选开放仍待验证。
 - StockWatcher 品牌 PNG 与多尺寸 Windows ICO；EXE、安装器和 Qt 窗口使用同一图标。
 - Tushare Super/Fast transport、统一响应解析、TLS/超时/重试/限频策略、能力路由、
   归一化严格校验、脱敏 M0 探针，以及 Windows“数据接口”设置界面。

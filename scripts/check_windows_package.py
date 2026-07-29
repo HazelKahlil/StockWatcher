@@ -139,8 +139,11 @@ def main() -> int:
     if (
         '"keyring": ("keyring"' not in portable_runtime
         or '"requests": ("requests"' not in portable_runtime
+        or '"tushare": ("tushare"' not in portable_runtime
     ):
-        errors.append("portable runtime must validate Tushare credential and HTTP dependencies")
+        errors.append(
+            "portable runtime must validate Tushare credential, HTTP and SDK dependencies"
+        )
     builder = required[8].read_text(encoding="utf-8")
     if (
         'ROOT / "src" / "stock_watcher"' not in builder
@@ -151,6 +154,11 @@ def main() -> int:
     spec = required[1].read_text(encoding="utf-8")
     if "stockwatcher.ico" not in spec or "stockwatcher.png" not in spec:
         errors.append("PyInstaller bundle must embed the application icon")
+    if (
+        'collect_submodules("tushare")' not in spec
+        or "stock_watcher.providers.tushare.native_realtime_transport" not in spec
+    ):
+        errors.append("PyInstaller bundle must collect the approved native realtime route")
     if "SetupIconFile={#MyAppIcon}" not in installer:
         errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:

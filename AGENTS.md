@@ -46,6 +46,10 @@
   Fast 仅在相同 API 的真实比较 M0 后按允许列表加速；Windows 先完成，Mac 复用同一核心。
 - TdxQuant 保留为可选诊断和资金字段实验；不得成为正常启动的必要前提。
 - 新供应商响应必须先归一化；同一候选批次不得拼接不同来源的同类实时字段。
+- Human Owner 于 2026-07-29 明确授权按供应商语雀文档使用 Tushare SDK
+  `realtime_quote(src="sina")` 原生实时路线。它必须作为独立
+  `native_realtime` provider，经交易时段 M0 后才能进入候选；不得扩展为任意网页抓取，
+  不得与 Super/Fast 的同类实时字段拼接。
 - 凭据正式运行优先使用 Windows Credential Manager / macOS Keychain；不得进入配置、
   SQLite、日志、Git、bundle、截图或命令行。
 - TdxQuant 只读预检可使用官方 `tqcenter` 或 `http://127.0.0.1:17709/`；不得把本机 HTTP 误写成供应商托管 HTTPS，也不得开放到非回环地址。

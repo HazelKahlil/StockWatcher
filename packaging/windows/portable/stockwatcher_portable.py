@@ -19,9 +19,13 @@ OFFICIAL_PUBLISHERS = (
 )
 REQUIRED_DEPENDENCIES = {
     "keyring": ("keyring", "25.7.0"),
+    "lxml": ("lxml", "6.1.1"),
+    "numpy": ("numpy", "2.4.6"),
+    "pandas": ("pandas", "3.0.5"),
     "PySide6": ("PySide6", "6.11.1"),
     "pydantic": ("pydantic", "2.13.4"),
     "requests": ("requests", "2.34.2"),
+    "tushare": ("tushare", "1.4.29"),
     "yaml": ("PyYAML", "6.0.3"),
     "tzdata": ("tzdata", "2026.3"),
 }

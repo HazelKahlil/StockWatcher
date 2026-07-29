@@ -209,8 +209,12 @@ def test_dependency_check_reports_exact_runtime_prerequisites() -> None:
         lambda name: None if name in {"PySide6", "yaml"} else object(),
         lambda _distribution: {
             "keyring": "25.7.0",
+            "lxml": "6.1.1",
+            "numpy": "2.4.6",
+            "pandas": "3.0.5",
             "pydantic": "2.13.4",
             "requests": "2.34.2",
+            "tushare": "1.4.29",
             "tzdata": "2026.3",
         }.get(_distribution, "fixture"),
     )

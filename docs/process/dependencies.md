@@ -2,9 +2,10 @@
 
 > 最后更新：2026-07-24 ｜ 范围：`pyproject.toml` 的直接与开发依赖；精确解析版本见 `uv.lock`。
 
-Tushare 兼容 HTTP 使用 `requests`；正式凭据使用跨平台 `keyring` 接入 Windows Credential
-Manager 和未来 macOS Keychain。可选 `tqcenter` 继续由官方 Windows 终端环境提供并延迟
-加载，不写入跨平台锁文件。本版不引入交易 SDK、交易账户或通知 SDK。
+Tushare 兼容 HTTP 使用 `requests`；Human Owner 明确批准的原生实时路线使用
+`tushare` 1.4.29。正式凭据使用跨平台 `keyring` 接入 Windows Credential Manager
+和未来 macOS Keychain。可选 `tqcenter` 继续由官方 Windows 终端环境提供并延迟加载，
+不写入跨平台锁文件。本版不引入交易 SDK、交易账户或通知 SDK。
 
 | 依赖 | 类型与用途 | 许可证 | 安全影响 |
 | --- | --- | --- | --- |
@@ -14,6 +15,9 @@ Manager 和未来 macOS Keychain。可选 `tqcenter` 继续由官方 Windows 终
 | `tzdata` | 运行时；为 Windows 等缺少系统 IANA 时区数据库的冻结环境提供 `Asia/Shanghai` 数据 | Apache-2.0 | 仅提供锁定的时区数据；不增加供应商、账户、交易或网络能力。 |
 | `requests` | 运行时；Super/Fast HTTPS 传输、timeout、TLS 与状态码处理 | Apache-2.0 | TLS 验证保持开启；代理行为配置化；响应正文不进入日志、报告或业务层。 |
 | `keyring` | 运行时；Windows Credential Manager 与未来 macOS Keychain 统一接口 | MIT | secret 只经进程内存传给请求层；不写配置、SQLite、日志、Git 或包。冻结构建显式收集平台 backend。 |
+| `tushare` | 运行时；Human Owner 授权的 `realtime_quote(src="sina")` 只读实时 SDK | BSD | 独立 `native_realtime` profile；Token 仅从系统凭据读取；上游正文不落盘；禁止交易能力和任意抓取扩展。 |
+| `numpy` | 运行时；Tushare/pandas 数值数组；直接约束 `<2.5` | BSD-3-Clause | 仅内存归一化；`<2.5` 保持 Python 3.11 的严格 Mypy 门可解析，避免环境分裂。 |
+| `pandas` / `lxml` | Tushare 锁定传递依赖；SDK 响应表和只读解析 | BSD-3-Clause / BSD-3-Clause | 原始表只在内存中存在，进入业务层前转换为字段、单位和时间明确的记录。 |
 | `hatchling` | 构建后端；生成 Python 包 | MIT | 仅构建时使用；锁文件固定解析。 |
 | `pytest` | 开发；确定性回归测试 | MIT | 仅开发期；测试不得使用真实用户、行情或凭证。 |
 | `ruff` | 开发；静态检查与 import 排序 | MIT | 仅开发期；不访问供应商或账户。 |

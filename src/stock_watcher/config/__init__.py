@@ -3,6 +3,7 @@ from .data_sources import (
     DataSourceMode,
     DataSourceSettings,
     HttpProfile,
+    NativeRealtimeProfile,
 )
 from .repository import ConfigRepository, VersionedConfig
 
@@ -12,5 +13,6 @@ __all__ = [
     "DataSourceMode",
     "DataSourceSettings",
     "HttpProfile",
+    "NativeRealtimeProfile",
     "VersionedConfig",
 ]

@@ -15,6 +15,9 @@ Human Owner 于 2026-07-29 明确批准将默认主数据路线从
 - TdxQuant 保留为可选诊断和未来资金字段探索，不再是应用正常启动或候选放行的必要前提；
 - Windows 先完成；Mac 从同一 commit 复用 Provider、模型、归一化、算法、SQLite 和核心 UI；
 - 紫黄资金线继续保持独立 `unavailable`，不得用 moneyflow、Level-1 或盘口字段冒充。
+- Human Owner 于 2026-07-29 15:00 后明确授权供应商文档中的 Tushare SDK
+  `realtime_quote(src="sina")` 原生实时路线。它作为独立实验 profile，不改写 13:00
+  `rt_k` 首次 M0 `FAIL`，也不在交易时段 M0 前放行候选。
 
 本决策是 `docs/reference/v2.0/requirements.lock.json` 的后继产品路线批准，不静默改写原始
 锁定文件。股票池、固定三只、强/中/近、提醒频率、停止门和禁止交易等锁定规则不变。
@@ -80,6 +83,7 @@ Human Owner 于 2026-07-29 明确批准将默认主数据路线从
 | 2026-07-29 | 按官方合同补齐 `freq=1MIN` 后复核 Super/Fast 实时能力 | Super `rt_k` 单股/全市场 HTTP 200 空数据，`rt_min`/`rt_min_daily` 超时；Fast `rt_k` 业务错误 |
 | 2026-07-29 | Windows 图标、启动即自动检测、人工实时检测与明确问题位置 | 源码 UI smoke 通过；实时门继续 fail-closed |
 | 2026-07-29 | PyInstaller 6.21.0 + Inno Setup 6.7.3 构建 0.3.1-alpha 安装器与 ZIP | 构建通过；本机 Application Control 阻止未签名冻结 EXE，未绕过策略 |
+| 2026-07-29 | 盘后按明确授权验证 `tushare.realtime_quote(src="sina")` | 单批上限 800；全 A 5,530/5,530、0 重复、7 批总耗时 7.781 秒、每行均有 `DATE/TIME`；仅属非权威盘后工程证据 |
 
 ## 当前结论
 
@@ -91,3 +95,7 @@ Tushare 静态、日线、三日历史分钟和板块能力真实可用，但盘
 界面现在会在启动后立即自动检测并每 60 秒复核，分开展示基础接口连接、实时数据
 状态、候选门和具体问题；人工“立即检测实时数据”使用同一只读、脱敏路径。它不把
 连接成功冒充为实时 M0 成功。
+
+新增 `native_realtime` 路线已经证明盘后全市场吞吐具备 10 秒预算，但旧日期证券和盘后
+时间语义仍需严格过滤。下一权威交易时段必须连续至少 30 分钟验证逐行新鲜度、价量推进、
+错误率、p50/p95、断线恢复和三周期预热；通过前本版总 M0 结论仍是 `FAIL`。
