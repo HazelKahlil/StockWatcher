@@ -8,7 +8,7 @@
 - 创建私有 GitHub 仓库 `HazelKahlil/StockWatcher` 与本地权威目录。
 - 安装项目工作流、领域规则、版本与发布治理。
 - 从交接包中选择机器可读 MD 版本，迁入必要的锁定项、规格、M0/验收、配置、Schema 和图片。
-- 不在本版实现任何产品业务逻辑；v0.1 M0 另行启动。
+- 不在本版实现任何产品业务逻辑；后续产品版本另行启动（当前路线从 `v0.1-mac-replay-foundation` 开始）。
 
 ## 验收标准
 
@@ -42,5 +42,5 @@
 ## 封版记录
 
 - 验证结果：本地完整性、Git whitespace 与远端默认分支通过。GitHub Actions run `29922581936` 未进入任何 step，平台注释为 Billing / spending limit；仓库 owner 恢复 Billing 后负责重跑。
-- 遗留问题：产品实现未开始；由 `v0.1-m0-data-gate` 承接。
+- 遗留问题：产品实现未开始；当前由 `v0.1-mac-replay-foundation` 承接，真实数据 M0 顺延到 `v0.3-windows-data-gate`。
 - 终态对账：关联 issue `HAZ-383`；必需子任务/stage `0/0`；Issue 状态与本 README 状态一致：是（等待 issue review）。

@@ -5,20 +5,29 @@
 ## 项目
 
 - 本地路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`
-- GitHub：`https://github.com/HazelKahlil/StockWatcher`（private）
-- 当前状态：治理 Bootstrap 已建立；产品实现尚未开始。
+- 当前开发电脑：Mac；没有可用于真实验证的 Windows 电脑。
+- GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
+- 当前状态：v0.1 Mac Replay Foundation、v0.2 Mac Local Alpha 与 v0.3 早期 Windows 无终端交付候选已合入本地 `main`；HAZ-511/512/515/526 的唯一后继冻结候选位于 `6e5dbed8eee027ef7d5478b18b1539b3c16a24ed`，通过单一 draft PR #2 的远端 head 交接。Mac 工程门已通过，真实 Windows 普通用户启动、TdxQuant live readback 与交易时段 M0 均未完成。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
-- 当前验证命令：`python3 scripts/validate_workspace.py`、`git diff --check`。
+- 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
 
 ## 项目工作流
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
-- 产品实现未启动时，目标版本是 `docs/visions/v0.1-m0-data-gate/README.md`；首个实现 issue 进入执行前，必须先把它登记为活跃版本并合入 `main`。
+- 真实数据工作进入 v0.3 前，先读取活跃版本 `docs/visions/v0.3-windows-data-gate/README.md`；首个路线执行 issue 进入执行前，必须确认活跃登记已写入本地 `main`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
 - 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
 - 长任务跨 session 时按 `kahlil-project-workflow` 的 handoff 规则交接；小改动优先更新目标版本 README，不滥建 session log。
 - 文档去向：长期事实 → `docs/project/`；规则、边界、决策和踩坑 → `docs/process/`；范围、验收、封版 → `docs/visions/`；原始交接基线 → `docs/reference/`。
+
+## 本地优先模式
+
+- 本地 `main` 是日常开发的权威事实源；`origin/main` 是最近一次 GitHub 里程碑镜像。每次启动先运行 `git status -sb` 和 `git rev-list --left-right --count main...origin/main`，确认本地改动与未同步提交。
+- 日常任务从本地 `main` 建短分支，完成验证和 diff review 后本地合并回 `main`。不自动 push，也不为每个小改动创建 PR。
+- 每个 session 收尾必须形成可恢复的本地提交；只留未提交工作时，必须在 handoff 中逐项列出，不能让下一位 Agent 猜。
+- 版本封版、需要远端备份/跨设备交接或用户明确要求时，从本地 `main` 创建 `publish/<version>`，统一 push 并用一个 PR 同步 GitHub。
+- GitHub 尚未同步期间，不得声称远端已经包含本地版本；汇报必须同时写明本地 commit 和远端同步状态。
 
 ## 规格与材料规则
 
@@ -31,7 +40,10 @@
 
 - 只做候选观察与异动提醒；禁止读取交易密码、连接交易账户、调用下单接口或生成自动交易行为。
 - 实时筛选必须是确定性、可回放的规则；大语言模型不得进入盘中主链路。
-- 紫黄线、供应商字段、批量能力与授权必须通过 M0。未通过时只能明确标记“资金模块未就绪”，不得用替代字段冒充。
+- v0.3 正式数据路线只使用 Windows + 官方 TdxQuant 及本机 TQ 服务；不购买或接入 Mac/Tushare/iFinD，不用非官方封装或行情服务器。
+- TdxQuant 只读预检可使用官方 `tqcenter` 或 `http://127.0.0.1:17709/`；不得把本机 HTTP 误写成供应商托管 HTTPS，也不得开放到非回环地址。
+- 紫黄线、供应商字段、批量能力与授权必须通过 Windows M0。独立资金字段 M0 未通过时只能明确标记“资金模块未就绪”，不得用 `Zjl`、`Zjl_HB` 或替代字段冒充。
+- Mac 上的 Mock/Replay、PySide6 和性能结果只证明 Mac 本地行为，不能充当 Windows/通达信 M0、Windows 通知或安装包证据。
 - 数据健康为 `STOPPED/RED` 时停止产生新候选；不得把旧数据包装成新结果。
 - 高风险区和人类确认门见 `docs/process/boundaries.md`。命中时先停、说明影响并取得确认。
 
@@ -41,18 +53,18 @@
 
 ## Git、PR 与发布
 
-- Bootstrap 初始提交可直接建立 `main`；此后功能、修复和治理改动都从短分支发 PR，不直接推送 `main`。
-- 分支名：`feat/<issue>-<slug>`、`fix/<issue>-<slug>`、`docs/<issue>-<slug>`、`chore/<issue>-<slug>`。
-- PR 必须写清版本范围、验证证据、数据/安全影响和文档更新；模板见 `.github/pull_request_template.md`。
+- 本地分支名：`feat/<issue>-<slug>`、`fix/<issue>-<slug>`、`docs/<issue>-<slug>`、`chore/<issue>-<slug>`；本地验证后合并回本地 `main`。
+- GitHub 同步分支统一用 `publish/<version>`。一个版本原则上只开一个同步 PR，减少日常 GitHub 操作。
+- 里程碑 PR 必须写清版本范围、验证证据、环境边界、数据/安全影响和文档更新；模板见 `.github/pull_request_template.md`。
 - 采用 SemVer；版本路线、封版门和 tag 规则见 `docs/process/release.md`，变更同步 `CHANGELOG.md`。
 
 ## 开发前后检查
 
 - 动手前：读活跃版本 README 和规则路由表；确认任务在版本范围内、依赖已满足。
-- 提交前：跑目标版本要求的测试、lint、类型检查和回放；执行 `git diff --check`，review diff，确认无秘密、运行数据和无关改动。
+- 提交前：跑目标版本要求的测试、lint、类型检查和回放；执行 `git diff --check`，review diff，确认无秘密、运行数据、无关改动和跨环境误报。
 - 收尾时：更新版本进度、验证证据和风险；新决策或复发坑写回 `docs/process/`。
 - 把 issue、父工作包或版本推到终态前，逐项核对 Done when、必需子任务/stage 与版本验收。仍有必要项未完成或无 owner 的欠账时保持 `in_progress` 或 `blocked`；代码合并不等于版本完成。
-- 治理规则只有合入默认分支并能从 fresh checkout 回读才算生效。
+- local-first 期间，治理规则只有合入本地 `main` 并能从新的本地 worktree 回读才算对日常开发生效；只有完成里程碑 PR 后，才能宣称 GitHub 已同步。
 
 ## Review 规则
 

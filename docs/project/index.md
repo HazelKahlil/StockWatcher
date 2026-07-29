@@ -1,12 +1,12 @@
 # 项目长期事实索引
 
-> 最后更新：2026-07-22
+> 最后更新：2026-07-27
 > 这里只放长期为真的事实。单次改动进版本文档，规则和踩坑进 `docs/process/`。
 
 ## 项目是什么
 
 - 一句话定位：为内部资深 A 股交易员持续扫描市场，用确定性规则把全市场缩小为三只候选并提供低打扰异动提醒。
-- 目标用户 / 场景：张新玲负责最终业务确认；2—3 名内部用户在 Windows 台式机与通达信同时运行，主机常开，iPhone 仅作辅助通知。
+- 当前用户 / 场景：Hazel Kahlil 使用 Mac 开发且没有 Windows 电脑；张新玲仍是原始业务规格中的确认人。原规格设想的 2—3 名 Windows + 通达信内部用户场景尚未获得真实环境验证。
 - 核心问题：减少人工逐行业、概念和个股持续盯盘的时间，同时保留交易员自行看盘与决策。
 - 明确不做：自动买卖、账户/持仓读取、交易密码、下单接口、收益承诺、面向公众发布候选、首版 SaaS/多租户、新闻 AI 和盘中 LLM 选股。
 - 产品名：仓库与工程名为 `StockWatcher`；V2.0 原始规格中的业务名为“A股候选观察与异动提醒工具”。
@@ -16,7 +16,9 @@
 | 来源 | 拆解结论 | 对项目的约束 |
 | --- | --- | --- |
 | 张新玲 2026-07-22 需求确认与补充 | 固定三只、板块共振、紫黄线、09:45/14:50、少打扰、内部使用 | `requirements.lock.json` 为锁定业务项，变更需新版本确认 |
-| 通达信 TdxQuant 官方能力 | 可能提供实时/历史、板块和批量公式调用，但字段、授权、刷新与紫黄线一致性必须现场证明 | 首版先做 M0；生产主链路禁止 OCR/网页抓取替代 |
+| Hazel Kahlil 2026-07-22 环境确认 | 当前只有 Mac，日常迭代改为本地优先 | 先做跨平台 Mock/Replay 基础；Windows/通达信证据延后到独立版本 |
+| HAZ-403 Mac 供应商调研 | 历史结论为 `PASS_WITH_LIMITS`，但 Human Owner 已决定 v0.3 不购买或接入 Tushare/iFinD | 保留为决策证据，不再作为当前执行路线 |
+| 通达信 TdxQuant 官方能力 | HAZ-404 确认官方 `tqcenter`、本机 `127.0.0.1:17709`、股票列表、价量、快照、历史、板块和交易日历能力 | v0.3 首选且唯一正式 M0 路线；字段、授权、刷新、性能与紫黄线一致性仍须 Windows 现场证明 |
 | Windows App Notifications | 桌面端可做非抢焦点提醒，但多屏、停留和安装后的实际行为需 Windows 验证 | UI 验收不能只靠单元测试 |
 | Bark | 可作为可替换的 iPhone 辅助通道 | 手机失败不得阻塞桌面，设备密钥不得入库 |
 
@@ -26,22 +28,23 @@
 
 | 项 | 内容 |
 | --- | --- |
-| 语言 | 计划 Python 3.11/3.12；最终版本受现场 TdxQuant 支持范围约束 |
-| 桌面 UI | 计划 PySide6；Windows 右下角、不抢焦点、常驻托盘 |
-| 并发 | provider、engine、UI、notification 责任隔离；具体进程模型在 v0.2 验证 |
+| 当前开发机 | Mac；日常运行、测试和本地 Git 提交均在本机完成 |
+| 语言 | Python 3.11/3.12；v0.3 在共享 Provider/domain 契约上接入 Windows/TdxQuant，Mac 只验证离线契约 |
+| 桌面 UI | 计划 PySide6；v0.2 先验证 Mac 跨平台原型，Windows 右下角/多屏/托盘行为留到真实环境 |
+| 并发 | provider、engine、UI、notification 责任隔离；具体进程模型在 v0.2 的 Mac Alpha 验证 |
 | 数据库 | SQLite WAL；分钟数据可按验证结果使用 Parquet / DuckDB |
 | 配置 | YAML + Pydantic；锁定规则、软参数、用户设置和运行环境分层 |
 | 测试 | pytest + ReplayProvider + SyntheticScenarioBuilder；真实数据另做 M0/影子验证 |
-| 打包 | 计划 PyInstaller one-folder + Inno Setup，目标 Windows x64 |
-| 部署 | 无生产部署；每位内部用户独立本地安装，首版不建账号系统 |
-| 当前验证 | `python3 scripts/validate_workspace.py`、`git diff --check` |
+| 打包 | v0.3 提供 PyInstaller + Inno Setup 前置配置与内部便携 ZIP；独立真实 Windows 只验证过较早候选的双 Python 工程/构建链，HAZ-526 后继便携候选仍须在 Human Owner 的 Windows 上验证普通用户双击、UAC、退出与再次启动 |
+| 部署 | 当前只有 Mac 本地开发环境，无生产部署；v0.3 交付 Windows 本地只读预检、M0 探针与诊断 UI，不接交易账户 |
+| 当前验证 | v0.2 已在 Mac + Mock/Replay 下本地收口；v0.3 的 HAZ-526 冻结候选已通过 Mac 全量回归、离线包合同、Replay smoke 与 38/38 payload 复核。HAZ-527 在候选下载前被 Windows `runner pipe-in` 阻断，故 HAZ-526 的 Windows 普通用户启动、UAC、原生 TdxQuant Preflight、UI 与交易时段 M0 均无 PASS/FAIL 结论 |
 
 ## 计划模块表
 
 | 模块 | 职责 | 计划路径 | 依赖 | 被谁消费 |
 | --- | --- | --- | --- | --- |
 | domain | 统一证券、行情、板块、资金、候选、提醒和健康对象 | `src/stock_watcher/domain/` | 无供应商字段依赖 | providers、engine、storage、UI |
-| providers | 通达信、Replay 和未来合法数据源适配；归一化字段与质量 | `src/stock_watcher/providers/` | domain、现场 SDK | engine、health、M0 工具 |
+| providers | 官方 TdxQuant 与 Replay 适配；归一化字段、时间戳与质量 | `src/stock_watcher/providers/` | domain、获授权本机 TQ 服务 | engine、health、M0 工具 |
 | engine | 股票池、价格、板块、资金、三日、排名和提醒策略 | `src/stock_watcher/engine/` | domain、providers 输出、配置 | desktop、storage、summary |
 | desktop | 主窗口、弹窗、托盘、设置、历史与反馈 | `src/stock_watcher/ui/` | engine 事件、storage | 内部用户 |
 | notifications | Bark 等可替换辅助通道 | `src/stock_watcher/notifications/` | AlertBatch、密钥存储 | iPhone |
@@ -49,7 +52,7 @@
 | jobs / health | 总结、备份、看门狗、恢复与指标 | `src/stock_watcher/jobs/`、`health/` | providers、storage | UI、运维 |
 | tools | M0 探针、回放工具 | `tools/` | providers、domain | 开发与测试 |
 
-以上是规格建议的依赖方向，不代表代码目录已经存在。首次建立代码结构时必须在活跃版本中验证后更新本表。
+以上是规格建议的依赖方向。v0.1 已实现 `domain`、`providers`、`storage` 和 `config` 的最小可回放基础；engine、desktop、notifications 与 jobs/health 仍由后续版本承接。
 
 ## 相关文档
 
@@ -60,7 +63,8 @@
 
 ## 待确认
 
-- 通达信现场版本、安装方式、SDK/Python 兼容版本和账号授权范围（M0）。
-- 紫色超大单、黄色大单的准确指标名、输出字段、单位、累计方式和历史可取性（M0）。
-- 全市场批量、板块成分、重连与一个完整交易时段的性能/稳定性（M0）。
-- Bark 是否适合现场网络；不适合时选择其他合规通知通道（v0.3）。
+- Windows/TdxQuant 路线：取得合规 Windows 环境，并确定现场终端版本、安装方式、Python 兼容版本和账号授权范围。
+- 通达信紫色超大单、黄色大单的准确指标名、输出字段、单位、累计方式和历史可取性（Windows M0）；`Zjl`/`Zjl_HB` 不得静默替代。
+- 全市场批量、板块成分、重连与完整交易时段性能/稳定性；Mac/CI 结果不能替代 Windows 证据。
+- 独立资金字段 M0 通过前，资金模块保持 `unavailable`。
+- Bark 是否适合现场网络；不适合时选择其他合规通知通道（v0.4）。
