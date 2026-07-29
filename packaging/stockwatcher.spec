@@ -40,7 +40,10 @@ analysis = Analysis(
     ],
     hiddenimports=[
         *collect_submodules("keyring.backends"),
-        *collect_submodules("tushare"),
+        "tushare",
+        "tushare.stock",
+        "tushare.stock.cons",
+        "tushare.stock.rtq",
         "stock_watcher.providers.tushare.capability_router",
         "stock_watcher.providers.tushare.fast_transport",
         "stock_watcher.providers.tushare.native_realtime_transport",

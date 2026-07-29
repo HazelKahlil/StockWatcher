@@ -24,7 +24,7 @@
 
 - 经 Human Owner 明确授权的 Tushare SDK 原生实时 Provider：固定供应商验证入口、
   800 只批次上限、0.5 秒最小请求间隔、供应商日期/时间来源校验、脱敏全市场 M0
-  工具和冻结运行时依赖收集。2026-07-29 盘后工程探测覆盖 5530/5530，只作为
+  工具和冻结运行时的最小 SDK 模块收集。2026-07-29 盘后工程探测覆盖 5530/5530，只作为
   `NON_AUTHORITATIVE_ENGINEERING_CHECK`；交易时段 M0、单位核对与候选开放仍待验证。
 - StockWatcher 品牌 PNG 与多尺寸 Windows ICO；EXE、安装器和 Qt 窗口使用同一图标。
 - Tushare Super/Fast transport、统一响应解析、TLS/超时/重试/限频策略、能力路由、
