@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "phase": "native_realtime_unit_comparison",
+  "authority": "POST_CLOSE_CROSS_PROVIDER_COMPARISON",
+  "trade_date": "20260729",
+  "checked_at": "2026-07-29T16:03:16.455419+08:00",
+  "verdict": "PASS",
+  "daily_records": 5524,
+  "requested_samples": 20,
+  "matched_samples": 20,
+  "volume": {
+    "samples": 20,
+    "median_ratio": 100.0,
+    "max_relative_deviation": 0.0,
+    "expected_multiplier": 100.0,
+    "matches_expected": true,
+    "reference_unit": "100_shares",
+    "native_unit_if_pass": "shares"
+  },
+  "amount": {
+    "samples": 20,
+    "median_ratio": 1000.0,
+    "max_relative_deviation": 0.0,
+    "expected_multiplier": 1000.0,
+    "matches_expected": true,
+    "reference_unit": "CNY_thousands",
+    "native_unit_if_pass": "CNY"
+  },
+  "candidate_gate": "CLOSED",
+  "raw_payload_persisted": false,
+  "instrument_identifiers_persisted": false,
+  "raw_values_persisted": false,
+  "credential_persisted": false,
+  "plaintext_sdk_token_file_present": false
+}

@@ -28,8 +28,10 @@ Clock = Callable[[], datetime]
 Monotonic = Callable[[], float]
 SecretGetter = Callable[[], str | None]
 Sleeper = Callable[[float], None]
+ModuleImporter = Callable[[str], object]
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+SDK_RUNTIME_LOCK = threading.RLock()
 CODE_PATTERN = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
 NUMERIC_FIELDS = {
     "OPEN": "open",
@@ -64,8 +66,6 @@ class RealtimeFrame(Protocol):
 class TushareSdkModule(Protocol):
     __version__: str
 
-    def set_token(self, token: str) -> None: ...
-
     def realtime_quote(self, *, ts_code: str, src: str) -> RealtimeFrame | None: ...
 
 
@@ -73,20 +73,36 @@ class TushareConstantsModule(Protocol):
     verify_token_url: str
 
 
+class TushareVerifyTokenModule(Protocol):
+    get_token: Callable[[], str | None]
+
+
 class TushareSdkRealtimeClient:
     """Minimal adapter around the Human Owner-approved Tushare SDK route."""
 
-    def __init__(self) -> None:
-        self._sdk = cast(TushareSdkModule, importlib.import_module("tushare"))
+    def __init__(
+        self,
+        importer: ModuleImporter = importlib.import_module,
+    ) -> None:
+        self._sdk = cast(TushareSdkModule, importer("tushare"))
         self._constants = cast(
             TushareConstantsModule,
-            importlib.import_module("tushare.stock.cons"),
+            importer("tushare.stock.cons"),
         )
+        self._verify_token = cast(
+            TushareVerifyTokenModule,
+            importer("tushare.util.verify_token"),
+        )
+        self._token: str | None = None
+        self._verify_url: str | None = None
         self.version = self._sdk.__version__
 
     def configure(self, token: str, verify_url: str) -> None:
-        self._sdk.set_token(token)
-        self._constants.verify_token_url = verify_url
+        # tushare.set_token() writes ~/tk.csv. StockWatcher must keep credentials
+        # exclusively in Windows Credential Manager, so the SDK receives the token
+        # only inside the serialized call below.
+        self._token = token
+        self._verify_url = verify_url
 
     def fetch(
         self,
@@ -94,10 +110,26 @@ class TushareSdkRealtimeClient:
         *,
         source: str,
     ) -> list[dict[str, object]] | None:
+        token = self._token
+        verify_url = self._verify_url
+        if not token or not verify_url:
+            raise RuntimeError("native realtime client is not configured")
         # The SDK may print supplier messages. They are intentionally discarded because
         # upstream text can contain identifiers or implementation details.
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            frame = self._sdk.realtime_quote(ts_code=",".join(codes), src=source)
+        with SDK_RUNTIME_LOCK:
+            previous_get_token = self._verify_token.get_token
+            previous_verify_url = self._constants.verify_token_url
+            try:
+                self._verify_token.get_token = lambda: token
+                self._constants.verify_token_url = verify_url
+                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                    frame = self._sdk.realtime_quote(
+                        ts_code=",".join(codes),
+                        src=source,
+                    )
+            finally:
+                self._verify_token.get_token = previous_get_token
+                self._constants.verify_token_url = previous_verify_url
         if frame is None:
             return None
         rows = frame.to_dict(orient="records")
@@ -271,8 +303,8 @@ def _normalize_rows(
             "provider_version": provider_version,
             "schema_version": NativeRealtimeTransport.schema_version,
             "data_quality": quality.value,
-            "volume_unit": "supplier_raw_unverified",
-            "amount_unit": "supplier_raw_unverified",
+            "volume_unit": "shares",
+            "amount_unit": "CNY",
         }
         for source, target in NUMERIC_FIELDS.items():
             record[target] = _number(row.get(source))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,6 +11,7 @@ from stock_watcher.config import NativeRealtimeProfile
 from stock_watcher.providers.tushare import ProviderError, ProviderFailureReason
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
+    TushareSdkRealtimeClient,
 )
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 
@@ -67,6 +69,33 @@ class FakeClient:
         return rows
 
 
+class FakeFrame:
+    def to_dict(self, *, orient: str) -> list[dict[str, object]]:
+        assert orient == "records"
+        return [{"TS_CODE": "000001.SH"}]
+
+
+class FakeSdkModule:
+    __version__ = "test"
+
+    def __init__(self, verify_module: object, constants: object) -> None:
+        self.verify_module = verify_module
+        self.constants = constants
+
+    def set_token(self, _token: str) -> None:
+        raise AssertionError("disk-writing SDK set_token must never be called")
+
+    def realtime_quote(self, *, ts_code: str, src: str) -> FakeFrame:
+        assert ts_code == "000001.SH"
+        assert src == "sina"
+        assert getattr(self.verify_module, "get_token")() == "memory-only-secret"
+        assert (
+            getattr(self.constants, "verify_token_url")
+            == "https://realtime.stockai888.top"
+        )
+        return FakeFrame()
+
+
 @dataclass(slots=True)
 class ManualTime:
     value: float = 0.0
@@ -93,6 +122,31 @@ def request(codes: list[str]) -> TransportRequest:
         realtime=True,
         method="SDK",
     )
+
+
+def test_sdk_client_injects_token_only_in_memory_and_restores_globals() -> None:
+    verify_module = SimpleNamespace(get_token=lambda: None)
+    constants = SimpleNamespace(verify_token_url="https://original.invalid")
+    sdk = FakeSdkModule(verify_module, constants)
+    modules = {
+        "tushare": sdk,
+        "tushare.stock.cons": constants,
+        "tushare.util.verify_token": verify_module,
+    }
+    client = TushareSdkRealtimeClient(importer=lambda name: modules[name])
+
+    client.configure(
+        "memory-only-secret",
+        "https://realtime.stockai888.top",
+    )
+    assert verify_module.get_token() is None
+    assert constants.verify_token_url == "https://original.invalid"
+
+    rows = client.fetch(("000001.SH",), source="sina")
+
+    assert rows == [{"TS_CODE": "000001.SH"}]
+    assert verify_module.get_token() is None
+    assert constants.verify_token_url == "https://original.invalid"
 
 
 def test_native_realtime_batches_at_800_and_respects_half_second_floor() -> None:
@@ -135,8 +189,8 @@ def test_native_realtime_normalizes_supplier_timestamp_and_never_exposes_secret(
     assert record["received_ts"] == "2026-07-29T10:00:03+08:00"
     assert record["freshness_seconds"] == 3.0
     assert record["data_quality"] == "HEALTHY"
-    assert record["volume_unit"] == "supplier_raw_unverified"
-    assert record["amount_unit"] == "supplier_raw_unverified"
+    assert record["volume_unit"] == "shares"
+    assert record["amount_unit"] == "CNY"
     assert result.provenance.freshness_seconds == 3.0
     assert client.configured == [
         ("do-not-log-this", "https://realtime.stockai888.top")

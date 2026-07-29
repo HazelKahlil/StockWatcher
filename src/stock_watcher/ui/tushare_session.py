@@ -203,7 +203,7 @@ class TushareDiagnosticSession:
             )
             self.status_issues = (
                 (
-                    "原生实时快照可读；仍需全市场连续 30 分钟 M0、单位、停滞与恢复验证。"
+                    "原生实时快照可读；仍需全市场连续 30 分钟 M0、停滞与恢复验证。"
                     if native_route
                     else "实时快照可读；仍需全市场连续 30 分钟 M0、停滞与恢复验证。"
                 ),

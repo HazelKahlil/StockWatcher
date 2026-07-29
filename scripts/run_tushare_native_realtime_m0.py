@@ -32,6 +32,8 @@ REQUIRED_FIELDS = (
     "source_ts",
     "received_ts",
     "data_quality",
+    "volume_unit",
+    "amount_unit",
 )
 
 

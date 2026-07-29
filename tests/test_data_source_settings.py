@@ -168,7 +168,7 @@ def test_tushare_session_uses_approved_native_realtime_route_fail_closed(
     assert session.candidate_gate_label == "关闭"
     assert session.batch is None
     assert "原生实时" in session.last_fetch_detail
-    assert "单位" in session.status_issues[0]
+    assert "停滞与恢复" in session.status_issues[0]
 
 
 def test_credential_test_distinguishes_static_connection_from_empty_realtime(
