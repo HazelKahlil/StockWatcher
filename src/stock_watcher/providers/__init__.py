@@ -1,4 +1,5 @@
 from .availability import (
+    TUSHARE_DESCRIPTOR,
     ProviderDescriptor,
     ProviderReadiness,
     ProviderUnavailable,
@@ -31,5 +32,6 @@ __all__ = [
     "TdxPythonTransport",
     "TdxQuantConfig",
     "TdxTransportError",
+    "TUSHARE_DESCRIPTOR",
     "provider_descriptor",
 ]

@@ -21,10 +21,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from stock_watcher.config import DataSourceMode
 from stock_watcher.domain import HealthState
 from stock_watcher.engine.candidates import CandidateBatch
 from stock_watcher.storage import SQLiteStore
 
+from .data_source_settings import DataSourceSettingsDialog, runtime_data_source_controller
 from .demo import demo_batch, demo_clock, recovery_clock
 from .history import HistoryDialog
 from .popup import AlertPopup
@@ -215,6 +217,10 @@ class UiSession(Protocol):
     last_fetch_at: datetime | None
     last_fetch_detail: str
     status_issues: tuple[str, ...]
+    connection_name: str
+    reconnect_label: str
+    manual_fetch_label: str
+    footer_label: str
 
     def stop(self) -> None: ...
 
@@ -225,6 +231,8 @@ class UiSession(Protocol):
     def begin_manual_fetch(self) -> None: ...
 
     def manual_fetch(self) -> None: ...
+
+    def provider_changed(self, mode: DataSourceMode) -> None: ...
 
 
 class _SessionOperationWorker(QObject):
@@ -294,6 +302,10 @@ class ReplaySession:
     last_fetch_at: datetime | None = None
     last_fetch_detail = "回放模式不执行人工抓取。"
     status_issues: tuple[str, ...] = ()
+    connection_name = "回放"
+    reconnect_label = "恢复回放"
+    manual_fetch_label = "立即抓取（只读）"
+    footer_label = "Mock / Replay · 不连接真实数据"
 
     def __init__(self, store_path: Path) -> None:
         self.store = SQLiteStore(store_path)
@@ -342,6 +354,9 @@ class ReplaySession:
         return
 
     def manual_fetch(self) -> None:
+        return
+
+    def provider_changed(self, mode: DataSourceMode) -> None:
         return
 
 
@@ -400,7 +415,7 @@ class MainWindow(QMainWindow):
         self._health = self._add_summary_item(summary_layout, "数据状态", 0, 0)
         self._updated = self._add_summary_item(summary_layout, "最后更新时间", 0, 1)
         self._connection = self._add_summary_item(
-            summary_layout, "TQ 连接 / 最近检测", 0, 2
+            summary_layout, f"{self.session.connection_name}连接 / 最近检测", 0, 2
         )
         self._candidate_gate = self._add_summary_item(summary_layout, "候选状态", 0, 3)
         self._phase = self._add_summary_item(summary_layout, "当前阶段", 0, 4)
@@ -461,12 +476,10 @@ class MainWindow(QMainWindow):
         self._secondary_action.clicked.connect(self._open_history)
         if not self.session.is_replay:
             self._primary_action.setToolTip(
-                "重新建立并严格验证 StockWatcher 到官方 TQ 的本机只读连接；"
-                "不会启动终端或代替登录。"
+                "重新检查当前数据接口；数据门完成前不会生成真实候选。"
             )
             self._manual_fetch_action.setToolTip(
-                "从官方 TQ 主动读取一次证券列表并只显示脱敏结果；"
-                "不显示或保存列表正文，不开放候选。"
+                "执行一次只读数据检查；不显示或保存原始响应，不开放候选。"
             )
 
         footer = QHBoxLayout()
@@ -501,6 +514,11 @@ class MainWindow(QMainWindow):
         return value
 
     def _build_developer_menu(self) -> None:
+        settings = self.menuBar().addMenu("设置")
+        data_source = QAction("数据接口", self)
+        data_source.triggered.connect(self._open_data_source_settings)
+        settings.addAction(data_source)
+
         developer = self.menuBar().addMenu("开发")
         stop = QAction("模拟数据中断" if self.session.is_replay else "暂停实时观察", self)
         stop.triggered.connect(self._stop_replay)
@@ -540,11 +558,11 @@ class MainWindow(QMainWindow):
         if self.session.is_replay:
             self._page_title.setText("当前观察" if healthy else "数据中断")
         elif connection is TqConnectionState.CONNECTED:
-            self._page_title.setText("TQ 已连接")
+            self._page_title.setText(f"{self.session.connection_name}已连接")
         elif connection is TqConnectionState.CHECKING:
-            self._page_title.setText("正在检测 TQ")
+            self._page_title.setText(f"正在检测{self.session.connection_name}")
         else:
-            self._page_title.setText("TQ 未连接")
+            self._page_title.setText(f"{self.session.connection_name}未连接")
 
         health_labels = {
             HealthState.HEALTHY: "正常",
@@ -622,10 +640,10 @@ class MainWindow(QMainWindow):
             self._primary_action.setText("刷新" if healthy else "恢复回放")
         else:
             self._primary_action.setText(
-                "连接中…" if self._active_operation == "check" else "重新连接 TQ"
+                "连接中…" if self._active_operation == "check" else self.session.reconnect_label
             )
         self._manual_fetch_action.setText(
-            "抓取中…" if self._active_operation == "fetch" else "立即抓取（只读）"
+            "抓取中…" if self._active_operation == "fetch" else self.session.manual_fetch_label
         )
         self._manual_fetch_action.setVisible(self.session.supports_manual_fetch)
         busy = self._active_operation is not None
@@ -643,11 +661,7 @@ class MainWindow(QMainWindow):
             dot_state = "warming"
         self._status_dot.setProperty("state", dot_state)
         self._repolish(self._status_dot)
-        self._footer.setText(
-            self.session.app_badge
-            if self.session.is_replay
-            else "官方 TdxQuant · 本机只读 · 原始响应不显示、不保存"
-        )
+        self._footer.setText(self.session.footer_label)
 
     @staticmethod
     def _format_status_time(value: datetime | None) -> str:
@@ -770,6 +784,12 @@ class MainWindow(QMainWindow):
 
     def _open_developer_info(self) -> None:
         DeveloperInfoDialog(self.session, self).exec()
+
+    def _open_data_source_settings(self) -> None:
+        DataSourceSettingsDialog(
+            runtime_data_source_controller(self.session.provider_changed),
+            parent=self,
+        ).exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._auto_check_timer.stop()

@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 project_root = Path(SPECPATH).parent
 
@@ -17,11 +18,18 @@ analysis = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
+        *collect_submodules("keyring.backends"),
+        "stock_watcher.providers.tushare.capability_router",
+        "stock_watcher.providers.tushare.fast_transport",
+        "stock_watcher.providers.tushare.provider",
+        "stock_watcher.providers.tushare.super_transport",
         "stock_watcher.providers.tdxquant",
         "stock_watcher.providers.tdxquant_preflight",
         "stock_watcher.providers.tdxquant_m0",
         "stock_watcher.ui.app",
+        "stock_watcher.ui.data_source_settings",
         "stock_watcher.ui.tdx_session",
+        "stock_watcher.ui.tushare_session",
     ],
     hookspath=[],
     runtime_hooks=[],

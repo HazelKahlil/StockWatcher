@@ -4,14 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stock-watcher"
-version = "0.3.0a1"
+version = "0.3.1a1"
 description = "Cross-platform StockWatcher with a Windows TdxQuant M0 adapter"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "keyring>=25,<26",
     "pydantic>=2.11.0,<3",
     "PySide6>=6.8.0,<7",
     "PyYAML>=6.0.2,<7",
+    "requests>=2.32,<3",
     "tzdata>=2025.2",
 ]
 
@@ -22,11 +24,15 @@ dev = [
     "pytest>=8.3.0",
     "ruff>=0.11.0",
     "types-PyYAML>=6.0.12",
+    "types-requests>=2.32,<3",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = '-q -m "not live_tushare"'
+markers = [
+    "live_tushare: requires Human Owner-provided credentials and an explicit live run",
+]
 
 [tool.ruff]
 line-length = 100

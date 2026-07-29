@@ -9,8 +9,9 @@ from PySide6.QtWidgets import QApplication
 
 from stock_watcher.paths import runtime_paths
 
-from .main_window import MainWindow, ReplaySession
+from .main_window import MainWindow, ReplaySession, UiSession
 from .tdx_session import TdxDiagnosticSession
+from .tushare_session import TushareDiagnosticSession
 
 STYLE_SHEET = """
 QWidget { font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #172231; }
@@ -108,7 +109,11 @@ def run(
     terminal_path: Path | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="StockWatcher desktop application")
-    parser.add_argument("--provider", choices=("replay", "tdxquant"), default="replay")
+    parser.add_argument(
+        "--provider",
+        choices=("tushare", "replay", "tdxquant"),
+        default="tushare",
+    )
     parser.add_argument("--endpoint", default="http://127.0.0.1:17709/")
     parser.add_argument(
         "--db",
@@ -123,17 +128,21 @@ def run(
     if args.provider == "tdxquant":
         paths = runtime_paths()
         paths.create()
-        session: ReplaySession | TdxDiagnosticSession = TdxDiagnosticSession(
+        session: UiSession = TdxDiagnosticSession(
             args.db or paths.database,
             args.endpoint,
             terminal_path=terminal_path,
             preflight_verified=preflight_verified,
         )
-    else:
+    elif args.provider == "replay":
         replay_db = args.db or (
             Path(tempfile.gettempdir()) / "stock-watcher-mac-replay-demo.sqlite3"
         )
         session = ReplaySession(replay_db)
+    else:
+        paths = runtime_paths()
+        paths.create()
+        session = TushareDiagnosticSession(args.db or paths.database)
     window = MainWindow(session)
     window.show()
     return app.exec()

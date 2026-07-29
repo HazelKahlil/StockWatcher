@@ -1,5 +1,5 @@
 #define MyAppName "StockWatcher"
-#define MyAppVersion "0.3.0-alpha"
+#define MyAppVersion "0.3.1-alpha"
 #define MyAppPublisher "StockWatcher"
 #define MyAppExeName "StockWatcher.exe"
 #ifndef StockWatcherBundleDir
@@ -18,7 +18,7 @@ DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 OutputDir={#StockWatcherOutputDir}
-OutputBaseFilename=StockWatcher-0.3.0-alpha-setup
+OutputBaseFilename=StockWatcher-0.3.1-alpha-setup
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -29,14 +29,14 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Source: "{#StockWatcherBundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--provider tdxquant"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--provider tdxquant"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--provider tdxquant"; Description: "启动 StockWatcher"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "启动 StockWatcher"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

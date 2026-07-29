@@ -199,7 +199,7 @@ def test_missing_application_or_native_preflight_is_rejected(tmp_path: Path) -> 
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
-    with pytest.raises(module.PortableLaunchError, match="原生预检"):
+    with pytest.raises(module.PortableLaunchError, match="可选诊断模块"):
         module.validate_application(layout)
 
 
@@ -208,7 +208,9 @@ def test_dependency_check_reports_exact_runtime_prerequisites() -> None:
     missing = module.missing_dependencies(
         lambda name: None if name in {"PySide6", "yaml"} else object(),
         lambda _distribution: {
+            "keyring": "25.7.0",
             "pydantic": "2.13.4",
+            "requests": "2.34.2",
             "tzdata": "2026.3",
         }.get(_distribution, "fixture"),
     )
@@ -260,56 +262,65 @@ def test_only_strict_native_preflight_pass_allows_ui() -> None:
     )
 
 
-def test_success_path_calls_real_ui_only_after_native_preflight(
+def test_normal_success_path_launches_tushare_without_tdx_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_module()
     calls: list[str] = []
-    terminal = ROOT / "fixture-TdxW.exe"
     monkeypatch.setattr(module, "validate_application", lambda _layout: calls.append("layout"))
     monkeypatch.setattr(module, "missing_dependencies", lambda: ())
-    monkeypatch.setattr(module, "find_official_terminal", lambda: terminal)
 
-    def preflight(_layout: object, *, terminal: Path) -> bool:
-        calls.append("preflight")
-        return True
-
-    def ui(_layout: object, *, terminal: Path) -> int:
-        assert terminal == ROOT / "fixture-TdxW.exe"
+    def ui(_layout: object) -> int:
         calls.append("ui")
         return 0
 
-    monkeypatch.setattr(module, "run_native_preflight", preflight)
+    monkeypatch.setattr(
+        module,
+        "run_native_preflight",
+        lambda *_args, **_kwargs: pytest.fail("normal launch must not run TQ preflight"),
+    )
+    monkeypatch.setattr(
+        module,
+        "find_official_terminal",
+        lambda: pytest.fail("normal launch must not discover TdxW"),
+    )
     monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
 
     assert module.launch_once(module.portable_layout()) == 0
-    assert calls == ["layout", "preflight", "ui"]
+    assert calls == ["layout", "ui"]
 
 
-def test_preflight_failure_does_not_start_terminal(
+def test_tdx_preflight_failure_does_not_block_normal_tushare_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_module()
     calls: list[str] = []
     monkeypatch.setattr(module, "validate_application", lambda _layout: None)
     monkeypatch.setattr(module, "missing_dependencies", lambda: ())
-    monkeypatch.setattr(module, "find_official_terminal", lambda: ROOT / "TdxW.exe")
-    monkeypatch.setattr(module, "run_native_preflight", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        module,
+        "find_official_terminal",
+        lambda: pytest.fail("TdxW discovery is diagnostic-only"),
+    )
+    monkeypatch.setattr(
+        module,
+        "run_native_preflight",
+        lambda *_args, **_kwargs: pytest.fail("TQ preflight is diagnostic-only"),
+    )
 
     def start_terminal(*_args: object, **_kwargs: object) -> object:
         calls.append("terminal")
         return object()
 
-    def ui(_layout: object, *, terminal: Path) -> int:
+    def ui(_layout: object) -> int:
         calls.append("ui")
         return 0
 
     monkeypatch.setattr(module.subprocess, "Popen", start_terminal)
     monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
 
-    with pytest.raises(module.PortableLaunchError, match="原生 TdxQuant 预检未通过"):
-        module.launch_once(module.portable_layout())
-    assert calls == []
+    assert module.launch_once(module.portable_layout()) == 0
+    assert calls == ["ui"]
 
 
 def test_frozen_bundle_skips_external_python_and_source_layout(
@@ -317,7 +328,6 @@ def test_frozen_bundle_skips_external_python_and_source_layout(
 ) -> None:
     module = _load_module()
     calls: list[str] = []
-    terminal = ROOT / "fixture-TdxW.exe"
     monkeypatch.setattr(module.sys, "frozen", True, raising=False)
     monkeypatch.setattr(
         module,
@@ -329,24 +339,15 @@ def test_frozen_bundle_skips_external_python_and_source_layout(
         "missing_dependencies",
         lambda: pytest.fail("frozen bundle must not require external Python packages"),
     )
-    monkeypatch.setattr(module, "find_official_terminal", lambda: terminal)
-
-    def preflight(layout: object, *, terminal: Path) -> bool:
+    def ui(layout: object) -> int:
         assert layout is None
-        calls.append("preflight")
-        return True
-
-    def ui(layout: object, *, terminal: Path) -> int:
-        assert layout is None
-        assert terminal == ROOT / "fixture-TdxW.exe"
         calls.append("ui")
         return 0
 
-    monkeypatch.setattr(module, "run_native_preflight", preflight)
     monkeypatch.setattr(module, "launch_stockwatcher_ui", ui)
 
     assert module.launch_once() == 0
-    assert calls == ["preflight", "ui"]
+    assert calls == ["ui"]
 
 
 def test_verified_preflight_context_is_passed_to_ui_without_second_cli_session(
@@ -366,12 +367,30 @@ def test_verified_preflight_context_is_passed_to_ui_without_second_cli_session(
         lambda _layout, _name: SimpleNamespace(run=run),
     )
 
-    assert module.launch_stockwatcher_ui(None, terminal=terminal) == 0
+    assert module.launch_tdx_diagnostic_ui(None, terminal=terminal) == 0
     assert observed == {
         "preflight_verified": True,
         "terminal_path": terminal,
     }
     assert module.sys.argv == ["StockWatcher", "--provider", "tdxquant"]
+
+
+def test_normal_ui_launch_selects_tushare(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+    observed: dict[str, object] = {}
+
+    def run(**kwargs: object) -> int:
+        observed.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        module,
+        "_load_application_module",
+        lambda _layout, _name: SimpleNamespace(run=run),
+    )
+    assert module.launch_stockwatcher_ui(None) == 0
+    assert observed == {}
+    assert module.sys.argv == ["StockWatcher", "--provider", "tushare"]
 
 
 def test_pyinstaller_bundle_uses_strict_windows_entry() -> None:

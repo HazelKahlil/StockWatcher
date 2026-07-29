@@ -436,7 +436,7 @@ function Invoke-Preflight {
 function Invoke-Run {
     Write-Title "启动 StockWatcher"
     Ensure-Environment
-    Invoke-CheckedNative -Command $PythonPath -Arguments @("-m", "stock_watcher.ui.app", "--provider", "tdxquant", "--endpoint", $Endpoint) -FailureMessage "StockWatcher 启动失败"
+    Invoke-CheckedNative -Command $PythonPath -Arguments @("-m", "stock_watcher.ui.app", "--provider", "tushare") -FailureMessage "StockWatcher 启动失败"
 }
 
 function Invoke-Probe {

@@ -18,6 +18,9 @@ from stock_watcher.providers import (
         "stock_watcher.domain",
         "stock_watcher.engine",
         "stock_watcher.storage",
+        "stock_watcher.providers.tushare.provider",
+        "stock_watcher.providers.tushare.response_parser",
+        "stock_watcher.providers.tushare.capability_router",
         "stock_watcher.ui.presenter",
     ),
 )
@@ -36,6 +39,12 @@ def test_provider_selection_uses_declared_readiness_not_host_platform() -> None:
     assert "official-loopback-http" in tdxquant.capabilities
     with pytest.raises(ProviderUnavailable, match="preflight"):
         tuple(TdxQuantProvider().events())
+
+    tushare = provider_descriptor("tushare")
+    assert tushare.readiness is ProviderReadiness.PREFLIGHT_REQUIRED
+    assert "cross-platform-https" in tushare.capabilities
+    with pytest.raises(ProviderUnavailable, match="data-gate M0"):
+        tushare.require_ready()
 
 
 def test_unknown_provider_is_rejected_explicitly() -> None:

@@ -104,12 +104,9 @@ def main() -> int:
     )
     if any(marker in portable_entry.casefold() for marker in elevation_markers):
         errors.append("portable entry must not request elevation")
-    if (
-        "OFFICIAL_PUBLISHERS" not in portable_runtime
-        or "Get-AuthenticodeSignature" not in portable_runtime
-    ):
+    if "OFFICIAL_PUBLISHERS" not in portable_runtime:
         errors.append(
-            "portable runtime must verify the official terminal signature before preflight"
+            "portable runtime must retain official terminal verification for optional diagnostics"
         )
     if (
         "subprocess.Popen" in portable_runtime
@@ -117,7 +114,7 @@ def main() -> int:
     ):
         errors.append("portable runtime must not automatically start the official terminal")
     if "stock_watcher.providers.tdxquant_preflight" not in portable_runtime:
-        errors.append("portable runtime must execute the packaged native preflight")
+        errors.append("portable runtime must retain packaged native TdxQuant diagnostics")
     if (
         "windows_live_verified" not in portable_runtime
         or 'getattr(check, "name", None) == "api_session"' not in portable_runtime
@@ -125,6 +122,16 @@ def main() -> int:
         errors.append("portable runtime must enforce the strict native preflight success contract")
     if "stock_watcher.ui.app" not in portable_runtime:
         errors.append("portable success path must launch the packaged StockWatcher UI")
+    if (
+        'sys.argv = ["StockWatcher", "--provider", "tushare"]' not in portable_runtime
+        or "return launch_stockwatcher_ui(resolved_layout)" not in portable_runtime
+    ):
+        errors.append("portable normal launch must use Tushare without requiring TdxQuant")
+    if (
+        '"keyring": ("keyring"' not in portable_runtime
+        or '"requests": ("requests"' not in portable_runtime
+    ):
+        errors.append("portable runtime must validate Tushare credential and HTTP dependencies")
     builder = required[8].read_text(encoding="utf-8")
     if (
         'ROOT / "src" / "stock_watcher"' not in builder
@@ -138,11 +145,13 @@ def main() -> int:
         errors.append("installer must declare uninstall behavior")
     if "StockWatcherBundleDir" not in installer or "StockWatcherOutputDir" not in installer:
         errors.append("installer must accept controlled short build paths")
+    if "--provider tdxquant" in installer:
+        errors.append("installer normal shortcuts must not require TdxQuant")
     if errors:
         print("Windows package contract failed:")
         print("\n".join(f"- {error}" for error in errors))
         return 1
-    print("Windows package contract passed (offline; no Windows/TdxQuant claim).")
+    print("Windows package contract passed (offline; no live Tushare/TdxQuant claim).")
     return 0
 
 

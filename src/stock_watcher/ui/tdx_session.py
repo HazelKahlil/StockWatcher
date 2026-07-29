@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
+from stock_watcher.config import DataSourceMode
 from stock_watcher.domain import SHANGHAI, HealthState
 from stock_watcher.engine.candidates import CandidateBatch
 from stock_watcher.providers.tdxquant import (
@@ -51,6 +52,10 @@ class TdxDiagnosticSession:
     is_replay = False
     supports_manual_fetch = True
     auto_check_interval_seconds = 60
+    connection_name = "TQ "
+    reconnect_label = "重新连接 TQ"
+    manual_fetch_label = "立即抓取（只读）"
+    footer_label = "官方 TdxQuant · 本机只读 · 原始响应不显示、不保存"
 
     def __init__(
         self,
@@ -111,6 +116,15 @@ class TdxDiagnosticSession:
         self.data_gate_label = "检测中"
         self.candidate_gate_label = "关闭"
         self.status_issues = ()
+
+    def provider_changed(self, mode: DataSourceMode) -> None:
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.connection_detail = f"数据源设置已切换为 {mode.value}；等待新数据预热。"
+        self.health_detail = "数据源发生变化；旧实时基线不再用于候选。"
+        self.data_gate_label = "预热中"
+        self.candidate_gate_label = "关闭"
+        self.status_issues = ("数据源已变化：候选门已关闭。",)
 
     def recover(self) -> None:
         checked_at = self._clock()

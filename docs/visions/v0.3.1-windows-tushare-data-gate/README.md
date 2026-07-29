@@ -1,0 +1,83 @@
+# v0.3.1-windows-tushare-data-gate：跨平台 Tushare 数据闸门
+
+> 状态：进行中  
+> 创建：2026-07-29  
+> 当前执行平台：Windows  
+> 目标分支：`feat/windows-tushare-data-gate`
+
+## 决策
+
+Human Owner 于 2026-07-29 明确批准将默认主数据路线从
+“Windows + 官方 TdxQuant”调整为“跨平台 Tushare 兼容 HTTP 数据源”：
+
+- 超级接口为默认主接口；
+- 快速接口只在真实 M0 证明更快、字段一致且稳定后作为允许列表内的可选加速；
+- TdxQuant 保留为可选诊断和未来资金字段探索，不再是应用正常启动或候选放行的必要前提；
+- Windows 先完成；Mac 从同一 commit 复用 Provider、模型、归一化、算法、SQLite 和核心 UI；
+- 紫黄资金线继续保持独立 `unavailable`，不得用 moneyflow、Level-1 或盘口字段冒充。
+
+本决策是 `docs/reference/v2.0/requirements.lock.json` 的后继产品路线批准，不静默改写原始
+锁定文件。股票池、固定三只、强/中/近、提醒频率、停止门和禁止交易等锁定规则不变。
+
+## 里程碑 A：Tushare Data Gate
+
+- [ ] Super/Fast 地址和 profile 可配置，业务层不硬编码完整接口路径。
+- [ ] 正式凭据默认保存在系统安全存储；配置、日志、SQLite、Git 和包内无 secret。
+- [ ] 设置页支持隐藏输入、测试、原子替换、清除和明确的中文错误分类。
+- [ ] 统一响应解析支持 fields/items、list/dict、空数据、供应商 code 和 HTTP 错误。
+- [ ] Provider 输出归一化模型，不向业务层暴露供应商原始字典。
+- [ ] 全 A 列表、交易日历、日线、最近三日 1/5 分钟、板块和时间戳完成真实 M0。
+- [ ] 全市场实时数据连续至少 30 分钟，记录 p50/p95、错误率、429/503、停滞和恢复。
+- [ ] 方案一/二在相同条件下完成性能、一致性和权限比较。
+- [ ] Level-2 只形成实验结论，不进入评分。
+- [ ] M0 结论只写 `PASS`、`PASS_WITH_LIMITS` 或 `FAIL`。
+
+## 里程碑 B：Windows 真实候选闭环
+
+只有里程碑 A 为 `PASS` 或足够明确的 `PASS_WITH_LIMITS` 才开工：
+
+- 应用正常启动不依赖通达信；
+- 全市场 5—10 秒基础扫描，TopN 分钟和板块深取；
+- 本地计算 1/3/5 分钟涨速、量额变化、三日趋势和板块共振；
+- 数据健康且预热完成后固定输出真实三只，标记强/中/近；
+- 09:45、14:50 和盘中特别强异动提醒形成 Windows 真实闭环；
+- 数据失败或切源时关闭候选门、清空基线，至少三周期新鲜预热后恢复；
+- 完成 30 分钟交易时段与一个完整交易日验证；
+- 普通用户、无 UAC、无控制台的便携版或安装版可重复运行。
+
+## 安全与凭据
+
+- 不使用任何聊天中出现过的旧 Key/Token。
+- Human Owner 只在本机应用设置页输入新换发凭据。
+- 正式凭据优先存入 Windows Credential Manager；未来 Mac 使用 Keychain。
+- 环境变量只允许显式开发/测试：`STOCKWATCHER_TUSHARE_SUPER_API_KEY` 与
+  `STOCKWATCHER_TUSHARE_FAST_TOKEN`。
+- secret 不进入源码、YAML、JSON、SQLite、README、fixture、Git、日志、截图、命令行或报告。
+- TLS 验证保持开启；系统代理行为可配置，默认不使用环境代理。
+
+## M0 阶段
+
+1. 凭据与能力：health、status、catalog、小范围交易日历、股票基础和 Fast 小请求。
+2. 静态/历史：全 A、市场分布、ST/退市字段、日线、三日 1/5 分钟、行业/概念/成分。
+3. 全市场实时：至少 30 分钟，验证真实更新时间、10 秒预算、错误率、停滞和恢复。
+4. 实时分钟：闭合 K、延迟、批量上限、频率和 TopN 规模。
+5. 板块：申万/TDX/概念、成员稳定性和抽样一致性。
+6. Level-2：仅实验，不进入候选或紫黄线。
+7. Super/Fast 同条件比较。
+
+真实测试使用显式 `live_tushare` 标记；默认 pytest 不依赖 Key 或外网。
+
+## 当前进度
+
+| 日期 | 进展 | 状态 |
+|---|---|---|
+| 2026-07-29 | 保存 `2ea85fa` 完整本地 bundle；从该 commit 创建执行分支 | 完成 |
+| 2026-07-29 | 记录主数据路线、跨平台和 fail-closed 决策 | 完成 |
+| 2026-07-29 | CredentialStore、设置 UI、HTTP 传输与离线测试 | 进行中 |
+| 2026-07-29 | 真实凭据与 M0 | 等待实现后由 Human Owner 在 UI 输入新凭据 |
+
+## 当前结论
+
+尚未执行 Tushare 真实 M0。此版本当前不得生成真实候选，不得声称 Tushare 数据 PASS，
+也不得把一次成功请求表述为长期稳定。
+

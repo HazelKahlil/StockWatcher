@@ -15,7 +15,9 @@
 ## 项目工作流
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
-- 真实数据工作进入 v0.3 前，先读取活跃版本 `docs/visions/v0.3-windows-data-gate/README.md`；首个路线执行 issue 进入执行前，必须确认活跃登记已写入本地 `main`。
+- 真实数据工作先读取活跃版本
+  `docs/visions/v0.3.1-windows-tushare-data-gate/README.md`；TdxQuant 只读历史与诊断继续
+  参考 `v0.3-windows-data-gate`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
 - 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
 - 长任务跨 session 时按 `kahlil-project-workflow` 的 handoff 规则交接；小改动优先更新目标版本 README，不滥建 session log。
@@ -40,7 +42,12 @@
 
 - 只做候选观察与异动提醒；禁止读取交易密码、连接交易账户、调用下单接口或生成自动交易行为。
 - 实时筛选必须是确定性、可回放的规则；大语言模型不得进入盘中主链路。
-- v0.3 正式数据路线只使用 Windows + 官方 TdxQuant 及本机 TQ 服务；不购买或接入 Mac/Tushare/iFinD，不用非官方封装或行情服务器。
+- 2026-07-29 Human Owner 批准默认主路线改为跨平台 Tushare 兼容 HTTP：Super 默认，
+  Fast 仅在相同 API 的真实比较 M0 后按允许列表加速；Windows 先完成，Mac 复用同一核心。
+- TdxQuant 保留为可选诊断和资金字段实验；不得成为正常启动的必要前提。
+- 新供应商响应必须先归一化；同一候选批次不得拼接不同来源的同类实时字段。
+- 凭据正式运行优先使用 Windows Credential Manager / macOS Keychain；不得进入配置、
+  SQLite、日志、Git、bundle、截图或命令行。
 - TdxQuant 只读预检可使用官方 `tqcenter` 或 `http://127.0.0.1:17709/`；不得把本机 HTTP 误写成供应商托管 HTTPS，也不得开放到非回环地址。
 - 紫黄线、供应商字段、批量能力与授权必须通过 Windows M0。独立资金字段 M0 未通过时只能明确标记“资金模块未就绪”，不得用 `Zjl`、`Zjl_HB` 或替代字段冒充。
 - Mac 上的 Mock/Replay、PySide6 和性能结果只证明 Mac 本地行为，不能充当 Windows/通达信 M0、Windows 通知或安装包证据。

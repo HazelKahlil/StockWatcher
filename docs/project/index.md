@@ -1,6 +1,6 @@
 # 项目长期事实索引
 
-> 最后更新：2026-07-27
+> 最后更新：2026-07-29
 > 这里只放长期为真的事实。单次改动进版本文档，规则和踩坑进 `docs/process/`。
 
 ## 项目是什么
@@ -17,8 +17,8 @@
 | --- | --- | --- |
 | 张新玲 2026-07-22 需求确认与补充 | 固定三只、板块共振、紫黄线、09:45/14:50、少打扰、内部使用 | `requirements.lock.json` 为锁定业务项，变更需新版本确认 |
 | Hazel Kahlil 2026-07-22 环境确认 | 当前只有 Mac，日常迭代改为本地优先 | 先做跨平台 Mock/Replay 基础；Windows/通达信证据延后到独立版本 |
-| HAZ-403 Mac 供应商调研 | 历史结论为 `PASS_WITH_LIMITS`，但 Human Owner 已决定 v0.3 不购买或接入 Tushare/iFinD | 保留为决策证据，不再作为当前执行路线 |
-| 通达信 TdxQuant 官方能力 | HAZ-404 确认官方 `tqcenter`、本机 `127.0.0.1:17709`、股票列表、价量、快照、历史、板块和交易日历能力 | v0.3 首选且唯一正式 M0 路线；字段、授权、刷新、性能与紫黄线一致性仍须 Windows 现场证明 |
+| v0.3.1 数据路线决策 | 默认主数据源切换为跨平台 Tushare 兼容 HTTPS；超级接口为主，快速接口仅在同口径实测后按能力加速 | Windows 先完成数据闸门，Mac 复用同一 Provider、模型和业务核心 |
+| 通达信 TdxQuant 官方能力 | Windows 已验证部分实时、列表、日线、板块和交易日历能力，但分钟历史与可信秒级源时间仍未通过 | 保留为可选诊断和未来资金字段探索，不再阻塞正常启动 |
 | Windows App Notifications | 桌面端可做非抢焦点提醒，但多屏、停留和安装后的实际行为需 Windows 验证 | UI 验收不能只靠单元测试 |
 | Bark | 可作为可替换的 iPhone 辅助通道 | 手机失败不得阻塞桌面，设备密钥不得入库 |
 
@@ -28,23 +28,23 @@
 
 | 项 | 内容 |
 | --- | --- |
-| 当前开发机 | Mac；日常运行、测试和本地 Git 提交均在本机完成 |
-| 语言 | Python 3.11/3.12；v0.3 在共享 Provider/domain 契约上接入 Windows/TdxQuant，Mac 只验证离线契约 |
-| 桌面 UI | 计划 PySide6；v0.2 先验证 Mac 跨平台原型，Windows 右下角/多屏/托盘行为留到真实环境 |
+| 当前开发机 | Windows；本地开发、工程门和真实数据闸门均以本机证据为准 |
+| 语言 | Python 3.11/3.12；Tushare transport、解析、归一化与业务模型保持跨平台 |
+| 桌面 UI | PySide6；数据接口设置支持系统安全存储、先测试后切换和状态展示 |
 | 并发 | provider、engine、UI、notification 责任隔离；具体进程模型在 v0.2 的 Mac Alpha 验证 |
 | 数据库 | SQLite WAL；分钟数据可按验证结果使用 Parquet / DuckDB |
 | 配置 | YAML + Pydantic；锁定规则、软参数、用户设置和运行环境分层 |
 | 测试 | pytest + ReplayProvider + SyntheticScenarioBuilder；真实数据另做 M0/影子验证 |
-| 打包 | v0.3 提供 PyInstaller + Inno Setup 前置配置与内部便携 ZIP；独立真实 Windows 只验证过较早候选的双 Python 工程/构建链，HAZ-526 后继便携候选仍须在 Human Owner 的 Windows 上验证普通用户双击、UAC、退出与再次启动 |
-| 部署 | 当前只有 Mac 本地开发环境，无生产部署；v0.3 交付 Windows 本地只读预检、M0 探针与诊断 UI，不接交易账户 |
-| 当前验证 | v0.2 已在 Mac + Mock/Replay 下本地收口；v0.3 的 HAZ-526 冻结候选已通过 Mac 全量回归、离线包合同、Replay smoke 与 38/38 payload 复核。HAZ-527 在候选下载前被 Windows `runner pipe-in` 阻断，故 HAZ-526 的 Windows 普通用户启动、UAC、原生 TdxQuant Preflight、UI 与交易时段 M0 均无 PASS/FAIL 结论 |
+| 打包 | PyInstaller + Inno Setup；v0.3.1 正常入口不依赖通达信，TdxQuant 使用独立诊断入口 |
+| 部署 | 仅本机内部使用；不接交易账户，不自动下单，不执行发布或远端同步 |
+| 当前验证 | Tushare 路线的离线解析、错误处理、归一化、路由、凭据替换与包合同已建立；真实凭据 M0、30 分钟交易时段稳定性和真实候选闭环仍是严格门 |
 
 ## 计划模块表
 
 | 模块 | 职责 | 计划路径 | 依赖 | 被谁消费 |
 | --- | --- | --- | --- | --- |
 | domain | 统一证券、行情、板块、资金、候选、提醒和健康对象 | `src/stock_watcher/domain/` | 无供应商字段依赖 | providers、engine、storage、UI |
-| providers | 官方 TdxQuant 与 Replay 适配；归一化字段、时间戳与质量 | `src/stock_watcher/providers/` | domain、获授权本机 TQ 服务 | engine、health、M0 工具 |
+| providers | Tushare 兼容 HTTP 主路线、Replay 与可选 TdxQuant 诊断；归一化字段、时间戳与质量 | `src/stock_watcher/providers/` | domain、HTTPS 数据接口 | engine、health、M0 工具 |
 | engine | 股票池、价格、板块、资金、三日、排名和提醒策略 | `src/stock_watcher/engine/` | domain、providers 输出、配置 | desktop、storage、summary |
 | desktop | 主窗口、弹窗、托盘、设置、历史与反馈 | `src/stock_watcher/ui/` | engine 事件、storage | 内部用户 |
 | notifications | Bark 等可替换辅助通道 | `src/stock_watcher/notifications/` | AlertBatch、密钥存储 | iPhone |
@@ -63,7 +63,8 @@
 
 ## 待确认
 
-- Windows/TdxQuant 路线：取得合规 Windows 环境，并确定现场终端版本、安装方式、Python 兼容版本和账号授权范围。
+- Tushare 超级/快速接口的新换发凭据、权限、到期、限频与真实响应能力。
+- 全市场实时快照、最近三日 1/5 分钟、板块与可信源时间的交易时段 M0。
 - 通达信紫色超大单、黄色大单的准确指标名、输出字段、单位、累计方式和历史可取性（Windows M0）；`Zjl`/`Zjl_HB` 不得静默替代。
 - 全市场批量、板块成分、重连与完整交易时段性能/稳定性；Mac/CI 结果不能替代 Windows 证据。
 - 独立资金字段 M0 通过前，资金模块保持 `unavailable`。
