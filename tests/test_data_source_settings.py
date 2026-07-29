@@ -82,6 +82,23 @@ def test_tushare_session_starts_without_tdx_and_keeps_candidates_closed(
     assert all("TQ" not in issue for issue in session.status_issues)
 
 
+def test_tushare_session_checks_saved_credential_without_opening_gate(
+    tmp_path: Path,
+) -> None:
+    store = MemoryCredentialStore()
+    store.set(SUPER_CREDENTIAL, "test-only-secret")
+    session = TushareDiagnosticSession(
+        tmp_path / "tushare.sqlite3",
+        credential_store=store,
+        tester=NoNetworkTester(),
+    )
+    session.recover()
+    assert session.connection_state.value == "已连接"
+    assert session.data_gate_label == "M0 未完成"
+    assert session.candidate_gate_label == "关闭"
+    assert session.batch is None
+
+
 def test_failed_keyring_replacement_preserves_previous_credential() -> None:
     store = RejectingCredentialStore()
     store.set(SUPER_CREDENTIAL, "previous-secret")

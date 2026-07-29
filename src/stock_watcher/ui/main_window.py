@@ -267,7 +267,7 @@ class DeveloperInfoDialog(QDialog):
         first = session.batch.candidates[0] if session.batch and session.batch.candidates else None
         fields = (
             ("状态", session.state.value),
-            ("TQ 连接", session.connection_state.value),
+            (f"{session.connection_name}连接", session.connection_state.value),
             ("连接说明", session.connection_detail),
             ("数据门", session.data_gate_label),
             ("候选", session.candidate_gate_label),
@@ -523,7 +523,7 @@ class MainWindow(QMainWindow):
         stop = QAction("模拟数据中断" if self.session.is_replay else "暂停实时观察", self)
         stop.triggered.connect(self._stop_replay)
         developer.addAction(stop)
-        recover = QAction("恢复回放" if self.session.is_replay else "重新连接 TQ", self)
+        recover = QAction(self.session.reconnect_label, self)
         recover.triggered.connect(
             self._recover_replay if self.session.is_replay else self._manual_check_tq
         )
@@ -628,7 +628,7 @@ class MainWindow(QMainWindow):
             self._cards.addWidget(card)
         if not rows:
             empty = QLabel(
-                "当前没有可显示的候选。TQ 连接不等于数据门通过；"
+                "当前没有可显示的候选。数据接口连接不等于数据门通过；"
                 "在严格门完成前不会生成或提醒候选。"
             )
             empty.setObjectName("emptyState")
