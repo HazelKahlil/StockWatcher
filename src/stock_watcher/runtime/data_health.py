@@ -45,3 +45,9 @@ class DataHealthTracker:
         self.fresh_cycles = 0
         self.state = HealthState.STOPPED
         return self.state
+
+    def reset_for_recovery(self) -> None:
+        """Discard an old source baseline before collecting fresh recovery rounds."""
+        self.fresh_cycles = 0
+        self.last_success = None
+        self.state = HealthState.WARMING

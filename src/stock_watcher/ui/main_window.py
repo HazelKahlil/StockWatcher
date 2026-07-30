@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -28,10 +29,16 @@ from stock_watcher.domain import HealthState
 from stock_watcher.engine.candidates import CandidateBatch
 from stock_watcher.storage import SQLiteStore
 
+from .connection_state import ConnectionState as TqConnectionState
 from .daily_summary import DailySummaryDialog
-from .data_source_settings import DataSourceSettingsDialog, runtime_data_source_controller
+from .data_source_settings import (
+    DataSourceSettingsController,
+    DataSourceSettingsDialog,
+    runtime_data_source_controller,
+)
 from .demo import demo_batch, demo_clock, recovery_clock
 from .history import HistoryDialog
+from .macos import MacWindowClosePolicy
 from .popup import AlertPopup
 from .presenter import (
     CandidateRow,
@@ -41,7 +48,6 @@ from .presenter import (
     format_time,
     snapshot_from_batch,
 )
-from .tdx_session import TqConnectionState
 
 
 class CandidateCard(QFrame):
@@ -392,6 +398,9 @@ class MainWindow(QMainWindow):
         self._operation_thread: QThread | None = None
         self._operation_worker: _SessionOperationWorker | None = None
         self._active_operation: str | None = None
+        self._mac_window_close_policy = MacWindowClosePolicy()
+        self._secondary_notification: Callable[[str, str], bool] | None = None
+        self._initial_data_source_dialog: DataSourceSettingsDialog | None = None
         self.setWindowTitle(session.window_title)
         self.resize(1040, 720)
         self.setMinimumSize(860, 620)
@@ -404,6 +413,11 @@ class MainWindow(QMainWindow):
             self._auto_check_timer.timeout.connect(self._auto_check_tq)
             self._auto_check_timer.start()
             QTimer.singleShot(0, self._auto_check_tq)
+            if bool(getattr(self.session, "requires_data_source_setup", False)):
+                # Do not block the event loop at startup.  On a first macOS
+                # launch this still brings the simple Token page forward, but
+                # leaves the main window responsive and testable.
+                QTimer.singleShot(0, self._open_initial_data_source_settings)
         QTimer.singleShot(250, self._show_initial_alert)
 
     def _build(self) -> None:
@@ -735,18 +749,61 @@ class MainWindow(QMainWindow):
             if snapshot.overall_label == "本轮整体偏弱"
             else snapshot.overall_label
         )
+        alert_subtitle = subtitle or f"{format_time(snapshot.last_updated)} · {overall}"
         self._popup = AlertPopup(
             snapshot.candidates,
             title,
-            subtitle
-            or (
-                f"{format_time(snapshot.last_updated)} · {overall}"
-            ),
+            alert_subtitle,
             self._open_detail_by_code,
             parent=self,
         )
         QApplication.beep()
-        self._popup.show_at_bottom_right()
+        self._popup.show_at_bottom_right(preferred_screen=self.screen())
+        if self._secondary_notification is not None:
+            self._secondary_notification(title, alert_subtitle)
+
+    def enable_background_close(self) -> None:
+        """Keep scanning after the user closes the macOS main window."""
+        self._mac_window_close_policy.enable_background_close()
+
+    def request_application_exit(self) -> None:
+        """Allow the explicit application-menu Quit action to close resources."""
+        self._mac_window_close_policy.request_application_exit()
+
+    def restore_main_window(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def set_secondary_notification_sender(
+        self,
+        sender: Callable[[str, str], bool] | None,
+    ) -> None:
+        self._secondary_notification = sender
+
+    def begin_platform_recovery(self, reason: str) -> None:
+        handler = getattr(self.session, "begin_platform_recovery", None)
+        if callable(handler):
+            handler(reason)
+        else:
+            self.session.warm_and_recover()
+        self._refresh()
+        if not self.session.is_replay and not self._auto_check_timer.isActive():
+            self._auto_check_timer.start()
+        if not self.session.is_replay and self._active_operation is None:
+            QTimer.singleShot(0, self._auto_check_tq)
+
+    def mark_network_interrupted(self, reason: str) -> None:
+        handler = getattr(self.session, "mark_network_interrupted", None)
+        if callable(handler):
+            handler(reason)
+        else:
+            self.session.stop()
+        self._auto_check_timer.stop()
+        self._refresh()
 
     def _stop_replay(self) -> None:
         self.session.stop()
@@ -862,24 +919,44 @@ class MainWindow(QMainWindow):
         DeveloperInfoDialog(self.session, self).exec()
 
     def _open_data_source_settings(self) -> None:
+        DataSourceSettingsDialog(self._data_source_controller(), parent=self).exec()
+
+    def _open_initial_data_source_settings(self) -> None:
+        """Show the first-run Token page without entering a nested event loop."""
+        dialog = self._initial_data_source_dialog
+        if dialog is None:
+            dialog = DataSourceSettingsDialog(self._data_source_controller(), parent=self)
+            dialog.finished.connect(self._clear_initial_data_source_dialog)
+            self._initial_data_source_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _clear_initial_data_source_dialog(self, _result: int) -> None:
+        self._initial_data_source_dialog = None
+
+    def _data_source_controller(self) -> DataSourceSettingsController:
         controller_factory = getattr(self.session, "data_source_controller", None)
-        controller = (
+        return (
             controller_factory()
             if callable(controller_factory)
             else runtime_data_source_controller(self.session.provider_changed)
         )
-        DataSourceSettingsDialog(
-            controller,
-            parent=self,
-        ).exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._mac_window_close_policy.should_hide_on_close:
+            event.ignore()
+            self.hide()
+            return
         self._auto_check_timer.stop()
         if self._operation_thread is not None and self._operation_thread.isRunning():
             self._operation_thread.quit()
             self._operation_thread.wait(6000)
         if self._popup is not None:
             self._popup.close()
+        if self._initial_data_source_dialog is not None:
+            self._initial_data_source_dialog.close()
+            self._initial_data_source_dialog = None
         shutdown = getattr(self.session, "shutdown", None)
         if callable(shutdown):
             shutdown()

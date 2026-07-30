@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -104,6 +105,21 @@ class DataSourceSettingsController:
             return bool(self.store.get(self.reference(name)))
         except Exception:
             return False
+
+    @property
+    def credential_storage_label(self) -> str:
+        label = getattr(self.store, "storage_label", None)
+        return label if isinstance(label, str) and label else "系统安全存储"
+
+    def credential_storage_status(self) -> str:
+        status = getattr(self.store, "backend_status", None)
+        if not callable(status):
+            return f"{self.credential_storage_label}已就绪"
+        try:
+            status()
+        except Exception:
+            return f"{self.credential_storage_label}不可用"
+        return f"{self.credential_storage_label}已就绪"
 
     def test_candidate(
         self,
@@ -285,6 +301,8 @@ class _PrimaryEditor(QGroupBox):
         self,
         controller: DataSourceSettingsController,
         parent: QWidget | None = None,
+        *,
+        show_advanced_settings: bool = True,
     ) -> None:
         super().__init__("Tushare 数据接口", parent)
         self.controller = controller
@@ -293,7 +311,9 @@ class _PrimaryEditor(QGroupBox):
         form = QFormLayout()
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.secret.setPlaceholderText("输入 Token；只保存到系统安全存储")
+        self.secret.setPlaceholderText(
+            f"输入 Token；只保存到{controller.credential_storage_label}"
+        )
         self.status = QLabel(
             "已设置，可测试或更换"
             if controller.credential_present("primary")
@@ -301,6 +321,7 @@ class _PrimaryEditor(QGroupBox):
         )
         self.status.setWordWrap(True)
         self.last_test = QLabel("尚未检测")
+        self.credential_storage = QLabel(controller.credential_storage_status())
         self.permission = QLabel("保存后将用于实时行情、历史和板块")
         self.permission.setWordWrap(True)
         self.basic_capability = QLabel("等待保存 Token")
@@ -313,6 +334,7 @@ class _PrimaryEditor(QGroupBox):
         ):
             label.setWordWrap(True)
         form.addRow("Token", self.secret)
+        form.addRow("安全存储", self.credential_storage)
         form.addRow("当前状态", self.status)
         form.addRow("最近检测", self.last_test)
         form.addRow("基础数据", self.basic_capability)
@@ -330,24 +352,29 @@ class _PrimaryEditor(QGroupBox):
         buttons.addWidget(self.clear_button)
         layout.addLayout(buttons)
 
-        self.advanced = QGroupBox("高级设置（接口地址）")
-        self.advanced.setCheckable(True)
-        self.advanced.setChecked(False)
-        advanced_form = QFormLayout(self.advanced)
-        self.address = QLineEdit(str(profile.base_url).rstrip("/"))
-        self.address.setReadOnly(True)
-        self.proxy = QComboBox()
-        self.proxy.addItem("不使用系统代理", False)
-        self.proxy.addItem("使用系统代理", True)
-        self.proxy.setCurrentIndex(1 if profile.use_system_proxy else 0)
-        realtime = QLabel("https://realtime.stockai888.top")
-        realtime.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        advanced_form.addRow("普通/历史/板块", self.address)
-        advanced_form.addRow("原生实时校验", realtime)
-        advanced_form.addRow("代理", self.proxy)
-        self._set_advanced_visible(False)
-        self.advanced.toggled.connect(self._set_advanced_visible)
-        layout.addWidget(self.advanced)
+        self._base_url = str(profile.base_url).rstrip("/")
+        self._use_system_proxy = profile.use_system_proxy
+        self.address: QLineEdit | None = None
+        self.proxy: QComboBox | None = None
+        if show_advanced_settings:
+            self.advanced = QGroupBox("高级设置（接口地址）")
+            self.advanced.setCheckable(True)
+            self.advanced.setChecked(False)
+            advanced_form = QFormLayout(self.advanced)
+            self.address = QLineEdit(self._base_url)
+            self.address.setReadOnly(True)
+            self.proxy = QComboBox()
+            self.proxy.addItem("不使用系统代理", False)
+            self.proxy.addItem("使用系统代理", True)
+            self.proxy.setCurrentIndex(1 if self._use_system_proxy else 0)
+            realtime = QLabel("https://realtime.stockai888.top")
+            realtime.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            advanced_form.addRow("普通/历史/板块", self.address)
+            advanced_form.addRow("原生实时校验", realtime)
+            advanced_form.addRow("代理", self.proxy)
+            self._set_advanced_visible(False)
+            self.advanced.toggled.connect(self._set_advanced_visible)
+            layout.addWidget(self.advanced)
 
         self.save_button.clicked.connect(self._test_and_save)
         self.recheck_button.clicked.connect(self._recheck)
@@ -369,8 +396,16 @@ class _PrimaryEditor(QGroupBox):
         result = self.controller.test_candidate(
             "primary",
             self.secret.text(),
-            base_url=self.address.text().strip(),
-            use_system_proxy=bool(self.proxy.currentData()),
+            base_url=(
+                self.address.text().strip()
+                if self.address is not None
+                else self._base_url
+            ),
+            use_system_proxy=(
+                bool(self.proxy.currentData())
+                if self.proxy is not None
+                else self._use_system_proxy
+            ),
         )
         self.status.setText(result.status_text)
         self.last_test.setText(result.tested_at.strftime("%Y-%m-%d %H:%M:%S"))
@@ -402,6 +437,7 @@ class _PrimaryEditor(QGroupBox):
         self._refresh_capabilities()
 
     def _refresh_capabilities(self) -> None:
+        self.credential_storage.setText(self.controller.credential_storage_status())
         statuses = self.controller.capability_statuses()
         if not statuses:
             if self.controller.credential_present("primary"):
@@ -470,6 +506,8 @@ class DataSourceSettingsDialog(QDialog):
         self,
         controller: DataSourceSettingsController | None = None,
         parent: QWidget | None = None,
+        *,
+        platform: str = sys.platform,
     ) -> None:
         super().__init__(parent)
         self.controller = controller or DataSourceSettingsController()
@@ -480,14 +518,20 @@ class DataSourceSettingsDialog(QDialog):
         title = QLabel("数据接口")
         title.setObjectName("dialogTitle")
         description = QLabel(
-            "只需一个 Tushare Token。Token 仅保存在系统安全存储，"
+            f"只需一个 Tushare Token。Token 仅保存在{self.controller.credential_storage_label}，"
             "测试失败不会替换当前 Token。"
         )
         description.setObjectName("dialogDescription")
         description.setWordWrap(True)
         root.addWidget(title)
         root.addWidget(description)
-        root.addWidget(_PrimaryEditor(self.controller))
+        show_advanced_diagnostics = platform != "darwin"
+        root.addWidget(
+            _PrimaryEditor(
+                self.controller,
+                show_advanced_settings=show_advanced_diagnostics,
+            )
+        )
 
         if (
             not self.controller.credential_present("primary")
@@ -498,25 +542,27 @@ class DataSourceSettingsDialog(QDialog):
             migrate.clicked.connect(self._migrate_legacy)
             root.addWidget(migrate)
 
-        diagnostics = QGroupBox("高级诊断")
-        diagnostics.setCheckable(True)
-        diagnostics.setChecked(False)
-        diagnostic_layout = QFormLayout(diagnostics)
-        self.mode = QComboBox()
-        for label, value in (
-            ("Tushare 数据接口", DataSourceMode.TUSHARE_15000),
-            ("Replay", DataSourceMode.REPLAY),
-            ("旧接口诊断", DataSourceMode.ADVANCED_DIAGNOSTIC),
-            ("通达信诊断", DataSourceMode.TDX_DIAGNOSTIC),
-        ):
-            self.mode.addItem(label, value)
-        current = self.mode.findData(self.controller.settings.mode)
-        self.mode.setCurrentIndex(max(0, current))
-        self.mode.currentIndexChanged.connect(self._mode_changed)
-        diagnostic_layout.addRow("运行方式", self.mode)
-        self.mode.setVisible(False)
-        diagnostics.toggled.connect(self.mode.setVisible)
-        root.addWidget(diagnostics)
+        self.mode: QComboBox | None = None
+        if show_advanced_diagnostics:
+            diagnostics = QGroupBox("高级诊断")
+            diagnostics.setCheckable(True)
+            diagnostics.setChecked(False)
+            diagnostic_layout = QFormLayout(diagnostics)
+            self.mode = QComboBox()
+            for label, value in (
+                ("Tushare 数据接口", DataSourceMode.TUSHARE_15000),
+                ("Replay", DataSourceMode.REPLAY),
+                ("旧接口诊断", DataSourceMode.ADVANCED_DIAGNOSTIC),
+                ("通达信诊断", DataSourceMode.TDX_DIAGNOSTIC),
+            ):
+                self.mode.addItem(label, value)
+            current = self.mode.findData(self.controller.settings.mode)
+            self.mode.setCurrentIndex(max(0, current))
+            self.mode.currentIndexChanged.connect(self._mode_changed)
+            diagnostic_layout.addRow("运行方式", self.mode)
+            self.mode.setVisible(False)
+            diagnostics.toggled.connect(self.mode.setVisible)
+            root.addWidget(diagnostics)
         root.addStretch()
 
         close = QPushButton("关闭")
@@ -538,6 +584,8 @@ class DataSourceSettingsDialog(QDialog):
             )
 
     def _mode_changed(self) -> None:
+        if self.mode is None:
+            return
         mode = self.mode.currentData()
         if isinstance(mode, DataSourceMode):
             self.controller.set_mode(mode)

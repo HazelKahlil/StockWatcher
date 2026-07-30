@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QPoint, QSettings, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QGuiApplication, QMouseEvent
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QMouseEvent, QScreen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .presenter import CandidateRow, format_change
@@ -121,7 +121,7 @@ class AlertPopup(QWidget):
         bottom.addWidget(open_list)
         root.addLayout(bottom)
 
-    def show_at_bottom_right(self) -> None:
+    def show_at_bottom_right(self, *, preferred_screen: QScreen | None = None) -> None:
         stored = self._settings.value("alert/position")
         if isinstance(stored, QPoint) and any(
             screen.availableGeometry().contains(stored)
@@ -130,7 +130,10 @@ class AlertPopup(QWidget):
             self.move(stored)
             self.show()
             return
-        screen = self.screen() or QGuiApplication.primaryScreen()
+        # A popup created as a Tool window does not reliably inherit its
+        # parent's display on macOS.  Prefer the main window's current screen
+        # so a multi-monitor user sees all three candidates beside the app.
+        screen = preferred_screen or self.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
             self.move(area.right() - self.width() - 18, area.bottom() - self.height() - 18)

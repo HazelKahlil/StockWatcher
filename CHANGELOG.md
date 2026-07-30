@@ -6,15 +6,19 @@
 
 ### Security
 
-- 普通 UI 收敛为一个 Tushare Token；Pro 代理与原生实时共用 Windows Credential Manager
-  中的 Primary 凭据。SDK 调用只临时注入内存并恢复，不调用 `set_token()`，不把 Token
-  写入源码、配置、SQLite、日志、截图、fixture、命令行或安装包。
+- 普通 UI 收敛为一个 Tushare Token；Pro 代理与原生实时共用系统安全存储中的 Primary
+  凭据（Windows Credential Manager / macOS 系统钥匙串）。SDK 调用只临时注入内存并恢复，
+  不调用 `set_token()`，不把 Token 写入源码、配置、SQLite、日志、截图、fixture、命令行或安装包。
 
 ### Changed
 
 - V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
   `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
   TdxQuant 只留在高级诊断。
+- Human Owner 2026-07-30 改为 Mac-first：共享连接门返修先在 macOS 验证，再同步给
+  Windows；Windows 真实验收仍为 `FAIL`，不得由 Mac 结果覆盖。
+- Mac 首次无 Token 启动显示非阻塞的简单数据接口页；网络中断会停止定时扫描，恢复后清除
+  旧基线并等待连续三轮新鲜完整数据。
 - 固定提醒时间从历史规格的 14:50 改为 Human Owner 最终确认的 14:45；普通排名变化
   只更新主界面，固定时点和强异动弹窗始终包含完整三只。
 - SQLite 升级为 v3，候选快照及三只明细原子保存，并提供 30 天提醒历史和每日总结。
@@ -36,6 +40,9 @@
 
 ### Added
 
+- Mac V1 平台层：Application Support/Logs 路径分离、实际 Keychain backend 校验、系统钥匙串
+  文案、单实例、Dock/应用菜单、关闭隐藏/显式退出、右下角多屏弹窗、次要 Notification Center
+  和睡眠/网络恢复保护；默认 Tushare 入口延迟加载 Windows TdxQuant 诊断模块。
 - 全市场无重叠扫描协调器、15 分钟实时快照环形缓冲、历史分钟预热，以及确定性的
   1/3/5 分钟涨速、突然加速、成交放大、当日前高、三日新高和相对板块强弱。
 - 行业/概念 SectorEngine、板块硬门、100 分候选引擎、正式/补位三席、同板块最多两只、

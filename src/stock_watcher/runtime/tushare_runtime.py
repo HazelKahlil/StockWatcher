@@ -37,6 +37,7 @@ from .data_health import DataHealthTracker
 from .scan_coordinator import (
     FullMarketScanCoordinator,
     IncompleteScanError,
+    ScanCancelledError,
     ScanInProgressError,
 )
 
@@ -483,6 +484,19 @@ class TushareV1Runtime:
         self.universe = self.loader.load()
         return self.universe
 
+    def request_scan_cancellation(self) -> None:
+        self.coordinator.cancel_current_scan()
+
+    def reset_for_external_recovery(self) -> None:
+        """Clear volatile baselines while retaining validated static context."""
+        self.request_scan_cancellation()
+        self.buffer.clear()
+        self.pipeline.reset()
+        self.stable_selector.reset()
+        self.movement_detector.reset()
+        self.health.reset_for_recovery()
+        self._minutes_warmed = False
+
     def scan_once(self) -> ScanOutcome:
         if self.universe is None:
             self.prepare()
@@ -603,6 +617,8 @@ def _safe_scan_failure(error: Exception) -> str:
         return error.reason.value
     if isinstance(error, ScanInProgressError):
         return "overlap"
+    if isinstance(error, ScanCancelledError):
+        return "cancelled"
     if isinstance(error, SnapshotSequenceError):
         return "sequence"
     if isinstance(error, IncompleteScanError):

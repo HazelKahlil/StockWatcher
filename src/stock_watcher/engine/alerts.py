@@ -47,6 +47,12 @@ class StrongMovementDetector:
     _last_sector_score: dict[str, float] = field(default_factory=dict)
     _last_source_ts: datetime | None = None
 
+    def reset(self) -> None:
+        """Forget pre-disconnect baselines so recovery cannot emit old events."""
+        self._last_velocity = {}
+        self._last_sector_score = {}
+        self._last_source_ts = None
+
     def evaluate(self, batch: CandidateBatch) -> StrongMovementEvent | None:
         if self._last_source_ts is not None and batch.source_ts <= self._last_source_ts:
             return None

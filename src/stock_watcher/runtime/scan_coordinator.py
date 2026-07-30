@@ -29,6 +29,10 @@ class IncompleteScanError(RuntimeError):
     pass
 
 
+class ScanCancelledError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class MarketScan:
     scan_id: str
@@ -69,6 +73,13 @@ class FullMarketScanCoordinator:
         self.max_source_span_seconds = max_source_span_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
         self._scan_lock = threading.Lock()
+        self._cancellation_lock = threading.Lock()
+        self._cancellation_generation = 0
+
+    def cancel_current_scan(self) -> None:
+        """Prevent an in-flight response from becoming a valid market snapshot."""
+        with self._cancellation_lock:
+            self._cancellation_generation += 1
 
     def fetch_once(self, securities: tuple[Security, ...]) -> MarketScan:
         if not securities:
@@ -76,11 +87,18 @@ class FullMarketScanCoordinator:
         if not self._scan_lock.acquire(blocking=False):
             raise ScanInProgressError("a full-market scan is already running")
         try:
-            return self._fetch_locked(securities)
+            with self._cancellation_lock:
+                generation = self._cancellation_generation
+            return self._fetch_locked(securities, generation)
         finally:
             self._scan_lock.release()
 
-    def _fetch_locked(self, securities: tuple[Security, ...]) -> MarketScan:
+    def _fetch_locked(
+        self,
+        securities: tuple[Security, ...],
+        cancellation_generation: int,
+    ) -> MarketScan:
+        self._raise_if_cancelled(cancellation_generation)
         requested = {security.code: security for security in securities}
         if len(requested) != len(securities):
             raise ValueError("security universe contains duplicate codes")
@@ -108,6 +126,7 @@ class FullMarketScanCoordinator:
                 method="SDK",
             )
         )
+        self._raise_if_cancelled(cancellation_generation)
         completed = _shanghai(self._clock())
         seen: set[str] = set()
         duplicates = 0
@@ -158,6 +177,11 @@ class FullMarketScanCoordinator:
             max_source_age_seconds=max_age,
             elapsed_seconds=result.elapsed_seconds,
         )
+
+    def _raise_if_cancelled(self, generation: int) -> None:
+        with self._cancellation_lock:
+            if generation != self._cancellation_generation:
+                raise ScanCancelledError("full-market scan was cancelled during recovery")
 
 
 def _quote(

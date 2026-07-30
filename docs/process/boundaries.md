@@ -41,6 +41,10 @@
 
 ## 已取得的人类确认
 
+- 2026-07-30：Human Owner 明确将执行顺序改为 Mac-first：在 macOS 上先验证已批准的
+  Tushare Pro/SDK 主路线、真实 Top3 和系统适配，随后只把共享连接门返修同步到 Windows。
+  该确认不把 Mac 结果扩展为 Windows、TdxQuant/M0、Windows 通知或安装通过，也不授权
+  新供应商、交易账户、自动交易或凭据回显。
 - 2026-07-29：Human Owner 在 Windows 现场明确授权按供应商语雀文档验证并使用
   Tushare SDK 原生实时方法。授权只覆盖只读 A 股候选观察；不覆盖交易账户、下单、
   任意站点抓取、绕过访问控制或未经 M0 的生产放行。

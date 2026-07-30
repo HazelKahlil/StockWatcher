@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
+from threading import Lock
 
 from stock_watcher.config import DataSourceMode, DataSourceSettings
 from stock_watcher.domain import SHANGHAI, HealthState
@@ -41,7 +43,7 @@ from stock_watcher.security import (
 )
 from stock_watcher.storage import SQLiteStore
 
-from .tdx_session import TqConnectionState
+from .connection_state import ConnectionState as TqConnectionState
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,11 +60,11 @@ RuntimeFactory = Callable[
 
 
 class TushareV1Session:
-    """Ordinary Windows session that continuously produces real stable Top3."""
+    """Desktop session that continuously produces real stable Top3."""
 
     source_label = "A股全市场实时观察"
     phase_label = "非交易时段"
-    app_badge = "Windows V1"
+    app_badge = "Desktop V1"
     window_title = "StockWatcher · 当前观察"
     is_replay = False
     supports_manual_fetch = False
@@ -134,6 +136,13 @@ class TushareV1Session:
         self.last_fetch_detail = "尚未完成实时扫描。"
         self.status_issues: tuple[str, ...] = ()
         self._failure_active = False
+        self._platform_recovery_lock = Lock()
+        self._platform_recovery_reason: str | None = None
+        self._network_interrupted = False
+        self.app_badge = "Mac V1" if sys.platform == "darwin" else "Windows V1"
+        self._alert_client_platform = (
+            "macos-desktop" if sys.platform == "darwin" else "windows-desktop"
+        )
         self._refresh_credential_state()
 
     def provider_changed(self, mode: DataSourceMode) -> None:
@@ -150,6 +159,14 @@ class TushareV1Session:
         self.health_detail = "Token或运行方式已变化，旧实时基线已清空。"
         self._refresh_credential_state()
 
+    @property
+    def requires_data_source_setup(self) -> bool:
+        """Open the simple Token page on first macOS launch without a Token."""
+        return (
+            self.settings.mode is DataSourceMode.TUSHARE_15000
+            and not self._primary_present()
+        )
+
     def stop(self) -> None:
         self.state = HealthState.STOPPED
         self.data_gate_label = "数据中断"
@@ -161,6 +178,37 @@ class TushareV1Session:
         self.connection_state = TqConnectionState.CHECKING
         self.data_gate_label = "正在检测"
         self.candidate_gate_label = "准备中"
+
+    def begin_platform_recovery(self, reason: str) -> None:
+        """Request a fresh three-round baseline after macOS wake or reconnect."""
+        with self._platform_recovery_lock:
+            self._platform_recovery_reason = reason
+            self._network_interrupted = False
+        if self._runtime is not None:
+            self._runtime.request_scan_cancellation()
+        self.pending_alert = None
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.data_gate_label = "重新预热"
+        self.candidate_gate_label = "暂停新候选"
+        self.connection_detail = reason
+        self.health_detail = reason
+        self.status_issues = ("旧实时基线已清理；需连续3轮新鲜完整数据后恢复。",)
+
+    def mark_network_interrupted(self, reason: str) -> None:
+        """Fail closed on a platform-reported network interruption."""
+        with self._platform_recovery_lock:
+            self._network_interrupted = True
+        if self._runtime is not None:
+            self._runtime.request_scan_cancellation()
+        self.pending_alert = None
+        self.state = HealthState.STOPPED
+        self.connection_state = TqConnectionState.DISCONNECTED
+        self.data_gate_label = "数据中断"
+        self.candidate_gate_label = "保留上次结果" if self.batch else "无新结果"
+        self.connection_detail = reason
+        self.health_detail = reason
+        self.status_issues = ("网络恢复后将清理旧基线并重新预热。",)
 
     def recover(self) -> None:
         self._run(force=False)
@@ -178,6 +226,11 @@ class TushareV1Session:
 
     def _run(self, *, force: bool) -> None:
         now = _shanghai(self._clock())
+        if self._is_network_interrupted():
+            # Qt's reachability signal already placed the UI in STOPPED.  The
+            # scheduled worker must not probe or scan again until a positive
+            # recovery signal has cleared this external interruption.
+            return
         self.last_connection_check = now
         if self.settings.mode is not DataSourceMode.TUSHARE_15000:
             self.state = HealthState.WARMING
@@ -195,6 +248,7 @@ class TushareV1Session:
         if self._capability_checks_required and not self._capabilities_ready():
             self._set_capability_warming()
             return
+        self._apply_pending_platform_recovery()
         if self._runtime is None or self._provider is None:
             self._runtime, self._provider = self._runtime_factory(
                 self.settings,
@@ -258,6 +312,15 @@ class TushareV1Session:
                 return
         self.last_fetch_at = now
         outcome = self._runtime.scan_once()
+        if self._is_network_interrupted():
+            # An interruption landed while the request was in flight.  Its
+            # cancellation outcome must not overwrite the fail-closed state.
+            return
+        if self._apply_pending_platform_recovery():
+            # A sleep/wake or network event arrived while the request was in
+            # flight.  The cancelled response is intentionally not ranked,
+            # persisted or allowed to trigger an old alert.
+            return
         if self._runtime.universe is not None:
             self._prepared_date = now.date()
         self.state = outcome.health
@@ -414,7 +477,7 @@ class TushareV1Session:
             snapshot_id,
             now.isoformat(),
             decision,
-            "windows-desktop",
+            self._alert_client_platform,
             trigger_type=trigger.value,
         )
         self.pending_alert = PendingUiAlert(
@@ -503,6 +566,28 @@ class TushareV1Session:
 
     def _primary_present(self) -> bool:
         return bool(self._primary_secret())
+
+    def _apply_pending_platform_recovery(self) -> bool:
+        with self._platform_recovery_lock:
+            reason = self._platform_recovery_reason
+            self._platform_recovery_reason = None
+        if reason is None:
+            return False
+        if self._runtime is not None:
+            self._runtime.reset_for_external_recovery()
+        self.pending_alert = None
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.data_gate_label = "重新预热"
+        self.candidate_gate_label = "暂停新候选"
+        self.connection_detail = reason
+        self.health_detail = reason
+        self.status_issues = ("旧实时基线已清理；需连续3轮新鲜完整数据后恢复。",)
+        return True
+
+    def _is_network_interrupted(self) -> bool:
+        with self._platform_recovery_lock:
+            return self._network_interrupted
 
     def _capabilities_ready(self) -> bool:
         if self.capability_checks is None:

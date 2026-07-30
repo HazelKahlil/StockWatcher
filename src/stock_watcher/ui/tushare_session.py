@@ -14,6 +14,7 @@ from stock_watcher.security import (
 )
 from stock_watcher.storage import SQLiteStore
 
+from .connection_state import ConnectionState as TqConnectionState
 from .data_source_status import (
     CredentialTester,
     CredentialTestResult,
@@ -21,7 +22,6 @@ from .data_source_status import (
     TushareCredentialTester,
     TushareNativeRealtimeTester,
 )
-from .tdx_session import TqConnectionState
 
 
 class TushareDiagnosticSession:

@@ -30,6 +30,8 @@
 - 已完成（本地待同步）：[visions/v0.2-mac-local-alpha/README.md](visions/v0.2-mac-local-alpha/README.md)
 - 当前共享返修：
   [visions/v0.4.1-shared-connection-gate/README.md](visions/v0.4.1-shared-connection-gate/README.md)
+- 当前 Mac V1：
+  [visions/v0.4.2-macos-v1-port/README.md](visions/v0.4.2-macos-v1-port/README.md)
 - Windows V1 真实 Top3（真实验收仍未通过）：
   [visions/v0.4-v1-feature-complete/README.md](visions/v0.4-v1-feature-complete/README.md)
 - 可选 TdxQuant 诊断历史：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)

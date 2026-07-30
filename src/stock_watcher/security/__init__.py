@@ -4,6 +4,8 @@ from .credential_store import (
     SUPER_CREDENTIAL,
     CredentialRef,
     CredentialStore,
+    CredentialStoreBackendError,
+    CredentialStoreBackendStatus,
     KeyringCredentialStore,
     MemoryCredentialStore,
     credential_fingerprint,
@@ -12,6 +14,8 @@ from .credential_store import (
 __all__ = [
     "CredentialRef",
     "CredentialStore",
+    "CredentialStoreBackendError",
+    "CredentialStoreBackendStatus",
     "KeyringCredentialStore",
     "MemoryCredentialStore",
     "FAST_CREDENTIAL",

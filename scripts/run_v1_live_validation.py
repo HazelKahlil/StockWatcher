@@ -5,16 +5,30 @@ import hashlib
 import json
 import statistics
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as wall_time
 from pathlib import Path
+from typing import Protocol
 
 from stock_watcher.config import DataSourceSettings
 from stock_watcher.domain import SHANGHAI, HealthState
-from stock_watcher.providers.tushare import ProProxyTransport, Tushare15000Provider
+from stock_watcher.providers.tushare import (
+    CAPABILITY_ORDER,
+    ApplicationRequestBudget,
+    CapabilityCheckCoordinator,
+    ProProxyTransport,
+    ProviderCapability,
+    ProviderCapabilityState,
+    ProviderCapabilityStatus,
+    Tushare15000Provider,
+)
+from stock_watcher.providers.tushare.models import TransportResult
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
 )
+from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 from stock_watcher.runtime import (
     DataHealthConfig,
     DataHealthTracker,
@@ -23,11 +37,60 @@ from stock_watcher.runtime import (
     TushareV1Runtime,
 )
 from stock_watcher.security import (
-    FAST_CREDENTIAL,
     PRIMARY_CREDENTIAL,
     CredentialRef,
+    CredentialStore,
     KeyringCredentialStore,
 )
+
+
+class RealtimeExecutor(Protocol):
+    def execute(self, request: TransportRequest) -> TransportResult: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MarketProgress:
+    """Aggregate full-market quote movement without retaining raw payload rows."""
+
+    record_count: int
+    priced_count: int
+    price_sum: float
+    volume_shares: float
+    amount_cny: float
+
+    def as_record(self, previous: MarketProgress | None) -> dict[str, float | int | None]:
+        return {
+            "record_count": self.record_count,
+            "priced_count": self.priced_count,
+            "price_sum": self.price_sum,
+            "price_sum_delta": _delta(self.price_sum, previous.price_sum)
+            if previous is not None
+            else None,
+            "volume_shares": self.volume_shares,
+            "volume_shares_delta": _delta(self.volume_shares, previous.volume_shares)
+            if previous is not None
+            else None,
+            "amount_cny": self.amount_cny,
+            "amount_cny_delta": _delta(self.amount_cny, previous.amount_cny)
+            if previous is not None
+            else None,
+        }
+
+
+class MarketTelemetryTransport:
+    """Expose only aggregate market movement for the live-validation report."""
+
+    def __init__(self, delegate: RealtimeExecutor) -> None:
+        self._delegate = delegate
+        self.latest: MarketProgress | None = None
+
+    def clear(self) -> None:
+        self.latest = None
+
+    def execute(self, request: TransportRequest) -> TransportResult:
+        result = self._delegate.execute(request)
+        self.latest = _market_progress(result)
+        return result
 
 
 def main() -> int:
@@ -50,9 +113,9 @@ def main() -> int:
         return 2
 
     store = KeyringCredentialStore()
-    reference = _credential_reference(store)
+    reference = _primary_credential_reference(store)
     if reference is None:
-        print("Windows凭据管理器中没有可用的Tushare Token。")
+        print(f"{_storage_label(store)}中没有已保存的统一 Tushare Token。")
         return 2
 
     settings = DataSourceSettings()
@@ -60,13 +123,22 @@ def main() -> int:
     def secret_getter() -> str | None:
         return store.get(reference)
 
-    pro = ProProxyTransport(settings.primary_profile, secret_getter)
-    realtime = NativeRealtimeTransport(settings.native_realtime_profile, secret_getter)
+    pro, realtime, request_budget = _build_product_transports(settings, secret_getter)
     provider = Tushare15000Provider(pro, realtime)
+    capability_checks = CapabilityCheckCoordinator(
+        pro,
+        realtime,
+        request_budget=request_budget,
+    )
+    # This is deliberately serial and reports each independent capability.  A
+    # 429 stops at the affected capability, leaves the saved Token untouched,
+    # and is recorded below rather than being misreported as an invalid Token.
+    capability_checks.run_until_blocked()
+    telemetry = MarketTelemetryTransport(realtime)
     runtime = TushareV1Runtime(
         TushareBootstrapLoader(provider),
         FullMarketScanCoordinator(
-            realtime,
+            telemetry,
             minimum_coverage_ratio=0.99,
             max_source_span_seconds=settings.full_scan_max_seconds,
         ),
@@ -83,10 +155,13 @@ def main() -> int:
     deadline = start_monotonic + args.duration_minutes * 60.0
     rounds: list[dict[str, object]] = []
     slot = 0
+    previous_progress: MarketProgress | None = None
     while time.monotonic() < deadline:
         slot_started = time.monotonic()
         observed_at = datetime.now(SHANGHAI)
+        telemetry.clear()
         outcome = runtime.scan_once()
+        progress = telemetry.latest
         stable_codes = (
             tuple(candidate.code for candidate in outcome.batch.candidates)
             if outcome.batch
@@ -107,9 +182,13 @@ def main() -> int:
                 ),
                 "formal": candidate.is_formal,
                 "sector": candidate.sector,
+                "sector_code": candidate.sector_code,
+                "sector_type": candidate.sector_type,
                 "price": candidate.price,
                 "change_pct": candidate.change_pct,
                 "velocity_1m_pct": candidate.velocity_pct,
+                "core_score": candidate.core_score,
+                "total_score": candidate.total_score,
                 "fund_label": candidate.fund_label,
                 "reasons": list(candidate.reasons[:5]),
             }
@@ -129,6 +208,11 @@ def main() -> int:
                 "source_age_seconds": outcome.source_age_seconds,
                 "source_span_seconds": outcome.source_span_seconds,
                 "failure_reason": outcome.failure_reason,
+                "market_progress": (
+                    progress.as_record(previous_progress)
+                    if progress is not None
+                    else None
+                ),
                 "stable_replacement": bool(
                     stable_codes and raw_codes and stable_codes != raw_codes
                 ),
@@ -144,6 +228,12 @@ def main() -> int:
                 "top3": candidates,
             }
         )
+        if progress is not None:
+            previous_progress = progress
+        # A first pass that hit 429 leaves its cursor on the failed capability.
+        # This synchronous retry becomes a no-op until its Retry-After/default
+        # cooldown has elapsed, then resumes without overlapping the scan.
+        capability_checks.run_until_blocked()
         slot += 1
         next_slot = start_monotonic + slot * args.interval_seconds
         remaining = next_slot - time.monotonic()
@@ -188,6 +278,8 @@ def main() -> int:
         ),
         default=None,
     )
+    capability_statuses = capability_checks.statuses()
+    all_capabilities_available = _all_capabilities_available(capability_statuses)
     metrics = {
         "rounds": len(rounds),
         "complete_rounds": len(complete_rounds),
@@ -203,6 +295,14 @@ def main() -> int:
         ),
         "overlapping_scans": sum(
             row.get("failure_reason") == "overlap" for row in rounds
+        ),
+        "rate_limited_rounds": sum(
+            row.get("failure_reason") == "rate_limited" for row in rounds
+        ),
+        "failed_rounds": sum(row.get("failure_reason") is not None for row in rounds),
+        "rate_limited_capabilities": sum(
+            status.state is ProviderCapabilityState.RATE_LIMITED
+            for status in capability_statuses.values()
         ),
     }
     fund_capability = (
@@ -221,22 +321,32 @@ def main() -> int:
         and metrics["duplicate_rejections"] == 0
         and metrics["overlapping_scans"] == 0
         and bool(candidate_rounds)
+        and all_capabilities_available
     )
     report = {
-        "schema_version": "stockwatcher-v1-live-validation-1",
+        "schema_version": "stockwatcher-v1-live-validation-2",
         "started_at": started.isoformat(),
         "finished_at": finished.isoformat(),
         "duration_minutes": args.duration_minutes,
         "interval_seconds": args.interval_seconds,
-        "verdict": "PASS" if passed else "PASS_WITH_LIMITS",
-        "credential_source": (
-            "primary"
-            if reference == PRIMARY_CREDENTIAL
-            else "legacy-fast-memory-alias"
-        ),
+        "verdict": "PASS" if passed else "INCOMPLETE",
+        "credential_source": "platform_secure_storage_primary",
+        "credential_storage": _storage_label(store),
         "credential_persisted_or_printed": False,
         "raw_market_payload_persisted": False,
-        "provider_route": "tushare.realtime_quote:sina",
+        "provider_routes": {
+            "ordinary_history_sector": "https://fastapic.stockai888.top",
+            "realtime": "tushare.realtime_quote:sina",
+        },
+        "request_budget": {
+            "shared_across_pro_and_realtime": True,
+            "request_start_interval_seconds": request_budget.min_interval_seconds,
+            "default_429_cooldown_seconds": (
+                ApplicationRequestBudget.default_rate_limit_cooldown_seconds
+            ),
+        },
+        "capability_checks": _capability_records(capability_statuses),
+        "all_capabilities_available": all_capabilities_available,
         "fund_capability": (
             {
                 "capability": fund_capability.capability.value,
@@ -257,18 +367,105 @@ def main() -> int:
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     args.output.write_text(rendered + "\n", encoding="utf-8", newline="\n")
     digest = hashlib.sha256(args.output.read_bytes()).hexdigest()
+    capability_checks.shutdown()
     print(f"report={args.output}")
     print(f"sha256={digest}")
     print(f"verdict={report['verdict']}")
     return 0 if passed else 1
 
 
-def _credential_reference(store: KeyringCredentialStore) -> CredentialRef | None:
-    if store.get(PRIMARY_CREDENTIAL):
-        return PRIMARY_CREDENTIAL
-    if store.get(FAST_CREDENTIAL):
-        return FAST_CREDENTIAL
-    return None
+def _build_product_transports(
+    settings: DataSourceSettings,
+    secret_getter: Callable[[], str | None],
+) -> tuple[ProProxyTransport, NativeRealtimeTransport, ApplicationRequestBudget]:
+    budget = ApplicationRequestBudget(settings.request_budget_interval_seconds)
+    return (
+        ProProxyTransport(
+            settings.primary_profile,
+            secret_getter,
+            request_budget=budget,
+        ),
+        NativeRealtimeTransport(
+            settings.native_realtime_profile,
+            secret_getter,
+            request_budget=budget,
+        ),
+        budget,
+    )
+
+
+def _primary_credential_reference(store: CredentialStore) -> CredentialRef | None:
+    return PRIMARY_CREDENTIAL if store.get(PRIMARY_CREDENTIAL) else None
+
+
+def _storage_label(store: object) -> str:
+    label = getattr(store, "storage_label", None)
+    return label if isinstance(label, str) and label else "系统安全存储"
+
+
+def _capability_records(
+    statuses: dict[ProviderCapability, ProviderCapabilityStatus],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "capability": capability.value,
+            "state": status.state.value,
+            "record_count": status.record_count,
+            "elapsed_seconds": status.elapsed_seconds,
+            "safe_reason": status.safe_reason,
+            "checked_at": status.checked_at.isoformat()
+            if status.checked_at is not None
+            else None,
+            "last_success_at": status.last_success_at.isoformat()
+            if status.last_success_at is not None
+            else None,
+            "next_retry_at": status.next_retry_at.isoformat()
+            if status.next_retry_at is not None
+            else None,
+        }
+        for capability in CAPABILITY_ORDER
+        if (status := statuses.get(capability)) is not None
+    ]
+
+
+def _all_capabilities_available(
+    statuses: dict[ProviderCapability, ProviderCapabilityStatus],
+) -> bool:
+    return all(
+        statuses.get(capability, ProviderCapabilityStatus(capability)).state
+        is ProviderCapabilityState.AVAILABLE
+        for capability in CAPABILITY_ORDER
+    )
+
+
+def _market_progress(result: TransportResult) -> MarketProgress:
+    prices = [_as_float(row.get("price")) for row in result.records]
+    return MarketProgress(
+        record_count=len(result.records),
+        priced_count=sum(value is not None and value > 0 for value in prices),
+        price_sum=round(sum(value or 0.0 for value in prices), 6),
+        volume_shares=round(
+            sum(_as_float(row.get("vol")) or 0.0 for row in result.records),
+            6,
+        ),
+        amount_cny=round(
+            sum(_as_float(row.get("amount")) or 0.0 for row in result.records),
+            6,
+        ),
+    )
+
+
+def _as_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _delta(current: float, previous: float) -> float:
+    return round(current - previous, 6)
 
 
 def _percentile(values: list[float], percentile: float) -> float:

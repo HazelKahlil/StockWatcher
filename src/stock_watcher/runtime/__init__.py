@@ -4,6 +4,7 @@ from .scan_coordinator import (
     FullMarketScanCoordinator,
     IncompleteScanError,
     MarketScan,
+    ScanCancelledError,
     ScanInProgressError,
 )
 from .tushare_runtime import (
@@ -19,6 +20,7 @@ __all__ = [
     "FullMarketScanCoordinator",
     "IncompleteScanError",
     "MarketScan",
+    "ScanCancelledError",
     "ScanInProgressError",
     "MarketSessionSchedule",
     "RuntimeUniverse",

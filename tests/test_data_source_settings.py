@@ -8,7 +8,13 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QComboBox,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+)
 
 from stock_watcher.config import DataSourceMode, DataSourceSettings  # noqa: E402
 from stock_watcher.providers.tushare import (  # noqa: E402
@@ -86,7 +92,7 @@ def test_data_source_dialog_has_one_hidden_token_and_advanced_modes() -> None:
     controller = DataSourceSettingsController(
         store=MemoryCredentialStore(), tester=NoNetworkTester()
     )
-    dialog = DataSourceSettingsDialog(controller)
+    dialog = DataSourceSettingsDialog(controller, platform="win32")
     password_fields = [
         field
         for field in dialog.findChildren(QLineEdit)
@@ -112,6 +118,24 @@ def test_data_source_dialog_has_one_hidden_token_and_advanced_modes() -> None:
         "旧接口诊断",
         "通达信诊断",
     ]
+    dialog.close()
+    app.processEvents()
+
+
+def test_macos_data_source_dialog_hides_urls_and_advanced_diagnostics() -> None:
+    app = application()
+    dialog = DataSourceSettingsDialog(
+        DataSourceSettingsController(store=MemoryCredentialStore(), tester=NoNetworkTester()),
+        platform="darwin",
+    )
+
+    copy = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    group_titles = " ".join(group.title() for group in dialog.findChildren(QGroupBox))
+
+    assert not dialog.findChildren(QComboBox)
+    assert "接口地址" not in copy
+    assert "接口地址" not in group_titles
+    assert "高级诊断" not in group_titles
     dialog.close()
     app.processEvents()
 

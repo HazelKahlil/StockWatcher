@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -10,7 +11,11 @@ from typing import Protocol
 from stock_watcher.config import DataSourceMode, DataSourceSettings
 from stock_watcher.domain import SHANGHAI
 from stock_watcher.engine import build_post_close_review
-from stock_watcher.providers.tushare import ProProxyTransport, Tushare15000Provider
+from stock_watcher.providers.tushare import (
+    ApplicationRequestBudget,
+    ProProxyTransport,
+    Tushare15000Provider,
+)
 from stock_watcher.providers.tushare.capability_router import CapabilityRouter
 from stock_watcher.providers.tushare.errors import ProviderError
 from stock_watcher.providers.tushare.models import TransportResult
@@ -20,10 +25,10 @@ from stock_watcher.providers.tushare.native_realtime_transport import (
 from stock_watcher.providers.tushare.provider import TushareProvider
 from stock_watcher.providers.tushare.super_transport import SuperTransport
 from stock_watcher.security import (
-    FAST_CREDENTIAL,
     PRIMARY_CREDENTIAL,
     SUPER_CREDENTIAL,
     CredentialRef,
+    CredentialStore,
     KeyringCredentialStore,
 )
 from stock_watcher.storage import SQLiteStore
@@ -66,13 +71,12 @@ def main() -> int:
 
     store = KeyringCredentialStore()
     advanced_diagnostic = bool(args.advanced_super_diagnostic_fallback)
-    reference = (
-        SUPER_CREDENTIAL
-        if advanced_diagnostic and store.get(SUPER_CREDENTIAL)
-        else _credential_reference(store)
-    )
+    if advanced_diagnostic:
+        reference = SUPER_CREDENTIAL if store.get(SUPER_CREDENTIAL) else None
+    else:
+        reference = _primary_credential_reference(store)
     if reference is None:
-        print("Windows凭据管理器中没有可用的Tushare Token。")
+        print(f"{_storage_label(store)}中没有已保存的统一 Tushare Token。")
         return 2
     settings = DataSourceSettings()
 
@@ -90,16 +94,7 @@ def main() -> int:
             )
         )
     else:
-        pro = ProProxyTransport(
-            settings.primary_profile,
-            secret_getter,
-            min_interval_seconds=2.0,
-        )
-        native = NativeRealtimeTransport(
-            settings.native_realtime_profile,
-            secret_getter,
-        )
-        product_provider = Tushare15000Provider(pro, native)
+        product_provider, request_budget = _build_product_provider(settings, secret_getter)
         provider = product_provider
     trade_date: date = args.trade_date
     compact = trade_date.strftime("%Y%m%d")
@@ -199,12 +194,11 @@ def main() -> int:
     )
     record = review.as_record()
     record["credential_source"] = (
-        "legacy-super-advanced-diagnostic"
+        "platform_secure_storage_super_advanced_diagnostic"
         if advanced_diagnostic
-        else "primary"
-        if reference == PRIMARY_CREDENTIAL
-        else "legacy-fast-memory-alias"
+        else "platform_secure_storage_primary"
     )
+    record["credential_storage"] = _storage_label(store)
     record["provider_route"] = (
         "https://ai-tool.indevs.in/tushare/pro (advanced diagnostic only)"
         if advanced_diagnostic
@@ -227,6 +221,14 @@ def main() -> int:
         "mechanical_jump_exclusions": len(mechanical_codes),
         "optional_failures": optional_failures,
     }
+    if not advanced_diagnostic:
+        record["request_budget"] = {
+            "shared_across_pro_and_realtime": True,
+            "request_start_interval_seconds": request_budget.min_interval_seconds,
+            "default_429_cooldown_seconds": (
+                ApplicationRequestBudget.default_rate_limit_cooldown_seconds
+            ),
+        }
     record["minute_history_probe"] = {
         "trade_date": trade_date.isoformat(),
         "status": "unavailable",
@@ -257,12 +259,31 @@ def main() -> int:
     return 0
 
 
-def _credential_reference(store: KeyringCredentialStore) -> CredentialRef | None:
-    if store.get(PRIMARY_CREDENTIAL):
-        return PRIMARY_CREDENTIAL
-    if store.get(FAST_CREDENTIAL):
-        return FAST_CREDENTIAL
-    return None
+def _build_product_provider(
+    settings: DataSourceSettings,
+    secret_getter: Callable[[], str | None],
+) -> tuple[Tushare15000Provider, ApplicationRequestBudget]:
+    budget = ApplicationRequestBudget(settings.request_budget_interval_seconds)
+    pro = ProProxyTransport(
+        settings.primary_profile,
+        secret_getter,
+        request_budget=budget,
+    )
+    native = NativeRealtimeTransport(
+        settings.native_realtime_profile,
+        secret_getter,
+        request_budget=budget,
+    )
+    return Tushare15000Provider(pro, native), budget
+
+
+def _primary_credential_reference(store: CredentialStore) -> CredentialRef | None:
+    return PRIMARY_CREDENTIAL if store.get(PRIMARY_CREDENTIAL) else None
+
+
+def _storage_label(store: object) -> str:
+    label = getattr(store, "storage_label", None)
+    return label if isinstance(label, str) and label else "系统安全存储"
 
 
 def _trade_date(value: str) -> date:

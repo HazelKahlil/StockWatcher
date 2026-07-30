@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 
 from stock_watcher.config import DataSourceMode
@@ -18,13 +17,9 @@ from stock_watcher.providers.tdxquant import (
 from stock_watcher.providers.tdxquant_preflight import CheckStatus, run_preflight
 from stock_watcher.storage import SQLiteStore
 
+from .connection_state import ConnectionState as TqConnectionState
 
-class TqConnectionState(StrEnum):
-    NOT_APPLICABLE = "不适用"
-    CHECKING = "检测中"
-    CONNECTED = "已连接"
-    DISCONNECTED = "未连接"
-
+__all__ = ["TdxDiagnosticSession", "TqConnectionState"]
 
 _CHECK_LABELS = {
     "operating_system": "Windows 环境",

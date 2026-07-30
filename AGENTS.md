@@ -4,12 +4,15 @@
 
 ## 项目
 
-- 本地路径：`C:\Users\19580\Documents\Codex\StockWatcher\work\stockwatcher-fresh-1e370ee`
-- 当前开发电脑：Windows；真实交易时段、通知、安装和截图证据都必须来自本机。
+- 本地路径：由当前恢复工作区决定；冻结 Windows 源基线为
+  `5b20b707e83baa16b1486894f8e53f343830d67c`。
+- 当前开发电脑：Mac。真实行情、通知、安装和截图证据必须标明本机 macOS；不能外推为
+  Windows 结果。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：`feat/windows-v1-real-candidates` 从 `eef4c3d` 开发 Windows V1 真实
-  Top3 闭环；本轮禁止访问或修改远端。离线工程门已通过，真实交易时段 30 分钟、
-  固定提醒、实机截图与最终安装包证据仍待完成。
+- 当前状态：共享连接门返修已作为 `74b4840d25766097a2c88e502983b375bc80c7d6`
+  独立提交；Mac 专属工作位于 `feat/macos-v1-port`。Windows 真实验收仍为 `FAIL`：
+  统一 Token 连接校验遇到 `rate_limited`，完整扫描轮次和真实 Top3 均为 0。本轮禁止
+  访问或修改远端。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
@@ -17,9 +20,10 @@
 ## 项目工作流
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
-- 真实数据工作先读取活跃版本
-  `docs/visions/v0.4-v1-feature-complete/README.md`；TdxQuant 只读历史与诊断继续
-  参考 `v0.3-windows-data-gate`。
+- Mac 真实数据工作先读取活跃版本
+  `docs/visions/v0.4.2-macos-v1-port/README.md`，再读取共享返修
+  `v0.4.1-shared-connection-gate`；Windows 真实验收历史继续参考
+  `v0.4-v1-feature-complete`，TdxQuant 只读历史与诊断参考 `v0.3-windows-data-gate`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
 - 按版本推进：明确范围 → 实现 → 验证 → 更新版本记录 → 封版或留下有 owner 的下一步。
 - 长任务跨 session 时按 `kahlil-project-workflow` 的 handoff 规则交接；小改动优先更新目标版本 README，不滥建 session log。
@@ -27,8 +31,8 @@
 
 ## 本地优先模式
 
-- 本地工作区是本轮权威事实源。2026-07-29 Windows V1 任务期间不得 fetch、pull、push、
-  merge、tag 或 release，也不得用远端状态改变已核对基线。
+- 本地工作区是本轮权威事实源。2026-07-30 Mac-first 任务期间不得 fetch、pull、push、
+  merge、tag、release 或访问 GitHub，也不得用远端状态改变已核对基线。
 - 日常任务从本地 `main` 建短分支，完成验证和 diff review 后本地合并回 `main`。不自动 push，也不为每个小改动创建 PR。
 - 每个 session 收尾必须形成可恢复的本地提交；只留未提交工作时，必须在 handoff 中逐项列出，不能让下一位 Agent 猜。
 - 版本封版、需要远端备份/跨设备交接或用户明确要求时，从本地 `main` 创建 `publish/<version>`，统一 push 并用一个 PR 同步 GitHub。
@@ -60,7 +64,8 @@
 - TdxQuant 只读预检可使用官方 `tqcenter` 或 `http://127.0.0.1:17709/`；不得把本机 HTTP 误写成供应商托管 HTTPS，也不得开放到非回环地址。
 - V1 不画紫黄线。moneyflow 和其他资金字段必须证明盘中持续更新后才能参与盘中评分；
   日级数据只可作背景，缺失时标记“资金未确认”、计 0 分且不得阻塞候选。
-- Mac 上的 Mock/Replay、PySide6 和性能结果只证明 Mac 本地行为，不能充当 Windows/通达信 M0、Windows 通知或安装包证据。
+- Mac 上的 Mock/Replay、PySide6 和性能结果只证明 Mac 本地行为；Mac 的真实 Tushare
+  结果也不能充当 Windows/通达信 M0、Windows 通知或安装包通过证据。
 - 数据健康为 `STOPPED/RED` 时停止产生新候选；不得把旧数据包装成新结果。
 - 高风险区和人类确认门见 `docs/process/boundaries.md`。命中时先停、说明影响并取得确认。
 

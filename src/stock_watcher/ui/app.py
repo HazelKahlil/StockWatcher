@@ -11,8 +11,8 @@ from PySide6.QtWidgets import QApplication
 from stock_watcher.config import DataSourceConfigRepository, DataSourceMode
 from stock_watcher.paths import runtime_paths
 
+from .macos import MacApplicationLifecycle, SingleInstanceGuard
 from .main_window import MainWindow, ReplaySession, UiSession
-from .tdx_session import TdxDiagnosticSession
 from .tushare_session import TushareDiagnosticSession
 from .tushare_v1_session import TushareV1Session
 
@@ -131,11 +131,19 @@ def run(
     args = parser.parse_args()
     app = QApplication(sys.argv)
     app.setApplicationName("StockWatcher")
+    app.setOrganizationName("StockWatcher")
     icon_path = application_icon_path()
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
     app.setStyleSheet(STYLE_SHEET)
+    instance_guard: SingleInstanceGuard | None = None
+    if sys.platform == "darwin":
+        instance_guard = SingleInstanceGuard(parent=app)
+        if not instance_guard.acquire():
+            return 0
     if args.provider == "tdxquant":
+        from .tdx_session import TdxDiagnosticSession
+
         paths = runtime_paths()
         paths.create()
         session: UiSession = TdxDiagnosticSession(
@@ -164,6 +172,8 @@ def run(
         elif settings.mode is DataSourceMode.ADVANCED_DIAGNOSTIC:
             session = TushareDiagnosticSession(args.db or paths.database)
         elif settings.mode is DataSourceMode.TDX_DIAGNOSTIC:
+            from .tdx_session import TdxDiagnosticSession
+
             session = TdxDiagnosticSession(
                 args.db or paths.database,
                 args.endpoint,
@@ -176,6 +186,11 @@ def run(
                 settings=settings,
             )
     window = MainWindow(session)
+    if instance_guard is not None:
+        lifecycle = MacApplicationLifecycle(app, window)
+        window.set_secondary_notification_sender(lifecycle.show_notification)
+        instance_guard.activation_requested.connect(window.restore_main_window)
+        app.aboutToQuit.connect(instance_guard.close)
     window.show()
     return app.exec()
 
