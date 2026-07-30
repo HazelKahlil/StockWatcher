@@ -4,7 +4,7 @@ import json
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import Lock
 
@@ -14,14 +14,14 @@ from stock_watcher.engine import (
     AlertPolicy,
     AlertTrigger,
     CandidateBatch,
-    DailySummaryEngine,
     FundCapability,
 )
 from stock_watcher.providers.tushare import Tushare15000Provider, TushareSdkProTransport
 from stock_watcher.providers.tushare.capabilities import (
-    CAPABILITY_ORDER,
     CapabilityCheckCoordinator,
+    ProviderCapability,
     ProviderCapabilityState,
+    ProviderCapabilityStatus,
 )
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
@@ -34,6 +34,9 @@ from stock_watcher.runtime import (
     MarketSessionSchedule,
     TushareBootstrapLoader,
     TushareV1Runtime,
+    application_summary_record,
+    collect_post_close_review,
+    write_post_close_report,
 )
 from stock_watcher.security import (
     FAST_CREDENTIAL,
@@ -67,11 +70,11 @@ class TushareV1Session:
     app_badge = "Desktop V1"
     window_title = "StockWatcher · 当前观察"
     is_replay = False
-    supports_manual_fetch = False
+    supports_manual_fetch = True
     auto_check_interval_seconds = 10
     connection_name = "数据接口"
     reconnect_label = "重新检测"
-    manual_fetch_label = "立即检测"
+    manual_fetch_label = "立即获取最新3只"
     footer_label = "只读观察 · 不连接交易账户 · 资金未确认不阻塞候选"
     advanced_diagnostics = False
 
@@ -118,11 +121,12 @@ class TushareV1Session:
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._schedule = MarketSessionSchedule()
         self._alert_policy = AlertPolicy()
-        self._summary_engine = DailySummaryEngine()
         self._runtime: TushareV1Runtime | None = None
         self._provider: Tushare15000Provider | None = None
         self._prepared_date: date | None = None
         self._summary_date: str | None = None
+        self._summary_retry_at: datetime | None = None
+        self._summary_issue: str | None = None
         self.batch: CandidateBatch | None = None
         self.pending_alert: PendingUiAlert | None = None
         self.state = HealthState.WARMING
@@ -211,20 +215,20 @@ class TushareV1Session:
         self.status_issues = ("网络恢复后将清理旧基线并重新预热。",)
 
     def recover(self) -> None:
-        self._run(force=False)
+        self._run(force=False, manual_request=False)
 
     def begin_manual_fetch(self) -> None:
         self.warm_and_recover()
 
     def manual_fetch(self) -> None:
-        self._run(force=True)
+        self._run(force=True, manual_request=True)
 
     def consume_pending_alert(self) -> PendingUiAlert | None:
         pending = self.pending_alert
         self.pending_alert = None
         return pending
 
-    def _run(self, *, force: bool) -> None:
+    def _run(self, *, force: bool, manual_request: bool) -> None:
         now = _shanghai(self._clock())
         if self._is_network_interrupted():
             # Qt's reachability signal already placed the UI in STOPPED.  The
@@ -308,7 +312,11 @@ class TushareV1Session:
                 self.candidate_gate_label = "上次结果" if self.batch else "等待开盘"
                 self.phase_label = "非交易时段"
                 self.health_detail = "非交易时段不发起全市场实时扫描。"
-                self.status_issues = ()
+                self.status_issues = (
+                    (self._summary_issue,)
+                    if self._summary_issue is not None
+                    else ()
+                )
                 return
         self.last_fetch_at = now
         outcome = self._runtime.scan_once()
@@ -383,6 +391,23 @@ class TushareV1Session:
             outcome.strong_event,
             forced_fixed=crossed,
         )
+        if (
+            manual_request
+            and outcome.health is HealthState.HEALTHY
+            and self.batch is not None
+            and len(self.batch.candidates) == 3
+            and self.pending_alert is None
+        ):
+            self.store.record_batch(self.batch)
+            self.pending_alert = PendingUiAlert(
+                title="当前最新3只",
+                subtitle=(
+                    "本轮整体偏弱"
+                    if self.batch.overall_weak
+                    else "本次手动获取已完成"
+                ),
+                trigger_type="manual",
+            )
 
     def _evaluate_alerts(
         self,
@@ -490,43 +515,44 @@ class TushareV1Session:
         trade_date = now.date().isoformat()
         if self._summary_date == trade_date:
             return
+        if self._summary_retry_at is not None and now < self._summary_retry_at:
+            return
+        if self._provider is None:
+            return
         history = [
             row
             for row in self.store.list_alert_history(now=now, days=1)
             if str(row.get("displayed_at", "")).startswith(trade_date)
         ]
-        closing_prices = self._closing_prices(now)
-        summary = self._summary_engine.generate(
-            trade_date=now.date(),
-            generated_at=now,
-            alert_history=history,
-            closing_prices=closing_prices,
-            health_interruption_count=self.store.count_health_interruptions(
-                trade_date
-            ),
-        )
-        self.store.record_daily_summary(summary.as_record())
-        self._summary_date = trade_date
-
-    def _closing_prices(self, now: datetime) -> dict[str, float]:
-        if self._provider is None:
-            return {}
+        interruption_count = self.store.count_health_interruptions(trade_date)
         try:
-            result = self._provider.daily_bars(
-                trade_date=now.date().strftime("%Y%m%d")
+            collection = collect_post_close_review(
+                self._provider,
+                trade_date=now.date(),
+                generated_at=now,
+            )
+            summary = application_summary_record(
+                collection,
+                alert_count=len(history),
+                health_interruption_count=interruption_count,
+            )
+            self.store.record_daily_summary(summary)
+            write_post_close_report(
+                collection,
+                reports_dir=self.store.path.parent / "reports",
+                alert_count=len(history),
+                health_interruption_count=interruption_count,
             )
         except Exception:
-            return {}
-        prices: dict[str, float] = {}
-        for record in result.records:
-            code = record.get("ts_code")
-            close = record.get("close")
-            if isinstance(code, str) and isinstance(close, (str, int, float)):
-                try:
-                    prices[code] = float(close)
-                except ValueError:
-                    continue
-        return prices
+            self._summary_retry_at = now + timedelta(seconds=60)
+            self._summary_issue = "盘后回顾暂未生成，将在60秒后自动重试。"
+            self.status_issues = tuple(
+                dict.fromkeys((*self.status_issues, self._summary_issue))
+            )
+            return
+        self._summary_date = trade_date
+        self._summary_retry_at = None
+        self._summary_issue = None
 
     def _is_open_date(self, now: datetime) -> bool:
         if self._runtime is not None and self._runtime.universe is not None:
@@ -593,11 +619,7 @@ class TushareV1Session:
         if self.capability_checks is None:
             return True
         self.capability_checks.start_background()
-        statuses = self.capability_checks.statuses()
-        return bool(statuses) and all(
-            statuses[capability].state is ProviderCapabilityState.AVAILABLE
-            for capability in CAPABILITY_ORDER
-        )
+        return _required_capabilities_ready(self.capability_checks.statuses())
 
     def _set_capability_warming(self) -> None:
         assert self.capability_checks is not None
@@ -630,8 +652,8 @@ class TushareV1Session:
             self.status_issues = (retry_note,)
             return
         self.connection_detail = "Token已保存，正在分项准备基础数据、实时行情和板块历史。"
-        self.health_detail = "能力检测完成后将开始预热；资金未确认不会阻塞候选。"
-        self.status_issues = ("恢复后仍需连续3轮新鲜完整数据。",)
+        self.health_detail = "核心能力检测完成后将开始预热；资金和历史分钟未确认不会阻塞候选。"
+        self.status_issues = ("实时恢复后仍需连续3轮新鲜完整数据。",)
 
     def data_source_controller(self) -> object:
         """Create the settings controller on this session's shared budget."""
@@ -789,6 +811,24 @@ def _parsed_datetime(value: object) -> datetime | None:
         return _shanghai(datetime.fromisoformat(value))
     except ValueError:
         return None
+
+
+def _required_capabilities_ready(
+    statuses: dict[ProviderCapability, ProviderCapabilityStatus],
+) -> bool:
+    required = (
+        ProviderCapability.STOCK_LIST,
+        ProviderCapability.TRADE_CALENDAR,
+        ProviderCapability.SECTOR_CLASSIFICATION,
+        ProviderCapability.REALTIME_1,
+        ProviderCapability.REALTIME_100,
+        ProviderCapability.REALTIME_300,
+        ProviderCapability.REALTIME_800,
+    )
+    return bool(statuses) and all(
+        statuses[capability].state is ProviderCapabilityState.AVAILABLE
+        for capability in required
+    )
 
 
 def _payload_codes(value: object) -> set[str]:

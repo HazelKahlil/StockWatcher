@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from stock_watcher.config import DataSourceMode, DataSourceSettings  # noqa: E402
+from stock_watcher.domain import SHANGHAI  # noqa: E402
 from stock_watcher.providers.tushare import (  # noqa: E402
     ProviderError,
     ProviderFailureReason,
@@ -31,7 +32,9 @@ from stock_watcher.security import (  # noqa: E402
     CredentialRef,
     MemoryCredentialStore,
 )
+from stock_watcher.storage import SQLiteStore  # noqa: E402
 from stock_watcher.ui import data_source_status  # noqa: E402
+from stock_watcher.ui.daily_summary import DailySummaryDialog  # noqa: E402
 from stock_watcher.ui.data_source_settings import (  # noqa: E402
     DataSourceSettingsController,
     DataSourceSettingsDialog,
@@ -231,6 +234,16 @@ def test_v1_main_window_prioritizes_candidate_area_over_status_copy(
     interrupt = window.findChild(QFrame, "interruptCard")
     cards = window.findChild(QScrollArea, "cardsScroll")
     empty = window.findChild(QLabel, "emptyState")
+    manual = next(
+        button
+        for button in window.findChildren(QPushButton)
+        if button.text() == "立即获取最新3只"
+    )
+    reconnect = next(
+        button
+        for button in window.findChildren(QPushButton)
+        if button.text() == "重新检测"
+    )
 
     assert summary is not None and summary.maximumHeight() <= 88
     assert interrupt is not None and interrupt.maximumHeight() <= 138
@@ -238,8 +251,49 @@ def test_v1_main_window_prioritizes_candidate_area_over_status_copy(
     assert empty is not None and empty.minimumHeight() >= 150
     assert "固定显示3只观察股票" in empty.text()
     assert "说明：" not in " ".join(label.text() for label in window.findChildren(QLabel))
+    assert not manual.isHidden() and manual.objectName() == "primaryButton"
+    assert not reconnect.isHidden() and reconnect.objectName() == "secondaryButton"
 
     window.close()
+    app.processEvents()
+
+
+def test_daily_summary_dialog_shows_full_market_review_copy(tmp_path: Path) -> None:
+    app = application()
+    now = datetime.now(SHANGHAI)
+    store = SQLiteStore(tmp_path / "summary.sqlite3")
+    store.record_daily_summary(
+        {
+            "trade_date": now.date().isoformat(),
+            "generated_at": now.isoformat(),
+            "alert_count": 2,
+            "top_sectors": [["白酒", 8]],
+            "repeated_candidates": [["样本一", 1], ["样本二", 1], ["样本三", 1]],
+            "closing_performance": [
+                {
+                    "code": "600001.SH",
+                    "name": "样本一",
+                    "close_price": 10.5,
+                    "change_pct": 5.0,
+                    "sector": "白酒",
+                }
+            ],
+            "fund_summary": "资金未确认，本次排序未使用资金项。",
+            "health_summary": "收盘日线覆盖完整。",
+            "summary_text": "全市场上涨比例55%，盘后观察Top3已形成。",
+            "version": "daily-summary-market-review-v1",
+        }
+    )
+
+    dialog = DailySummaryDialog(store.path)
+    copy = " ".join(label.text() for label in dialog.findChildren(QLabel))
+
+    assert "今日A股盘后回顾" in copy
+    assert "今日自动提醒" in copy
+    assert "强势行业" in copy
+    assert "盘后观察Top3" in copy
+    assert "全市场上涨比例55%" in copy
+    dialog.close()
     app.processEvents()
 
 

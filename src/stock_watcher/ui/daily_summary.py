@@ -31,9 +31,15 @@ class DailySummaryDialog(QDialog):
             summary is not None
             and summary.get("version") == "daily-summary-retrospective-v1"
         )
+        market_review = (
+            summary is not None
+            and summary.get("version") == "daily-summary-market-review-v1"
+        )
         title = QLabel(
             "今日盘后回顾（历史数据测试）"
             if retrospective
+            else "今日A股盘后回顾"
+            if market_review
             else "今日收盘总结"
         )
         title.setObjectName("dialogTitle")
@@ -61,9 +67,23 @@ class DailySummaryDialog(QDialog):
                 note.setObjectName("dialogDescription")
                 note.setWordWrap(True)
                 content.addWidget(note)
+            elif market_review:
+                note = QLabel(
+                    "基于收盘后的全市场日线、行业宽度和前三日背景生成；"
+                    "自动提醒次数单独列示，手动查看不计入提醒限额。"
+                )
+                note.setObjectName("dialogDescription")
+                note.setWordWrap(True)
+                content.addWidget(note)
             self._section(
                 content,
-                "真实提醒" if retrospective else "今日提醒",
+                (
+                    "真实提醒"
+                    if retrospective
+                    else "今日自动提醒"
+                    if market_review
+                    else "今日提醒"
+                ),
                 (
                     f"{summary['alert_count']} 次（本轮未在盘中持续运行）"
                     if retrospective
@@ -73,7 +93,7 @@ class DailySummaryDialog(QDialog):
             sectors = "、".join(name for name, _ in summary["top_sectors"]) or "无"
             self._section(
                 content,
-                "重点行业" if retrospective else "重点板块",
+                "强势行业" if retrospective or market_review else "重点板块",
                 sectors,
             )
             repeated = (
@@ -85,13 +105,19 @@ class DailySummaryDialog(QDialog):
             )
             self._section(
                 content,
-                "回溯观察Top3" if retrospective else "多次出现",
+                (
+                    "回溯观察Top3"
+                    if retrospective
+                    else "盘后观察Top3"
+                    if market_review
+                    else "多次出现"
+                ),
                 (
                     "、".join(
                         name
                         for name, _ in summary["repeated_candidates"]
                     )
-                    if retrospective
+                    if retrospective or market_review
                     else repeated
                 ),
             )
@@ -104,7 +130,11 @@ class DailySummaryDialog(QDialog):
                 )
                 or "暂无可核对的收盘表现"
             )
-            self._section(content, "收盘表现", performance_copy)
+            self._section(
+                content,
+                "收盘Top3" if market_review else "收盘表现",
+                performance_copy,
+            )
             self._section(content, "资金状态", str(summary["fund_summary"]))
             self._section(content, "数据情况", str(summary["health_summary"]))
             conclusion = QLabel(str(summary["summary_text"]))

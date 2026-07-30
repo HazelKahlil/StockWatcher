@@ -35,6 +35,12 @@ from stock_watcher.engine import (
     build_post_close_review,
 )
 from stock_watcher.providers.tushare import Tushare15000Provider
+from stock_watcher.providers.tushare.capabilities import (
+    CAPABILITY_ORDER,
+    ProviderCapability,
+    ProviderCapabilityState,
+    ProviderCapabilityStatus,
+)
 from stock_watcher.providers.tushare.models import (
     DataQuality as ProviderDataQuality,
 )
@@ -63,7 +69,10 @@ from stock_watcher.security import (
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.data_source_settings import DataSourceSettingsController
 from stock_watcher.ui.data_source_status import CredentialTestResult
-from stock_watcher.ui.tushare_v1_session import TushareV1Session
+from stock_watcher.ui.tushare_v1_session import (
+    TushareV1Session,
+    _required_capabilities_ready,
+)
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -855,3 +864,145 @@ def test_v1_session_emits_0945_and_1445_even_when_top3_is_unchanged(
     )
     restarted.recover()
     assert restarted.consume_pending_alert() is None
+
+
+def test_manual_fetch_updates_top3_persists_batch_and_always_emits_popup(
+    tmp_path: Path,
+) -> None:
+    base = CandidateEngine().calculate(
+        tuple(
+            candidate_input(
+                f"60000{index}.SH",
+                sector_code=f"I{index}",
+                sector_score=24,
+                change=5,
+                velocity=1,
+            )
+            for index in range(1, 4)
+        ),
+        HealthState.HEALTHY,
+        CandidateConfig("v1", "0.4"),
+    )
+    assert base is not None
+    first_at = timestamp().replace(hour=10, minute=5)
+    batch = replace(base, source_ts=first_at, generated_at=first_at)
+    universe = RuntimeUniverse(
+        profiles=(),
+        memberships=(),
+        trends={},
+        high_3d={},
+        open_dates=(first_at.date(),),
+        concept_loaded=False,
+    )
+    outcome = ScanOutcome(
+        HealthState.HEALTHY,
+        "正常",
+        batch,
+        batch,
+        None,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+    )
+    fake = FakeV1Runtime(universe, outcome)
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-token")
+
+    def factory(
+        _settings: DataSourceSettings,
+        _store: MemoryCredentialStore,
+    ) -> tuple[TushareV1Runtime, Tushare15000Provider]:
+        return (
+            cast(TushareV1Runtime, fake),
+            cast(Tushare15000Provider, object()),
+        )
+
+    session = TushareV1Session(
+        tmp_path / "manual.sqlite3",
+        credential_store=credentials,
+        runtime_factory=factory,  # type: ignore[arg-type]
+        clock=SequenceClock(
+            [
+                first_at,
+                first_at + timedelta(seconds=1),
+                first_at + timedelta(minutes=1),
+                first_at + timedelta(minutes=1, seconds=1),
+            ]
+        ),
+    )
+
+    session.manual_fetch()
+    first = session.consume_pending_alert()
+    session.manual_fetch()
+    second = session.consume_pending_alert()
+
+    assert session.supports_manual_fetch
+    assert session.manual_fetch_label == "立即获取最新3只"
+    assert first is not None and first.title == "当前最新3只"
+    assert first.trigger_type == "manual"
+    assert second is not None and second.title == "当前最新3只"
+    with session.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM candidate_snapshots").fetchone() == (2,)
+        assert connection.execute("SELECT COUNT(*) FROM alert_events").fetchone() == (0,)
+
+
+def test_manual_fetch_failure_keeps_previous_top3_without_new_popup(
+    tmp_path: Path,
+) -> None:
+    first_at = timestamp().replace(hour=11)
+    universe = RuntimeUniverse(
+        profiles=(),
+        memberships=(),
+        trends={},
+        high_3d={},
+        open_dates=(first_at.date(),),
+        concept_loaded=False,
+    )
+    fake = FakeV1Runtime(
+        universe,
+        ScanOutcome(
+            HealthState.STOPPED,
+            "实时数据中断",
+            None,
+            None,
+            None,
+            None,
+            None,
+            failure_reason="provider",
+        ),
+    )
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-token")
+    session = TushareV1Session(
+        tmp_path / "manual-failure.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, fake),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=SequenceClock([first_at, first_at + timedelta(seconds=1)]),
+    )
+
+    session.manual_fetch()
+
+    assert session.consume_pending_alert() is None
+    assert session.state is HealthState.STOPPED
+    with session.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM candidate_snapshots").fetchone() == (0,)
+
+
+def test_optional_historical_minutes_does_not_block_realtime_top3() -> None:
+    statuses = {
+        capability: ProviderCapabilityStatus(
+            capability,
+            state=(
+                ProviderCapabilityState.UNAVAILABLE
+                if capability is ProviderCapability.HISTORICAL_MINUTES
+                else ProviderCapabilityState.AVAILABLE
+            ),
+        )
+        for capability in CAPABILITY_ORDER
+    }
+
+    assert _required_capabilities_ready(statuses)

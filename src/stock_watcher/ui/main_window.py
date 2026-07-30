@@ -506,13 +506,21 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         self._primary_action = QPushButton()
-        self._primary_action.setObjectName("primaryButton")
+        self._primary_action.setObjectName(
+            "secondaryButton" if self.session.supports_manual_fetch else "primaryButton"
+        )
         self._manual_fetch_action = QPushButton("立即抓取（只读）")
-        self._manual_fetch_action.setObjectName("secondaryButton")
+        self._manual_fetch_action.setObjectName(
+            "primaryButton" if self.session.supports_manual_fetch else "secondaryButton"
+        )
         self._secondary_action = QPushButton()
         self._secondary_action.setObjectName("secondaryButton")
-        actions.addWidget(self._primary_action, 1)
-        actions.addWidget(self._manual_fetch_action, 1)
+        if self.session.supports_manual_fetch:
+            actions.addWidget(self._manual_fetch_action, 2)
+            actions.addWidget(self._primary_action, 1)
+        else:
+            actions.addWidget(self._primary_action, 1)
+            actions.addWidget(self._manual_fetch_action, 1)
         actions.addWidget(self._secondary_action, 1)
         root.addLayout(actions)
         self._primary_action.clicked.connect(self._primary_clicked)
@@ -523,7 +531,7 @@ class MainWindow(QMainWindow):
                 "重新检查当前数据接口，并用新鲜数据恢复观察名单。"
             )
             self._manual_fetch_action.setToolTip(
-                "执行一次只读数据检查；不显示或保存原始响应。"
+                "立即抓取一次最新全市场行情，更新主界面并弹出3只观察股票。"
             )
 
         footer = QHBoxLayout()
