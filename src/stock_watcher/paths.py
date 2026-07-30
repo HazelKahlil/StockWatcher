@@ -39,3 +39,10 @@ def runtime_paths(app_name: str = "StockWatcher") -> RuntimePaths:
         reports=root / "reports",
         database=root / "data" / "stock-watcher.sqlite3",
     )
+
+
+def report_directory_for_database(database: Path) -> Path:
+    """Resolve the product report folder while keeping explicit test DBs self-contained."""
+    if database.parent.name == "data":
+        return database.parent.parent / "reports"
+    return database.parent / "reports"

@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.11.0,<3",
     "PySide6>=6.8.0,<7",
     "PyYAML>=6.0.2,<7",
+    "reportlab>=4.4.0,<5",
     "requests>=2.32,<3",
     "tushare>=1.4.29,<1.5",
     "tzdata>=2025.2",
@@ -47,6 +48,10 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["reportlab.*"]
+ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stock_watcher"]

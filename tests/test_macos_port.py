@@ -89,6 +89,9 @@ def test_macos_runtime_paths_split_application_support_and_logs(
     assert paths.data.is_dir()
     assert paths.logs.is_dir()
     assert paths.reports.is_dir()
+    assert paths_module.report_directory_for_database(paths.database) == paths.reports
+    explicit = tmp_path / "test.sqlite3"
+    assert paths_module.report_directory_for_database(explicit) == tmp_path / "reports"
 
 
 def test_macos_keyring_store_requires_native_keychain(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any, Protocol
 
 from stock_watcher.engine import PostCloseReview, build_post_close_review
 from stock_watcher.providers.tushare.models import Record, TransportResult
+
+from .post_close_pdf import prune_post_close_reports, render_post_close_pdf
 
 
 class PostCloseDataProvider(Protocol):
@@ -220,16 +223,19 @@ def write_post_close_report(
     reports_dir: Path,
     alert_count: int,
     health_interruption_count: int,
+    alert_timeline: Sequence[Mapping[str, object]] = (),
 ) -> tuple[Path, Path]:
-    """Atomically write credential-free JSON and Markdown report artifacts."""
+    """Atomically write credential-free JSON, Markdown, and fixed three-page PDF."""
     reports_dir.mkdir(parents=True, exist_ok=True)
     trade_date = collection.review.trade_date
     stem = f"{trade_date}-A股盘后回顾"
     json_path = reports_dir / f"{stem}.json"
     markdown_path = reports_dir / f"{stem}.md"
+    pdf_path = reports_dir / f"{stem}.pdf"
     record = collection.as_record()
     record["intraday_alert_count"] = alert_count
     record["health_interruption_count"] = health_interruption_count
+    record["alert_timeline"] = list(alert_timeline)
     _atomic_write(
         json_path,
         json.dumps(record, ensure_ascii=False, indent=2) + "\n",
@@ -242,7 +248,46 @@ def write_post_close_report(
             health_interruption_count=health_interruption_count,
         ),
     )
+    _atomic_render_pdf(record, pdf_path)
+    prune_post_close_reports(
+        reports_dir,
+        reference_date=date.fromisoformat(str(trade_date)),
+    )
     return json_path, markdown_path
+
+
+def alert_timeline_records(
+    history: Sequence[Mapping[str, object]],
+) -> tuple[dict[str, object], ...]:
+    """Reduce saved alert rows to the small, credential-free timeline used in reports."""
+    records: list[dict[str, object]] = []
+    for row in sorted(history, key=lambda item: str(item.get("displayed_at", ""))):
+        trigger_type = str(row.get("trigger_type", ""))
+        if trigger_type not in {"scheduled-09:45", "scheduled-14:45", "intraday"}:
+            continue
+        names: list[str] = []
+        payload = row.get("payload_json")
+        try:
+            parsed = json.loads(payload) if isinstance(payload, str) else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            candidates = parsed.get("candidates")
+            if isinstance(candidates, list):
+                names = [
+                    str(candidate.get("name", candidate.get("code", "")))
+                    for candidate in candidates[:3]
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("name", candidate.get("code", "")))
+                ]
+        records.append(
+            {
+                "displayed_at": str(row.get("displayed_at", "")),
+                "trigger_type": trigger_type,
+                "candidate_names": names,
+            }
+        )
+    return tuple(records)
 
 
 def render_post_close_markdown(
@@ -373,3 +418,13 @@ def _atomic_write(path: Path, content: str) -> None:
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text(content, encoding="utf-8", newline="\n")
     temporary.replace(path)
+
+
+def _atomic_render_pdf(record: Mapping[str, Any], path: Path) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        render_post_close_pdf(record, temporary)
+        temporary.replace(path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -506,3 +506,42 @@ class SQLiteStore:
             "summary_text": row[8],
             "version": row[9],
         }
+
+    def list_daily_summaries(self, *, since: date) -> list[dict[str, Any]]:
+        """Return recent daily summaries newest first without changing storage."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT trade_date, generated_at, alert_count, top_sectors_json, "
+                "repeated_candidates_json, closing_performance_json, fund_summary, "
+                "health_summary, summary_text, version "
+                "FROM daily_summaries WHERE trade_date >= ? "
+                "ORDER BY trade_date DESC",
+                (since.isoformat(),),
+            ).fetchall()
+        return [
+            {
+                "trade_date": row[0],
+                "generated_at": row[1],
+                "alert_count": row[2],
+                "top_sectors": json.loads(row[3]),
+                "repeated_candidates": json.loads(row[4]),
+                "closing_performance": json.loads(row[5]),
+                "fund_summary": row[6],
+                "health_summary": row[7],
+                "summary_text": row[8],
+                "version": row[9],
+            }
+            for row in rows
+        ]
+
+    def prune_daily_summaries(self, *, before: date) -> int:
+        """Delete summaries older than the Human Owner-approved 31-day window."""
+        if self.read_only:
+            raise RuntimeError("cannot prune daily summaries from a read-only store")
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM daily_summaries WHERE trade_date < ?",
+                (before.isoformat(),),
+            )
+        return max(cursor.rowcount, 0)

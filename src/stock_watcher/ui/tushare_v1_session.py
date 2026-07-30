@@ -16,6 +16,7 @@ from stock_watcher.engine import (
     CandidateBatch,
     FundCapability,
 )
+from stock_watcher.paths import report_directory_for_database
 from stock_watcher.providers.tushare import Tushare15000Provider, TushareSdkProTransport
 from stock_watcher.providers.tushare.capabilities import (
     CapabilityCheckCoordinator,
@@ -34,6 +35,7 @@ from stock_watcher.runtime import (
     MarketSessionSchedule,
     TushareBootstrapLoader,
     TushareV1Runtime,
+    alert_timeline_records,
     application_summary_record,
     collect_post_close_review,
     write_post_close_report,
@@ -539,9 +541,13 @@ class TushareV1Session:
             self.store.record_daily_summary(summary)
             write_post_close_report(
                 collection,
-                reports_dir=self.store.path.parent / "reports",
+                reports_dir=report_directory_for_database(self.store.path),
                 alert_count=len(history),
                 health_interruption_count=interruption_count,
+                alert_timeline=alert_timeline_records(history),
+            )
+            self.store.prune_daily_summaries(
+                before=now.date() - timedelta(days=30)
             )
         except Exception:
             self._summary_retry_at = now + timedelta(seconds=60)

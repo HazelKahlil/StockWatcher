@@ -21,6 +21,11 @@ from stock_watcher.runtime import (
     collect_post_close_review,
     write_post_close_report,
 )
+from stock_watcher.runtime.post_close_pdf import (
+    list_post_close_report_dates,
+    prune_post_close_reports,
+    render_post_close_pdf,
+)
 from stock_watcher.security import PRIMARY_CREDENTIAL, MemoryCredentialStore
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
 
@@ -197,6 +202,11 @@ def test_post_close_collection_writes_full_market_json_and_markdown(
     assert "## 市场整体" in markdown
     assert "## 盘后观察 Top3" in markdown
     assert "test-token" not in markdown
+    pdf_path = tmp_path / "2026-07-30-A股盘后回顾.pdf"
+    assert pdf_path.is_file()
+    pdf_bytes = pdf_path.read_bytes()
+    assert pdf_bytes.startswith(b"%PDF")
+    assert pdf_bytes.count(b"/Type /Page\n") == 3
 
 
 def test_session_generates_full_market_review_automatically_at_1530(
@@ -232,6 +242,42 @@ def test_session_generates_full_market_review_automatically_at_1530(
     report = tmp_path / "reports" / "2026-07-30-A股盘后回顾.md"
     assert report.is_file()
     assert "A股盘后回顾" in report.read_text(encoding="utf-8")
+    assert (tmp_path / "reports" / "2026-07-30-A股盘后回顾.pdf").is_file()
+
+
+def test_fixed_pdf_renderer_and_report_retention_are_bounded(tmp_path: Path) -> None:
+    record = collect_post_close_review(
+        FakeCloseProvider(),
+        trade_date=TRADE_DATE,
+        generated_at=GENERATED_AT,
+    ).as_record()
+    pdf_path = render_post_close_pdf(
+        record,
+        tmp_path / "2026-07-30-A股盘后回顾.pdf",
+    )
+    old = tmp_path / "2026-06-20-A股盘后回顾.pdf"
+    old.write_bytes(b"old")
+    recent = tmp_path / "2026-07-01-A股盘后回顾.json"
+    recent.write_text("{}", encoding="utf-8")
+    unrelated = tmp_path / "2026-01-01-not-a-report.pdf"
+    unrelated.write_bytes(b"keep")
+
+    removed = prune_post_close_reports(
+        tmp_path,
+        reference_date=TRADE_DATE,
+    )
+    dates = list_post_close_report_dates(
+        tmp_path,
+        reference_date=TRADE_DATE,
+    )
+
+    assert pdf_path.is_file()
+    assert pdf_path.read_bytes().count(b"/Type /Page\n") == 3
+    assert removed == (old,)
+    assert not old.exists()
+    assert recent.is_file()
+    assert unrelated.is_file()
+    assert dates == ("2026-07-30", "2026-07-01")
 
 
 def test_failed_1530_review_retries_no_more_than_once_per_minute(

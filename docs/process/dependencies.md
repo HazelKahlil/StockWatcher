@@ -15,6 +15,7 @@ Tushare 兼容 HTTP 使用 `requests`；Human Owner 明确批准的原生实时�
 | `tzdata` | 运行时；为 Windows 等缺少系统 IANA 时区数据库的冻结环境提供 `Asia/Shanghai` 数据 | Apache-2.0 | 仅提供锁定的时区数据；不增加供应商、账户、交易或网络能力。 |
 | `requests` | 运行时；Super/Fast HTTPS 传输、timeout、TLS 与状态码处理 | Apache-2.0 | TLS 验证保持开启；代理行为配置化；响应正文不进入日志、报告或业务层。 |
 | `keyring` | 运行时；Windows Credential Manager 与未来 macOS Keychain 统一接口 | MIT | secret 只经进程内存传给请求层；不写配置、SQLite、日志、Git 或包。冻结构建显式收集平台 backend。 |
+| `reportlab` | 运行时；把15:30盘后结构化数据渲染为固定A4三页PDF | BSD-3-Clause | 只在本地排版，不联网、不调用模型、不读取凭据；PDF仅包含脱敏后的盘后回顾字段。 |
 | `tushare` | 运行时；Human Owner 授权的 `realtime_quote(src="sina")` 只读实时 SDK | BSD | 独立 `native_realtime` profile；Token 仅从系统凭据读取；上游正文不落盘；禁止交易能力和任意抓取扩展。 |
 | `numpy` | 运行时；Tushare/pandas 数值数组；直接约束 `<2.5` | BSD-3-Clause | 仅内存归一化；`<2.5` 保持 Python 3.11 的严格 Mypy 门可解析，避免环境分裂。 |
 | `pandas` / `lxml` | Tushare 锁定传递依赖；SDK 响应表和只读解析 | BSD-3-Clause / BSD-3-Clause | 原始表只在内存中存在，进入业务层前转换为字段、单位和时间明确的记录。 |
