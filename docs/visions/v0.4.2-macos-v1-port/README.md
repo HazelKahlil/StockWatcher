@@ -80,6 +80,12 @@ TdxQuant/M0 通过证据。
 - 2026-07-30：单实例 guard 已覆盖异常中断后遗留 Unix socket 的恢复：仅在
   `ServerNotFoundError` 或 `ConnectionRefusedError` 时回收端点；可连接的主进程仍优先被
   唤起，避免第二次启动永久失败。
+- 2026-07-30：离线门重新通过：`uv sync --all-groups`、`uv lock --check`、全量 pytest
+  （255 passed、20 skipped、2 deselected）、Ruff、Mypy（92 个源文件）、workspace 和
+  `git diff --check`；离屏 Replay 五状态 PNG 5/5 生成，SQLite WAL/回滚定向回归通过。
+- 2026-07-30 15:33 CST：盘后主路线复核返回 `rate_limited`；15:43–15:44 CST 允许的
+  Super 静态高级诊断返回 `empty_data`。两者均未生成报告、Top3 或当日日线覆盖，不构成
+  实时、主路线、盘中 M0 或 Windows 证据。
 - 实时验证脚本只读取 Primary 凭据，普通 Pro 与原生实时注入同一个 1 秒应用级预算；报告逐项
   列出 1/100/300/800 能力状态、429/错误和全市场价格/量额的**聚合**推进，不保存原始市场
   行、Token 或旧 Fast 凭据。盘后脚本同样只读取 Primary（高级 Super 诊断仅在显式参数与独立
@@ -89,6 +95,6 @@ TdxQuant/M0 通过证据。
 
 ## 唯一下一步
 
-完成本分支离线全量验证与独立 Mac 提交后，在下一交易时段以已保存的 Primary 凭据受控执行
-1/100/300/800、Top3、固定提醒和恢复证据。普通 Pro 解除限流并通过完整真实数据门后，才可
+下一交易日 09:25 使用已保存的 Primary 凭据受控执行主路线实时验证；若普通 Pro 解除限流，
+继续完成 1/100/300/800、Top3、固定提醒和恢复证据。普通 Pro 通过完整真实数据门后，才可
 进入 `.app` 构建与最终交接包。
