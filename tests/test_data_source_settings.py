@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -293,6 +293,57 @@ def test_daily_summary_dialog_shows_full_market_review_copy(tmp_path: Path) -> N
     assert "强势行业" in copy
     assert "盘后观察Top3" in copy
     assert "全市场上涨比例55%" in copy
+    dialog.close()
+    app.processEvents()
+
+
+def test_daily_summary_dialog_lists_only_recent_month_and_builds_pdf(
+    tmp_path: Path,
+) -> None:
+    app = application()
+    store = SQLiteStore(tmp_path / "summary-history.sqlite3")
+    for trade_date in ("2026-07-30", "2026-07-10", "2026-06-20"):
+        store.record_daily_summary(
+            {
+                "trade_date": trade_date,
+                "generated_at": f"{trade_date}T15:30:00+08:00",
+                "alert_count": 0,
+                "top_sectors": [["白酒", 8]],
+                "repeated_candidates": [
+                    ["样本一", 1],
+                    ["样本二", 1],
+                    ["样本三", 1],
+                ],
+                "closing_performance": [
+                    {
+                        "code": "600001.SH",
+                        "name": "样本一",
+                        "close_price": 10.5,
+                        "change_pct": 5.0,
+                        "sector": "白酒",
+                    }
+                ],
+                "fund_summary": "资金未确认，本次排序未使用资金项。",
+                "health_summary": "收盘日线覆盖完整。",
+                "summary_text": "市场整体分化，盘后观察Top3已形成。",
+                "version": "daily-summary-market-review-v1",
+            }
+        )
+
+    dialog = DailySummaryDialog(store.path, today=date(2026, 7, 31))
+    selector = dialog.findChild(QComboBox, "reportDateSelector")
+
+    assert selector is not None
+    assert selector.count() == 2
+    assert [selector.itemData(index) for index in range(selector.count())] == [
+        "2026-07-30",
+        "2026-07-10",
+    ]
+    assert store.get_daily_summary("2026-06-20") is None
+    pdf = dialog._ensure_internal_pdf("2026-07-30")
+    assert pdf.is_file()
+    assert pdf.read_bytes().count(b"/Type /Page\n") == 3
+
     dialog.close()
     app.processEvents()
 

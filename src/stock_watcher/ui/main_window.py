@@ -570,7 +570,7 @@ class MainWindow(QMainWindow):
         data_source = QAction("数据接口", self)
         data_source.triggered.connect(self._open_data_source_settings)
         settings.addAction(data_source)
-        summary = QAction("收盘总结", self)
+        summary = QAction("盘后回顾与PDF", self)
         summary.triggered.connect(self._open_daily_summary)
         settings.addAction(summary)
 

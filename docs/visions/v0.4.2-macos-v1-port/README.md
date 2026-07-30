@@ -57,7 +57,11 @@ TdxQuant/M0 通过证据。
 - [x] 15:30 自动生成全市场盘后回顾：包含涨跌家数、上涨比例、中位涨幅、强势行业、
   收盘观察 Top3、自动提醒次数、资金与数据限制；手动查看不计入提醒限额。结果写入 SQLite
   总结页，并原子生成
-  `reports/YYYY-MM-DD-A股盘后回顾.json` 与 `.md`。
+  `reports/YYYY-MM-DD-A股盘后回顾.json`、`.md` 与固定 A4 纵向三页 `.pdf`。普通菜单
+  “盘后回顾与PDF”可选择今天或最近31个自然日的历史报告，并通过 macOS 保存对话框下载；
+  内部报告与 SQLite 总结超出31日自动清理，用户已下载的外部副本不受影响。
+- [x] PDF 使用本地确定性脚本排版，不接 AI 大模型、不向外部服务上传行情、候选或凭据；
+  固定三页分别为市场全景、收盘观察 Top3、运行回顾与数据说明。
 - [x] 历史分钟继续独立显示能力状态，但不可用时不再阻塞核心实时 1/100/300/800
   渐进检查、全市场扫描和 Top3；资金未知同样不阻塞。
 
@@ -105,11 +109,16 @@ TdxQuant/M0 通过证据。
 - 2026-07-30：单实例 guard 已覆盖异常中断后遗留 Unix socket 的恢复：仅在
   `ServerNotFoundError` 或 `ConnectionRefusedError` 时回收端点；可连接的主进程仍优先被
   唤起，避免第二次启动永久失败。
-- 2026-07-31：新增手动 Top3、固定提醒回归、完整盘后回顾自动任务和60秒失败重试后，
+- 2026-07-31：新增手动 Top3、固定提醒回归、完整盘后回顾、PDF下载和60秒失败重试后，
   离线门重新通过：`uv sync --all-groups --frozen`、`uv lock --check`、全量 pytest
-  （268 passed、20 skipped、2 deselected）、Ruff、Mypy（95 个源文件）、workspace 和
+  （270 passed、20 skipped、2 deselected）、Ruff、Mypy（96 个源文件）、workspace 和
   `git diff --check`；离屏 Replay 五状态 PNG 5/5 重新生成，SQLite WAL/备份/回滚/迁移
   定向回归 5/5 通过。视觉复核确认主界面候选区仍为主体，“立即获取最新3只”为左侧宽主按钮。
+- 2026-07-31：使用7月30日真实静态收盘数据生成固定A4纵向三页PDF；`pdfinfo`确认3页、
+  A4、无表单/JavaScript，逐页PNG视觉检查确认中文、Top3卡片和表格无截断。报告 SHA-256
+  为 `39d16b4ef19169243bb25342a178c769895cbe77b081f5c38f40eabcd1e47ffd`。
+  App离屏实测显示日期选择器、7月30日内容和“下载 PDF”按钮完整可见。该报告仍是
+  Super高级诊断生成的真实静态收盘回顾，不构成盘中Live、固定提醒或Windows验收。
 - 2026-07-31 00:43 CST：当前为非交易时段，因此本轮没有把离线测试、模拟 Provider 或
   盘后日线回顾冒充实时 Top3；下一次 live 仍必须在交易时段使用系统钥匙串中的 Primary
   凭据验证。

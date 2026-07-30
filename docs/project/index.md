@@ -48,7 +48,7 @@
 | domain | 统一证券、行情、板块、资金、候选、提醒和健康对象 | `src/stock_watcher/domain/` | 无供应商字段依赖 | providers、engine、storage、UI |
 | providers | Tushare 兼容 HTTP 主路线、Replay 与可选 TdxQuant 诊断；归一化字段、时间戳与质量 | `src/stock_watcher/providers/` | domain、HTTPS 数据接口 | engine、health、M0 工具 |
 | engine | 股票池、价格、板块、资金、三日、排名和提醒策略 | `src/stock_watcher/engine/` | domain、providers 输出、配置 | desktop、storage、summary |
-| desktop | 主窗口、弹窗、托盘、设置、历史与反馈 | `src/stock_watcher/ui/` | engine 事件、storage | 内部用户 |
+| desktop | 主窗口、弹窗、托盘、设置、历史、盘后回顾PDF与反馈 | `src/stock_watcher/ui/` | engine 事件、storage | 内部用户 |
 | storage | SQLite、repository、缓存、配置版本 | `src/stock_watcher/storage/` | domain、配置 | engine、UI、jobs |
 | jobs / health | 总结、备份、看门狗、恢复与指标 | `src/stock_watcher/jobs/`、`health/` | providers、storage | UI、运维 |
 | tools | M0 探针、回放工具 | `tools/` | providers、domain | 开发与测试 |
