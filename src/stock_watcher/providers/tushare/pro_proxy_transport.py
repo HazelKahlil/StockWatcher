@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+import requests
+
+from stock_watcher.config import HttpProfile
 
 from .fast_transport import FastTransport
-from .models import TransportResult
-from .transport_protocol import TransportRequest
+from .rate_limit import ApplicationRequestBudget
+
+if TYPE_CHECKING:
+    from .http_transport import Clock, Sleeper
 
 
 class ProProxyTransport(FastTransport):
@@ -18,32 +24,31 @@ class ProProxyTransport(FastTransport):
     already tested request and response handling.
     """
 
-    minimum_retry_interval_seconds = 0.5
-
     def __init__(
         self,
-        *args: object,
-        min_interval_seconds: float = 0.5,
-        interval_clock: Callable[[], float] = time.monotonic,
-        interval_sleeper: Callable[[float], None] = time.sleep,
-        **kwargs: object,
+        profile: HttpProfile,
+        secret_getter: Callable[[], str | None],
+        *,
+        session: requests.Session | None = None,
+        clock: Clock | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleeper: Sleeper = time.sleep,
+        min_interval_seconds: float = 1.0,
+        interval_clock: Callable[[], float] | None = None,
+        interval_sleeper: Sleeper | None = None,
+        request_budget: ApplicationRequestBudget | None = None,
     ) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        if min_interval_seconds < 0.5:
-            raise ValueError("Pro request starts must be at least 0.5 seconds apart")
-        self._minimum_interval = min_interval_seconds
-        self._interval_clock = interval_clock
-        self._interval_sleeper = interval_sleeper
-        self._interval_lock = threading.Lock()
-        self._last_started: float | None = None
-
-    def execute(self, request: TransportRequest) -> TransportResult:
-        with self._interval_lock:
-            now = self._interval_clock()
-            if self._last_started is not None:
-                delay = self._minimum_interval - (now - self._last_started)
-                if delay > 0:
-                    self._interval_sleeper(delay)
-                    now = self._interval_clock()
-            self._last_started = now
-            return super().execute(request)
+        budget = request_budget or ApplicationRequestBudget(
+            min_interval_seconds,
+            clock=interval_clock or monotonic,
+            sleeper=interval_sleeper or sleeper,
+        )
+        super().__init__(
+            profile,
+            secret_getter,
+            session=session,
+            clock=clock,
+            monotonic=monotonic,
+            sleeper=sleeper,
+            request_budget=budget,
+        )

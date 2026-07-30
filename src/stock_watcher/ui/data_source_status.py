@@ -12,6 +12,7 @@ from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
 )
 from stock_watcher.providers.tushare.pro_proxy_transport import ProProxyTransport
+from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
 from stock_watcher.providers.tushare.super_transport import SuperTransport
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 
@@ -204,10 +205,17 @@ class TushareNativeRealtimeTester:
 
 
 @dataclass(slots=True)
-class TusharePrimaryCredentialTester:
-    """Small read-only product-route probe used before atomically saving Token."""
+class LightweightCredentialTester:
+    """Validate only one low-cost base call before atomically saving a Token.
+
+    The product route intentionally does *not* test stock lists, sectors,
+    historical minutes or realtime here.  Those independent capabilities are
+    checked after the Token is safely stored, so a temporary 429 cannot turn a
+    valid replacement into a destructive failed save.
+    """
 
     clock: type[datetime] = datetime
+    request_budget: ApplicationRequestBudget | None = None
 
     def test(self, profile: HttpProfile, secret: str) -> CredentialTestResult:
         if profile.name != "tushare_15000":
@@ -215,8 +223,11 @@ class TusharePrimaryCredentialTester:
         tested_at = self.clock.now().astimezone()
         start = tested_at - timedelta(days=7)
         try:
-            pro = ProProxyTransport(profile, lambda: secret)
-            checks = (
+            result = ProProxyTransport(
+                profile,
+                lambda: secret,
+                request_budget=self.request_budget,
+            ).execute(
                 TransportRequest(
                     endpoint="/",
                     api_name="trade_cal",
@@ -227,78 +238,29 @@ class TusharePrimaryCredentialTester:
                     },
                     fields=("exchange", "cal_date", "is_open"),
                     allow_empty=True,
-                ),
-                TransportRequest(
-                    endpoint="/",
-                    api_name="stock_basic",
-                    params={"ts_code": "000001.SZ", "list_status": "L"},
-                    fields=("ts_code", "name", "market", "list_date"),
-                    allow_empty=True,
-                ),
-                TransportRequest(
-                    endpoint="/",
-                    api_name="index_classify",
-                    params={"level": "L1", "src": "SW2021"},
-                    fields=("index_code", "industry_name", "level"),
-                    allow_empty=True,
-                ),
-                TransportRequest(
-                    endpoint="/",
-                    api_name="stk_mins",
-                    params={
-                        "ts_code": "000001.SZ",
-                        "freq": "1min",
-                        "start_date": start.strftime("%Y-%m-%d 09:30:00"),
-                        "end_date": tested_at.strftime("%Y-%m-%d 15:00:00"),
-                    },
-                    fields=(),
-                    allow_empty=True,
-                ),
+                )
             )
-            results = [pro.execute(request) for request in checks]
-            native = TushareNativeRealtimeTester(clock=self.clock).test(
-                NativeRealtimeProfile(credential_ref=profile.credential_ref),
-                secret,
-            )
-            if not native.success:
-                return native
         except ProviderError as exc:
             return CredentialTestResult(
                 success=False,
                 tested_at=tested_at,
                 status_text=exc.public_message,
-                permission_summary="未完成能力检测",
+                permission_summary="基础连接未通过；当前 Token 未被替换。",
                 expires_at="未知",
                 safe_reason=exc.reason.value,
-            )
-        nonempty = sum(bool(result.records) for result in results)
-        if nonempty != len(results):
-            return CredentialTestResult(
-                success=False,
-                tested_at=tested_at,
-                status_text="接口可连接，但V1所需数据能力不完整",
-                permission_summary=f"股票、交易日历、板块、历史分钟仅{nonempty}/4项有记录",
-                expires_at="服务未返回可验证到期时间",
-                safe_reason="capability_incomplete",
-                realtime_status=native.realtime_status,
-                realtime_records=native.realtime_records,
-                realtime_source_timestamp_present=native.realtime_source_timestamp_present,
-                realtime_route="native_realtime",
             )
         return CredentialTestResult(
             success=True,
             tested_at=tested_at,
-            status_text="Tushare 数据接口连接通过",
-            permission_summary=(
-                f"已检查实时行情、历史分钟、股票列表、交易日历和板块"
-                f"（{nonempty}/4项有记录）"
-            ),
+            status_text=f"基础连接测试通过（HTTP {result.http_status}），可安全保存 Token。",
+            permission_summary="股票列表、板块、历史分钟和实时行情将在后台分项检测。",
             expires_at="服务未返回可验证到期时间",
-            realtime_status=native.realtime_status,
-            realtime_records=native.realtime_records,
-            realtime_source_timestamp_present=native.realtime_source_timestamp_present,
             realtime_route="native_realtime",
         )
+
+
+class TusharePrimaryCredentialTester(LightweightCredentialTester):
+    """Backward-compatible name for the one-call lightweight tester."""
 
 
 def _permission_summary(profile_name: str, realtime_status: str) -> str:

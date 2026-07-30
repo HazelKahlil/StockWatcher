@@ -149,7 +149,7 @@ def test_sdk_client_injects_token_only_in_memory_and_restores_globals() -> None:
     assert constants.verify_token_url == "https://original.invalid"
 
 
-def test_native_realtime_batches_at_800_and_respects_half_second_floor() -> None:
+def test_native_realtime_batches_at_800_and_respects_shared_one_second_default() -> None:
     client = FakeClient()
     manual = ManualTime()
     transport = NativeRealtimeTransport(
@@ -165,7 +165,7 @@ def test_native_realtime_batches_at_800_and_respects_half_second_floor() -> None
     result = transport.execute(request(codes))
 
     assert [len(item[0]) for item in client.calls] == [800, 800, 1]
-    assert manual.sleeps == [0.5, 0.5]
+    assert manual.sleeps == [1.0, 1.0]
     assert len(result.records) == 1601
     assert result.provenance.provider_profile == "native_realtime"
     assert result.provenance.endpoint == "tushare.realtime_quote:sina"

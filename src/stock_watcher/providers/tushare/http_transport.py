@@ -19,6 +19,7 @@ from .models import (
     SourceTimestampKind,
     TransportResult,
 )
+from .rate_limit import ApplicationRequestBudget
 from .response_parser import parse_tushare_payload
 from .transport_protocol import TransportRequest
 
@@ -40,6 +41,7 @@ class BaseHttpTransport:
         clock: Clock | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleeper: Sleeper = time.sleep,
+        request_budget: ApplicationRequestBudget | None = None,
     ) -> None:
         self.profile = profile
         self.profile_name = profile.name
@@ -49,6 +51,9 @@ class BaseHttpTransport:
         self._clock = clock or (lambda: datetime.now(ZoneInfo("Asia/Shanghai")))
         self._monotonic = monotonic
         self._sleeper = sleeper
+        # Product construction injects one shared budget.  A direct transport
+        # remains safe on its own for diagnostics and isolated tests.
+        self._request_budget = request_budget or ApplicationRequestBudget()
 
     def _url(self, endpoint: str) -> str:
         if not endpoint.startswith("/") or ".." in endpoint:
@@ -73,11 +78,12 @@ class BaseHttpTransport:
         started = self._monotonic()
         response: requests.Response | None = None
         for attempt in range(attempts):
+            self._request_budget.acquire()
             try:
                 timeout = (
-                        self.profile.connect_timeout_seconds,
-                        self.profile.read_timeout_seconds,
-                    )
+                    self.profile.connect_timeout_seconds,
+                    self.profile.read_timeout_seconds,
+                )
                 if request.method.upper() == "GET":
                     query = dict(request.params)
                     if request.fields:
@@ -117,7 +123,10 @@ class BaseHttpTransport:
                     )
                     continue
                 raise ProviderError(ProviderFailureReason.NETWORK) from exc
-            if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < attempts:
+            if response.status_code == 429:
+                self._request_budget.pause_for(_retry_after_seconds(response, now=self._clock()))
+                break
+            if response.status_code in {500, 502, 503, 504} and attempt + 1 < attempts:
                 self._sleeper(
                     max(
                         self.minimum_retry_interval_seconds,
@@ -127,7 +136,7 @@ class BaseHttpTransport:
                 continue
             break
         assert response is not None
-        _raise_for_status(response)
+        _raise_for_status(response, now=self._clock())
         try:
             payload: Any = response.json()
         except requests.exceptions.JSONDecodeError as exc:
@@ -160,28 +169,46 @@ class BaseHttpTransport:
 
 
 def _retry_delay(response: requests.Response, attempt: int) -> float:
+    if response.status_code == 429:
+        return _retry_after_seconds(response)
+    return 0.25 * float(2**attempt)
+
+
+def _retry_after_seconds(
+    response: requests.Response,
+    *,
+    now: datetime | None = None,
+) -> float:
     retry_after_raw = response.headers.get("Retry-After")
     if retry_after_raw:
         retry_after = str(retry_after_raw)
         try:
-            return min(30.0, max(0.0, float(retry_after)))
+            return max(0.0, float(retry_after))
         except ValueError:
             try:
                 parsed = parsedate_to_datetime(retry_after)
-                return min(30.0, max(0.0, parsed.timestamp() - time.time()))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+                reference = now or datetime.now(ZoneInfo("UTC"))
+                if reference.tzinfo is None:
+                    reference = reference.replace(tzinfo=ZoneInfo("UTC"))
+                return max(0.0, (parsed - reference).total_seconds())
             except (TypeError, ValueError, OverflowError):
                 pass
-    return 0.25 * float(2**attempt)
+    # The supplier frequently omits Retry-After.  A short exponential retry
+    # simply recreates the burst that triggered the 429, so use the documented
+    # application cooldown instead.
+    return ApplicationRequestBudget.default_rate_limit_cooldown_seconds
 
 
-def _raise_for_status(response: requests.Response) -> None:
+def _raise_for_status(response: requests.Response, *, now: datetime | None = None) -> None:
     status = response.status_code
     if status == 401:
         raise ProviderError(ProviderFailureReason.CREDENTIAL_INVALID, http_status=status)
     if status == 403:
         raise ProviderError(ProviderFailureReason.PERMISSION_DENIED, http_status=status)
     if status == 429:
-        retry_after = _retry_delay(response, 0)
+        retry_after = _retry_after_seconds(response, now=now)
         raise ProviderError(
             ProviderFailureReason.RATE_LIMITED,
             http_status=status,

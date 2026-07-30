@@ -22,6 +22,7 @@ from .models import (
     SourceTimestampKind,
     TransportResult,
 )
+from .rate_limit import ApplicationRequestBudget
 from .transport_protocol import TransportRequest
 
 Clock = Callable[[], datetime]
@@ -99,7 +100,7 @@ class TushareSdkRealtimeClient:
 
     def configure(self, token: str, verify_url: str) -> None:
         # tushare.set_token() writes ~/tk.csv. StockWatcher must keep credentials
-        # exclusively in Windows Credential Manager, so the SDK receives the token
+        # exclusively in the platform credential store, so the SDK receives the token
         # only inside the serialized call below.
         self._token = token
         self._verify_url = verify_url
@@ -156,6 +157,7 @@ class NativeRealtimeTransport:
         clock: Clock | None = None,
         monotonic: Monotonic = time.monotonic,
         sleeper: Sleeper = time.sleep,
+        request_budget: ApplicationRequestBudget | None = None,
     ) -> None:
         self.profile = profile
         self._secret_getter = secret_getter
@@ -164,7 +166,11 @@ class NativeRealtimeTransport:
         self._monotonic = monotonic
         self._sleeper = sleeper
         self._lock = threading.Lock()
-        self._last_request_started: float | None = None
+        self._request_budget = request_budget or ApplicationRequestBudget(
+            profile.min_interval_seconds,
+            clock=monotonic,
+            sleeper=sleeper,
+        )
         self.version = f"tushare-{self._client.version}"
 
     def execute(self, request: TransportRequest) -> TransportResult:
@@ -181,11 +187,22 @@ class NativeRealtimeTransport:
             self._client.configure(token, str(self.profile.verify_url).rstrip("/"))
             for offset in range(0, len(codes), self.profile.batch_size):
                 batch = codes[offset : offset + self.profile.batch_size]
-                self._wait_for_rate_limit()
+                self._request_budget.acquire()
                 try:
                     rows = self._client.fetch(batch, source=self.profile.source)
                 except Exception as exc:
-                    raise ProviderError(_safe_failure_reason(exc)) from None
+                    reason = _safe_failure_reason(exc)
+                    retry_after = (
+                        exc.retry_after_seconds
+                        if isinstance(exc, ProviderError)
+                        else None
+                    )
+                    if reason is ProviderFailureReason.RATE_LIMITED:
+                        retry_after = self._request_budget.pause_for(retry_after)
+                    raise ProviderError(
+                        reason,
+                        retry_after_seconds=retry_after,
+                    ) from None
                 if rows is None or not rows:
                     raise ProviderError(ProviderFailureReason.EMPTY_DATA)
                 received = _as_shanghai(self._clock())
@@ -243,18 +260,6 @@ class NativeRealtimeTransport:
                 fields_used=request.fields,
             ),
         )
-
-    def _wait_for_rate_limit(self) -> None:
-        now = self._monotonic()
-        if self._last_request_started is not None:
-            remaining = self.profile.min_interval_seconds - (
-                now - self._last_request_started
-            )
-            if remaining > 0:
-                self._sleeper(remaining)
-                now = self._monotonic()
-        self._last_request_started = now
-
 
 def _validated_codes(value: str | int | float | bool | None) -> tuple[str, ...]:
     if not isinstance(value, str):
@@ -368,8 +373,13 @@ def _as_shanghai(value: datetime) -> datetime:
 
 
 def _safe_failure_reason(exc: Exception) -> ProviderFailureReason:
+    if isinstance(exc, ProviderError):
+        return exc.reason
     if isinstance(exc, PermissionError):
         return ProviderFailureReason.PERMISSION_DENIED
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 429 or "429" in str(exc) or "rate limit" in str(exc).casefold():
+        return ProviderFailureReason.RATE_LIMITED
     name = type(exc).__name__.casefold()
     if "timeout" in name:
         return ProviderFailureReason.TIMEOUT

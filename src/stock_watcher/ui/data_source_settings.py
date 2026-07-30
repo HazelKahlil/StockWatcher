@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from threading import Lock
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -27,6 +28,13 @@ from stock_watcher.config import (
     HttpProfile,
 )
 from stock_watcher.paths import runtime_paths
+from stock_watcher.providers.tushare.capabilities import (
+    CapabilityCheckCoordinator,
+    ProviderCapability,
+    ProviderCapabilityStatus,
+    aggregate_capability_status,
+)
+from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
 from stock_watcher.security import (
     FAST_CREDENTIAL,
     PRIMARY_CREDENTIAL,
@@ -39,6 +47,7 @@ from stock_watcher.security import (
 from .data_source_status import (
     CredentialTester,
     CredentialTestResult,
+    LightweightCredentialTester,
     TusharePrimaryCredentialTester,
 )
 
@@ -57,12 +66,19 @@ class DataSourceSettingsController:
     tester: CredentialTester = field(default_factory=TusharePrimaryCredentialTester)
     repository: DataSourceConfigRepository | None = None
     on_provider_changed: Callable[[DataSourceMode], None] | None = None
+    request_budget: ApplicationRequestBudget | None = None
+    capability_checks: CapabilityCheckCoordinator | None = None
     _pending: dict[str, PendingCredential] = field(default_factory=dict)
     _last_results: dict[str, CredentialTestResult] = field(default_factory=dict)
+    _test_lock: Lock = field(default_factory=Lock)
 
     def __post_init__(self) -> None:
         if self.repository is not None:
             self.settings = self.repository.load()
+        if self.request_budget is not None and isinstance(
+            self.tester, LightweightCredentialTester
+        ):
+            self.tester.request_budget = self.request_budget
 
     def profile(self, name: str) -> HttpProfile:
         if name == "primary":
@@ -90,6 +106,33 @@ class DataSourceSettingsController:
             return False
 
     def test_candidate(
+        self,
+        name: str,
+        secret: str,
+        *,
+        base_url: str,
+        use_system_proxy: bool,
+    ) -> CredentialTestResult:
+        if not self._test_lock.acquire(blocking=False):
+            return CredentialTestResult(
+                success=False,
+                tested_at=datetime.now().astimezone(),
+                status_text="基础连接正在检测，请等待当前检查完成。",
+                permission_summary="当前只允许一个在途 Token 检查。",
+                expires_at="未知",
+                safe_reason="check_in_progress",
+            )
+        try:
+            return self._test_candidate_locked(
+                name,
+                secret,
+                base_url=base_url,
+                use_system_proxy=use_system_proxy,
+            )
+        finally:
+            self._test_lock.release()
+
+    def _test_candidate_locked(
         self,
         name: str,
         secret: str,
@@ -168,6 +211,11 @@ class DataSourceSettingsController:
         self.settings = next_settings
         pending.secret = ""
         self._pending.pop(name, None)
+        if name == "primary" and self.capability_checks is not None:
+            # The new Token is now atomically stored.  All remaining checks are
+            # deliberately asynchronous and independent of this save result.
+            self.capability_checks.reset()
+            self.capability_checks.start_background()
         if self.on_provider_changed is not None:
             self.on_provider_changed(selected_mode)
         return True
@@ -197,6 +245,8 @@ class DataSourceSettingsController:
             removed = self.store.delete(self.reference(name))
         except Exception:
             return False
+        if name == "primary" and self.capability_checks is not None:
+            self.capability_checks.reset()
         if self.on_provider_changed is not None:
             self.on_provider_changed(self.settings.mode)
         return removed
@@ -215,6 +265,20 @@ class DataSourceSettingsController:
             pending.secret = ""
         self._pending.clear()
 
+    def capability_statuses(
+        self,
+    ) -> dict[ProviderCapability, ProviderCapabilityStatus]:
+        if self.capability_checks is None:
+            return {}
+        return self.capability_checks.statuses()
+
+    def start_capability_checks(self, *, retry_failed: bool = False) -> bool:
+        if self.capability_checks is None or not self.credential_present("primary"):
+            return False
+        if retry_failed:
+            return self.capability_checks.retry_now()
+        return self.capability_checks.start_background()
+
 
 class _PrimaryEditor(QGroupBox):
     def __init__(
@@ -229,7 +293,7 @@ class _PrimaryEditor(QGroupBox):
         form = QFormLayout()
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.secret.setPlaceholderText("输入 Token；只保存到 Windows 凭据管理器")
+        self.secret.setPlaceholderText("输入 Token；只保存到系统安全存储")
         self.status = QLabel(
             "已设置，可测试或更换"
             if controller.credential_present("primary")
@@ -239,16 +303,30 @@ class _PrimaryEditor(QGroupBox):
         self.last_test = QLabel("尚未检测")
         self.permission = QLabel("保存后将用于实时行情、历史和板块")
         self.permission.setWordWrap(True)
+        self.basic_capability = QLabel("等待保存 Token")
+        self.realtime_capability = QLabel("等待保存 Token")
+        self.sector_history_capability = QLabel("等待保存 Token")
+        for label in (
+            self.basic_capability,
+            self.realtime_capability,
+            self.sector_history_capability,
+        ):
+            label.setWordWrap(True)
         form.addRow("Token", self.secret)
         form.addRow("当前状态", self.status)
         form.addRow("最近检测", self.last_test)
-        form.addRow("能力摘要", self.permission)
+        form.addRow("基础数据", self.basic_capability)
+        form.addRow("实时行情", self.realtime_capability)
+        form.addRow("板块与历史", self.sector_history_capability)
+        form.addRow("检测说明", self.permission)
         layout.addLayout(form)
 
         buttons = QHBoxLayout()
-        self.save_button = QPushButton("测试连接并保存")
+        self.save_button = QPushButton("测试并保存")
+        self.recheck_button = QPushButton("重新检测")
         self.clear_button = QPushButton("清除")
         buttons.addWidget(self.save_button)
+        buttons.addWidget(self.recheck_button)
         buttons.addWidget(self.clear_button)
         layout.addLayout(buttons)
 
@@ -272,7 +350,13 @@ class _PrimaryEditor(QGroupBox):
         layout.addWidget(self.advanced)
 
         self.save_button.clicked.connect(self._test_and_save)
+        self.recheck_button.clicked.connect(self._recheck)
         self.clear_button.clicked.connect(self._clear)
+        self._capability_timer = QTimer(self)
+        self._capability_timer.setInterval(500)
+        self._capability_timer.timeout.connect(self._refresh_capabilities)
+        self._capability_timer.start()
+        self._refresh_capabilities()
 
     def _set_advanced_visible(self, checked: bool) -> None:
         for child in self.advanced.findChildren(QWidget):
@@ -302,10 +386,70 @@ class _PrimaryEditor(QGroupBox):
                 confirmed=answer == QMessageBox.StandardButton.Yes,
             ):
                 self.secret.clear()
-                self.status.setText("已连接；正在重新预热数据")
+                self.status.setText("Token 已保存；正在后台分项检测并重新预热数据")
+                self.controller.start_capability_checks()
+                self._refresh_capabilities()
             elif answer == QMessageBox.StandardButton.Yes:
                 self.status.setText("保存失败；原 Token 保持不变")
         self.save_button.setEnabled(True)
+
+    def _recheck(self) -> None:
+        if not self.controller.credential_present("primary"):
+            self.status.setText("请先测试并保存 Token。")
+            return
+        started = self.controller.start_capability_checks(retry_failed=True)
+        self.status.setText("正在后台分项检测。" if started else "检测正在进行或等待限流恢复。")
+        self._refresh_capabilities()
+
+    def _refresh_capabilities(self) -> None:
+        statuses = self.controller.capability_statuses()
+        if not statuses:
+            if self.controller.credential_present("primary"):
+                self.basic_capability.setText("等待后台检测")
+                self.realtime_capability.setText("等待后台检测")
+                self.sector_history_capability.setText("等待后台检测")
+            return
+        self.controller.start_capability_checks()
+        self.basic_capability.setText(
+            self._capability_text(
+                statuses,
+                (ProviderCapability.STOCK_LIST, ProviderCapability.TRADE_CALENDAR),
+            )
+        )
+        self.realtime_capability.setText(
+            self._capability_text(
+                statuses,
+                (
+                    ProviderCapability.REALTIME_1,
+                    ProviderCapability.REALTIME_100,
+                    ProviderCapability.REALTIME_300,
+                    ProviderCapability.REALTIME_800,
+                ),
+            )
+        )
+        self.sector_history_capability.setText(
+            self._capability_text(
+                statuses,
+                (
+                    ProviderCapability.SECTOR_CLASSIFICATION,
+                    ProviderCapability.HISTORICAL_MINUTES,
+                ),
+            )
+        )
+
+    @staticmethod
+    def _capability_text(
+        statuses: dict[ProviderCapability, ProviderCapabilityStatus],
+        capabilities: tuple[ProviderCapability, ...],
+    ) -> str:
+        selected = [statuses[capability] for capability in capabilities]
+        worst = aggregate_capability_status(selected)
+        detail = worst.display_text
+        if worst.last_success_at is not None:
+            detail += f"｜最近成功 {worst.last_success_at.strftime('%H:%M:%S')}"
+        if worst.next_retry_at is not None:
+            detail += f"｜预计恢复 {worst.next_retry_at.strftime('%H:%M:%S')}"
+        return detail
 
     def _clear(self) -> None:
         answer = QMessageBox.question(
@@ -336,7 +480,7 @@ class DataSourceSettingsDialog(QDialog):
         title = QLabel("数据接口")
         title.setObjectName("dialogTitle")
         description = QLabel(
-            "只需一个 Tushare Token。Token 仅保存在 Windows 凭据管理器，"
+            "只需一个 Tushare Token。Token 仅保存在系统安全存储，"
             "测试失败不会替换当前 Token。"
         )
         description.setObjectName("dialogDescription")
@@ -405,10 +549,30 @@ class DataSourceSettingsDialog(QDialog):
 
 def runtime_data_source_controller(
     on_provider_changed: Callable[[DataSourceMode], None] | None = None,
+    *,
+    credential_store: CredentialStore | None = None,
+    request_budget: ApplicationRequestBudget | None = None,
+    capability_checks: CapabilityCheckCoordinator | None = None,
 ) -> DataSourceSettingsController:
     paths = runtime_paths()
     repository = DataSourceConfigRepository(paths.root / "config" / "data-sources.yaml")
+    settings = repository.load()
+    store = credential_store or KeyringCredentialStore()
+    budget = request_budget or ApplicationRequestBudget(
+        settings.request_budget_interval_seconds
+    )
+    checks = capability_checks or CapabilityCheckCoordinator.for_profiles(
+        settings.primary_profile,
+        settings.native_realtime_profile,
+        lambda: store.get(PRIMARY_CREDENTIAL),
+        request_budget=budget,
+    )
     return DataSourceSettingsController(
+        settings=settings,
+        store=store,
+        tester=LightweightCredentialTester(request_budget=budget),
         repository=repository,
         on_provider_changed=on_provider_changed,
+        request_budget=budget,
+        capability_checks=checks,
     )

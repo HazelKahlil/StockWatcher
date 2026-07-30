@@ -16,9 +16,15 @@ from stock_watcher.engine import (
     FundCapability,
 )
 from stock_watcher.providers.tushare import ProProxyTransport, Tushare15000Provider
+from stock_watcher.providers.tushare.capabilities import (
+    CAPABILITY_ORDER,
+    CapabilityCheckCoordinator,
+    ProviderCapabilityState,
+)
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
 )
+from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
 from stock_watcher.runtime import (
     DataHealthConfig,
     DataHealthTracker,
@@ -74,13 +80,39 @@ class TushareV1Session:
         credential_store: CredentialStore | None = None,
         settings: DataSourceSettings | None = None,
         runtime_factory: RuntimeFactory | None = None,
+        capability_checks: CapabilityCheckCoordinator | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.store = SQLiteStore(store_path)
         self.store.initialize()
         self.credential_store = credential_store or KeyringCredentialStore()
         self.settings = settings or DataSourceSettings()
-        self._runtime_factory = runtime_factory or _runtime_factory
+        self._request_budget = ApplicationRequestBudget(
+            self.settings.request_budget_interval_seconds
+        )
+        self._capability_checks_required = runtime_factory is None
+        self.capability_checks = capability_checks
+        if self.capability_checks is None and self._capability_checks_required:
+            self.capability_checks = CapabilityCheckCoordinator.for_profiles(
+                self.settings.primary_profile,
+                self.settings.native_realtime_profile,
+                self._primary_secret,
+                request_budget=self._request_budget,
+            )
+        if runtime_factory is None:
+            def budgeted_runtime_factory(
+                current_settings: DataSourceSettings,
+                store: CredentialStore,
+            ) -> tuple[TushareV1Runtime, Tushare15000Provider]:
+                return _runtime_factory(
+                    current_settings,
+                    store,
+                    request_budget=self._request_budget,
+                )
+
+            self._runtime_factory: RuntimeFactory = budgeted_runtime_factory
+        else:
+            self._runtime_factory = runtime_factory
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._schedule = MarketSessionSchedule()
         self._alert_policy = AlertPolicy()
@@ -159,6 +191,9 @@ class TushareV1Session:
         secret_present = self._primary_present()
         if not secret_present:
             self._set_missing_credential()
+            return
+        if self._capability_checks_required and not self._capabilities_ready():
+            self._set_capability_warming()
             return
         if self._runtime is None or self._provider is None:
             self._runtime, self._provider = self._runtime_factory(
@@ -244,7 +279,17 @@ class TushareV1Session:
         )
         if outcome.batch is not None:
             self.batch = outcome.batch
-        if outcome.health is HealthState.HEALTHY:
+        if outcome.failure_reason == "rate_limited":
+            remaining = self._request_budget.cooldown_remaining()
+            self.data_gate_label = "等待限流恢复"
+            self.candidate_gate_label = "保留上次结果" if self.batch else "暂停新候选"
+            self.connection_state = TqConnectionState.CHECKING
+            self.connection_detail = "接口暂时限流，已保存Token，等待自动恢复。"
+            self.health_detail = self.connection_detail
+            self.status_issues = (
+                f"预计约 {max(1, round(remaining))} 秒后从失败环节继续检测。",
+            )
+        elif outcome.health is HealthState.HEALTHY:
             self.data_gate_label = "运行正常"
             self.candidate_gate_label = "3只观察"
             self.phase_label = _phase(now)
@@ -450,11 +495,73 @@ class TushareV1Session:
         else:
             self._set_missing_credential()
 
-    def _primary_present(self) -> bool:
+    def _primary_secret(self) -> str | None:
         try:
-            return bool(self.credential_store.get(PRIMARY_CREDENTIAL))
+            return self.credential_store.get(PRIMARY_CREDENTIAL)
         except Exception:
-            return False
+            return None
+
+    def _primary_present(self) -> bool:
+        return bool(self._primary_secret())
+
+    def _capabilities_ready(self) -> bool:
+        if self.capability_checks is None:
+            return True
+        self.capability_checks.start_background()
+        statuses = self.capability_checks.statuses()
+        return bool(statuses) and all(
+            statuses[capability].state is ProviderCapabilityState.AVAILABLE
+            for capability in CAPABILITY_ORDER
+        )
+
+    def _set_capability_warming(self) -> None:
+        assert self.capability_checks is not None
+        statuses = self.capability_checks.statuses()
+        rate_limited = [
+            status
+            for status in statuses.values()
+            if status.state is ProviderCapabilityState.RATE_LIMITED
+        ]
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.data_gate_label = "后台准备"
+        self.candidate_gate_label = "等待数据准备"
+        if rate_limited:
+            earliest = min(
+                (
+                    status.next_retry_at
+                    for status in rate_limited
+                    if status.next_retry_at is not None
+                ),
+                default=None,
+            )
+            retry_note = (
+                f"预计 {earliest.strftime('%H:%M:%S')} 自动恢复。"
+                if earliest is not None
+                else "等待自动恢复。"
+            )
+            self.connection_detail = "接口暂时限流，已保存Token，等待自动恢复。"
+            self.health_detail = self.connection_detail
+            self.status_issues = (retry_note,)
+            return
+        self.connection_detail = "Token已保存，正在分项准备基础数据、实时行情和板块历史。"
+        self.health_detail = "能力检测完成后将开始预热；资金未确认不会阻塞候选。"
+        self.status_issues = ("恢复后仍需连续3轮新鲜完整数据。",)
+
+    def data_source_controller(self) -> object:
+        """Create the settings controller on this session's shared budget."""
+        from .data_source_settings import runtime_data_source_controller
+
+        return runtime_data_source_controller(
+            self.provider_changed,
+            credential_store=self.credential_store,
+            request_budget=self._request_budget,
+            capability_checks=self.capability_checks,
+        )
+
+    def shutdown(self) -> None:
+        if self.capability_checks is not None:
+            self.capability_checks.shutdown()
 
     def _set_missing_credential(self) -> None:
         try:
@@ -534,14 +641,24 @@ class TushareV1Session:
 def _runtime_factory(
     settings: DataSourceSettings,
     credential_store: CredentialStore,
+    *,
+    request_budget: ApplicationRequestBudget | None = None,
 ) -> tuple[TushareV1Runtime, Tushare15000Provider]:
     def secret_getter() -> str | None:
         return credential_store.get(PRIMARY_CREDENTIAL)
 
-    pro = ProProxyTransport(settings.primary_profile, secret_getter)
+    budget = request_budget or ApplicationRequestBudget(
+        settings.request_budget_interval_seconds
+    )
+    pro = ProProxyTransport(
+        settings.primary_profile,
+        secret_getter,
+        request_budget=budget,
+    )
     realtime = NativeRealtimeTransport(
         settings.native_realtime_profile,
         secret_getter,
+        request_budget=budget,
     )
     provider = Tushare15000Provider(pro, realtime)
     coordinator = FullMarketScanCoordinator(

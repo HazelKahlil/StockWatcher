@@ -47,7 +47,7 @@ class NativeRealtimeProfile(BaseModel):
     credential_ref: str = "StockWatcher/Tushare/Primary"
     source: Literal["sina"] = "sina"
     batch_size: int = Field(default=800, ge=1, le=800)
-    min_interval_seconds: float = Field(default=0.5, ge=0.5, le=30)
+    min_interval_seconds: float = Field(default=1.0, ge=0.6, le=30)
     stale_after_seconds: float = Field(default=60.0, gt=0, le=120)
 
     @field_validator("verify_url")
@@ -81,6 +81,7 @@ class DataSourceSettings(BaseModel):
         enabled=False,
     )
     native_realtime_profile: NativeRealtimeProfile = NativeRealtimeProfile()
+    request_budget_interval_seconds: float = Field(default=1.0, ge=0.6, le=30)
     super_pro_prefix: str = "/tushare/pro"
     realtime_warmup_cycles: int = Field(default=3, ge=3, le=30)
     scan_target_seconds: float = Field(default=10.0, ge=5.0, le=60.0)

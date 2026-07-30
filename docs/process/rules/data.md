@@ -24,11 +24,12 @@
 - 普通/历史主接口固定为内置的 Tushare Pro 代理 `https://fastapic.stockai888.top`；
   主实时入口固定为 `tushare.realtime_quote(..., src="sina")`，原生实时校验地址为
   `https://realtime.stockai888.top`。`rt_k`、旧 Super 和 TdxQuant 只保留高级诊断。
-- Pro 请求启用 gzip，尽量批量读取；批次请求启动间隔不得小于 0.5 秒，不做逐股高并发循环。
-- `native_realtime` 是独立实时 profile：每批最多 800 只、请求启动间隔至少 0.5 秒，
+- Pro、原生实时、Token/能力检测、历史预热和扫描共用应用级请求预算；默认请求启动间隔为
+  1 秒、配置不得低于 0.6 秒，禁止逐股高并发循环。
+- `native_realtime` 是独立实时 profile：每批最多 800 只、请求启动间隔经上述共享预算控制，
   每行保留 SDK 返回的 `DATE + TIME`，旧日期、缺时间、重复或回滚行不得进入候选。
   核心行情、时间戳和板块新鲜时允许生成候选；资金缺失只降级资金项，不得关闭候选。
-- 原生 SDK 凭据只能从 Windows Credential Manager 读取并在单次受锁调用中驻留内存；
+- 原生 SDK 凭据只能从系统凭据存储读取并在单次受锁调用中驻留内存；
   禁止调用会在用户目录生成 `tk.csv` 的 SDK 持久化函数，也禁止环境变量或文件兜底。
 - 普通 UI 只有一个 Token，Pro 代理和原生实时共用；不得写入源码、YAML、SQLite、日志、
   截图、fixture、命令行参数或安装包。

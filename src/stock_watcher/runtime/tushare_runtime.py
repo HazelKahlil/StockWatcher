@@ -30,6 +30,7 @@ from stock_watcher.engine import (
     StrongMovementEvent,
     ThreeDayTrend,
 )
+from stock_watcher.providers.tushare.errors import ProviderError
 from stock_watcher.providers.tushare.models import TransportResult
 
 from .data_health import DataHealthTracker
@@ -598,6 +599,8 @@ def _security_profiles(
 
 
 def _safe_scan_failure(error: Exception) -> str:
+    if isinstance(error, ProviderError):
+        return error.reason.value
     if isinstance(error, ScanInProgressError):
         return "overlap"
     if isinstance(error, SnapshotSequenceError):

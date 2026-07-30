@@ -5,8 +5,10 @@
 
 ## 活跃版本
 
+- **[v0.4.1-shared-connection-gate](v0.4.1-shared-connection-gate/README.md)** —
+  跨平台 Tushare Token 连接门、能力检测与应用级限流返修（状态：本地完成，待 Mac 分支消费）。
 - **[v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md)** —
-  Windows 全市场真实 Top3、稳定替换、提醒、历史与总结闭环（状态：进行中）。
+  Windows 全市场真实 Top3、稳定替换、提醒、历史与总结闭环（状态：Windows 真实验收未通过）。
 - [v0.3.1-windows-tushare-data-gate](v0.3.1-windows-tushare-data-gate/README.md) —
   历史数据接入阶段；其 Super/Fast 默认路线已被 2026-07-29 V1 基线取代。
 - [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) — 已取得 Windows/TdxQuant
@@ -28,6 +30,7 @@
 | [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 以 Windows + 官方 TdxQuant 取得只读真实数据、授权和共享核心结论 | 进行中（HAZ-526 后继候选待 Windows live readback 与 ≥30 分钟 M0） | |
 | [v0.3.1-windows-tushare-data-gate](v0.3.1-windows-tushare-data-gate/README.md) | 跨平台 Tushare 兼容 HTTP 数据闸门，Windows 优先 | 进行中 | |
 | [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | Windows 全市场真实 Top3、提醒、历史与总结闭环 | 进行中 | |
+| [v0.4.1-shared-connection-gate](v0.4.1-shared-connection-gate/README.md) | 从冻结 Windows V1 基线提取的跨平台连接门、能力检测与限流返修 | 本地完成，待 Mac 分支消费 | |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
 
 ## 候选方向（尚未登记为执行版本）

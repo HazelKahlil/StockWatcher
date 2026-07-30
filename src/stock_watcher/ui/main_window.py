@@ -862,8 +862,14 @@ class MainWindow(QMainWindow):
         DeveloperInfoDialog(self.session, self).exec()
 
     def _open_data_source_settings(self) -> None:
+        controller_factory = getattr(self.session, "data_source_controller", None)
+        controller = (
+            controller_factory()
+            if callable(controller_factory)
+            else runtime_data_source_controller(self.session.provider_changed)
+        )
         DataSourceSettingsDialog(
-            runtime_data_source_controller(self.session.provider_changed),
+            controller,
             parent=self,
         ).exec()
 
@@ -874,4 +880,7 @@ class MainWindow(QMainWindow):
             self._operation_thread.wait(6000)
         if self._popup is not None:
             self._popup.close()
+        shutdown = getattr(self.session, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
         event.accept()
