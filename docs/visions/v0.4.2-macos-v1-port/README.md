@@ -44,6 +44,8 @@ TdxQuant/M0 通过证据。
 - [x] 内部测试入口：`scripts/install_macos_dev_app.py` 可生成
   `~/Applications/StockWatcher Dev.app`，使用 macOS 留白图标并从当前工程启动真实 UI，方便
   Human Owner 打开“数据接口”手动输入 Token；它不是最终 PyInstaller 发布包。
+- [x] 主界面布局调整：压缩顶部状态和连接说明区，把候选列表/空候选占位作为主视觉区域，
+  避免接口状态抢占 3 只观察股票的位置。
 
 ### 仍待真实环境验证
 

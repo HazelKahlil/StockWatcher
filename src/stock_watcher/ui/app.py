@@ -24,18 +24,18 @@ QMenuBar::item:selected, QMenu::item:selected { background: #e8f1ff; color: #167
 QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #appBrand { font-size: 15px; font-weight: 700; color: #364456; }
 #testBadge { color: #1670df; background: #e7f1ff; border-radius: 9px; padding: 4px 9px; }
-#pageTitle { font-size: 30px; font-weight: 750; color: #142235; }
+#pageTitle { font-size: 28px; font-weight: 750; color: #142235; }
 #summaryCard, #candidateCard, #metricsCard, #reasonCard, #historyCard {
     background: #ffffff; border: 1px solid #e1e7ef; border-radius: 14px;
 }
-#summaryCard { padding: 4px; }
-#summaryLabel, #candidateMeta, #metricLabel { color: #748296; font-size: 13px; }
-#summaryValue { font-size: 18px; font-weight: 700; color: #1c2d42; }
+#summaryCard { padding: 0; }
+#summaryLabel, #candidateMeta, #metricLabel { color: #748296; font-size: 12px; }
+#summaryValue { font-size: 16px; font-weight: 700; color: #1c2d42; }
 #summaryValue[state="connected"] { color: #17814f; }
 #summaryValue[state="checking"] { color: #1670df; }
 #summaryValue[state="disconnected"] { color: #c63f3f; }
 #summaryValue[state="not_applicable"] { color: #667487; }
-#candidateCard { min-height: 72px; }
+#candidateCard { min-height: 96px; }
 #candidateCard:hover { background: #fbfdff; border-color: #b8d4f8; }
 #cardsScroll, #cardsScroll > QWidget > QWidget, #cardsHost {
     background: transparent; border: none;
@@ -56,16 +56,16 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #levelBadge[level="强"] { color: #d93636; background: #fff0f0; border: 1px solid #ffcaca; }
 #levelBadge[level="中"] { color: #b87700; background: #fff7df; border: 1px solid #ffe0a0; }
 #levelBadge[level="近"] { color: #6d7785; background: #f0f2f5; border: 1px solid #d8dee6; }
-#interruptCard { background: #fffaf0; border: 1px solid #f3dfac; border-radius: 14px; }
-#interruptTitle { color: #9a731d; font-size: 22px; font-weight: 750; }
-#interruptMessage { color: #39495d; font-size: 16px; }
-#issueList { color: #6e5b2d; font-size: 14px; }
-#interruptMeta { color: #7c8795; font-size: 14px; }
+#interruptCard { background: #fffaf0; border: 1px solid #f3dfac; border-radius: 12px; }
+#interruptTitle { color: #9a731d; font-size: 18px; font-weight: 750; }
+#interruptMessage { color: #39495d; font-size: 14px; }
+#issueList { color: #6e5b2d; font-size: 13px; }
+#interruptMeta { color: #7c8795; font-size: 12px; }
 #emptyState {
     color: #6c798a; background: #f8fafc; border: 1px dashed #ced7e2;
-    border-radius: 12px; padding: 24px; font-size: 15px;
+    border-radius: 12px; padding: 36px; font-size: 16px;
 }
-#sectionTitle { color: #405067; font-size: 17px; font-weight: 700; }
+#sectionTitle { color: #405067; font-size: 20px; font-weight: 750; }
 #primaryButton, #secondaryButton, #dangerButton {
     border-radius: 9px; padding: 11px 18px; font-size: 16px;
 }

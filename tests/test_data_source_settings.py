@@ -12,10 +12,12 @@ from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
 )
 
 from stock_watcher.config import DataSourceMode, DataSourceSettings  # noqa: E402
@@ -210,6 +212,33 @@ def test_ordinary_v1_main_window_hides_provider_and_gate_jargon(tmp_path: Path) 
     for forbidden in ("M0", "Data Gate", "Provider", "Super", "Fast", "Native"):
         assert forbidden not in visible_copy
     assert "开发" not in menu_copy
+    window.close()
+    app.processEvents()
+
+
+def test_v1_main_window_prioritizes_candidate_area_over_status_copy(
+    tmp_path: Path,
+) -> None:
+    app = application()
+    session = TushareV1Session(
+        tmp_path / "v1.sqlite3",
+        credential_store=MemoryCredentialStore(),
+    )
+    window = MainWindow(session)
+    app.processEvents()
+
+    summary = window.findChild(QFrame, "summaryCard")
+    interrupt = window.findChild(QFrame, "interruptCard")
+    cards = window.findChild(QScrollArea, "cardsScroll")
+    empty = window.findChild(QLabel, "emptyState")
+
+    assert summary is not None and summary.maximumHeight() <= 88
+    assert interrupt is not None and interrupt.maximumHeight() <= 138
+    assert cards is not None and cards.minimumHeight() >= 280
+    assert empty is not None and empty.minimumHeight() >= 150
+    assert "固定显示3只观察股票" in empty.text()
+    assert "说明：" not in " ".join(label.text() for label in window.findChildren(QLabel))
+
     window.close()
     app.processEvents()
 

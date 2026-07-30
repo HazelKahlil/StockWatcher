@@ -67,9 +67,9 @@ class CandidateCard(QFrame):
         self.setProperty("level", row.level)
         self.setProperty("previous", previous)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(84)
+        self.setMinimumHeight(104)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(18)
 
         rank_label = QLabel(str(rank))
@@ -402,8 +402,8 @@ class MainWindow(QMainWindow):
         self._secondary_notification: Callable[[str, str], bool] | None = None
         self._initial_data_source_dialog: DataSourceSettingsDialog | None = None
         self.setWindowTitle(session.window_title)
-        self.resize(1040, 720)
-        self.setMinimumSize(860, 620)
+        self.resize(1040, 760)
+        self.setMinimumSize(880, 640)
         self._build()
         self._refresh()
         self._auto_check_timer = QTimer(self)
@@ -424,8 +424,8 @@ class MainWindow(QMainWindow):
         self._build_developer_menu()
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(34, 26, 34, 24)
-        root.setSpacing(16)
+        root.setContentsMargins(28, 22, 28, 18)
+        root.setSpacing(10)
 
         app_bar = QHBoxLayout()
         brand = QLabel("A股观察提醒")
@@ -446,9 +446,10 @@ class MainWindow(QMainWindow):
 
         self._summary_card = QFrame()
         self._summary_card.setObjectName("summaryCard")
+        self._summary_card.setMaximumHeight(88)
         summary_layout = QGridLayout(self._summary_card)
-        summary_layout.setContentsMargins(22, 18, 22, 18)
-        summary_layout.setHorizontalSpacing(18)
+        summary_layout.setContentsMargins(18, 12, 18, 12)
+        summary_layout.setHorizontalSpacing(20)
         self._health = self._add_summary_item(summary_layout, "数据状态", 0, 0)
         self._updated = self._add_summary_item(summary_layout, "最后更新时间", 0, 1)
         self._connection = self._add_summary_item(
@@ -460,21 +461,26 @@ class MainWindow(QMainWindow):
 
         self._interrupt_card = QFrame()
         self._interrupt_card.setObjectName("interruptCard")
+        self._interrupt_card.setMaximumHeight(138)
         interrupt_layout = QVBoxLayout(self._interrupt_card)
-        interrupt_layout.setContentsMargins(24, 20, 24, 20)
+        interrupt_layout.setContentsMargins(18, 12, 18, 12)
+        interrupt_layout.setSpacing(5)
+        interrupt_head = QHBoxLayout()
+        interrupt_head.setSpacing(14)
         self._interrupt_title = QLabel("数据中断")
         self._interrupt_title.setObjectName("interruptTitle")
         self._interrupt_message = QLabel()
         self._interrupt_message.setObjectName("interruptMessage")
         self._interrupt_message.setWordWrap(True)
+        interrupt_head.addWidget(self._interrupt_title)
+        interrupt_head.addWidget(self._interrupt_message, 1)
         self._issue_list = QLabel()
         self._issue_list.setObjectName("issueList")
         self._issue_list.setWordWrap(True)
         self._interrupt_last_update = QLabel()
         self._interrupt_last_update.setObjectName("interruptMeta")
         self._interrupt_last_update.setWordWrap(True)
-        interrupt_layout.addWidget(self._interrupt_title)
-        interrupt_layout.addWidget(self._interrupt_message)
+        interrupt_layout.addLayout(interrupt_head)
         interrupt_layout.addWidget(self._issue_list)
         interrupt_layout.addWidget(self._interrupt_last_update)
         root.addWidget(self._interrupt_card)
@@ -495,6 +501,7 @@ class MainWindow(QMainWindow):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self._cards_scroll.setWidget(cards_host)
+        self._cards_scroll.setMinimumHeight(280)
         root.addWidget(self._cards_scroll, 1)
 
         actions = QHBoxLayout()
@@ -658,14 +665,15 @@ class MainWindow(QMainWindow):
 
         issues = self.session.status_issues
         self._issue_list.setText(
-            "说明：\n" + "\n".join(f"• {issue}" for issue in issues)
+            " · ".join(issues[:2])
             if issues
             else ""
         )
+        last_fetch = self._format_status_time(self.session.last_fetch_at)
+        fetch_detail = self.session.last_fetch_detail.replace("\n", " ")
         self._interrupt_last_update.setText(
             f"最近连接检测：{self._format_status_time(self.session.last_connection_check)}"
-            f"\n最近人工抓取：{self._format_status_time(self.session.last_fetch_at)}"
-            f"\n{self.session.last_fetch_detail}"
+            f"｜最近抓取：{last_fetch}｜{fetch_detail}"
         )
 
         rows = snapshot.candidates if healthy else snapshot.previous_candidates
@@ -677,9 +685,10 @@ class MainWindow(QMainWindow):
             self._cards.addWidget(card)
         if not rows:
             empty = QLabel(
-                "当前没有可显示的新结果。完成数据准备后会在这里持续显示3只观察股票。"
+                "完成数据准备后，这里会固定显示3只观察股票。"
             )
             empty.setObjectName("emptyState")
+            empty.setMinimumHeight(150)
             empty.setWordWrap(True)
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._cards.addWidget(empty)
