@@ -11,9 +11,11 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QComboBox,
+    QFormLayout,
     QGroupBox,
     QLabel,
     QLineEdit,
+    QPushButton,
 )
 
 from stock_watcher.config import DataSourceMode, DataSourceSettings  # noqa: E402
@@ -136,6 +138,50 @@ def test_macos_data_source_dialog_hides_urls_and_advanced_diagnostics() -> None:
     assert "接口地址" not in copy
     assert "接口地址" not in group_titles
     assert "高级诊断" not in group_titles
+    dialog.close()
+    app.processEvents()
+
+
+def test_data_source_dialog_keeps_token_controls_readable_and_actionable() -> None:
+    app = application()
+    controller = DataSourceSettingsController(
+        store=MemoryCredentialStore(), tester=NoNetworkTester()
+    )
+    dialog = DataSourceSettingsDialog(controller, platform="darwin")
+    dialog.show()
+    app.processEvents()
+
+    form = dialog.findChild(QFormLayout, "dataSourceForm")
+    token_input = dialog.findChild(QLineEdit, "tokenInput")
+    token_hint = dialog.findChild(QLabel, "tokenInputHint")
+    save = dialog.findChild(QPushButton, "primaryButton")
+    recheck = next(
+        button
+        for button in dialog.findChildren(QPushButton)
+        if button.text() == "重新检测"
+    )
+    clear = dialog.findChild(QPushButton, "dangerButton")
+
+    assert form is not None
+    assert form.fieldGrowthPolicy() is QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+    assert token_input is not None
+    assert token_input.minimumWidth() >= 380
+    assert token_input.minimumHeight() >= 42
+    assert token_input.width() >= 380
+    assert token_hint is not None
+    assert "测试并保存" in token_hint.text()
+    assert "重新检测" in token_hint.text()
+    assert save is not None and save.isEnabled()
+    assert save.text() == "测试并保存"
+    assert recheck is not None and not recheck.isEnabled()
+    assert clear is not None and not clear.isEnabled()
+    assert dialog.minimumWidth() >= 680
+
+    save.click()
+    app.processEvents()
+    status = dialog.findChild(QLabel, "dataSourceStatus")
+    assert status is not None
+    assert status.text() == "请输入 Token。"
     dialog.close()
     app.processEvents()
 

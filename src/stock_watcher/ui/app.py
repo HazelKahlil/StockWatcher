@@ -66,13 +66,28 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
     border-radius: 12px; padding: 24px; font-size: 15px;
 }
 #sectionTitle { color: #405067; font-size: 17px; font-weight: 700; }
-#primaryButton, #secondaryButton { border-radius: 9px; padding: 11px 18px; font-size: 16px; }
+#primaryButton, #secondaryButton, #dangerButton {
+    border-radius: 9px; padding: 11px 18px; font-size: 16px;
+}
 #primaryButton { background: #1679ed; border: 1px solid #1679ed; color: #ffffff; }
 #primaryButton:hover { background: #0b68d5; }
 #primaryButton:disabled { background: #9cbfe6; border-color: #9cbfe6; }
 #secondaryButton { background: #ffffff; border: 1px solid #d3dce8; color: #33445a; }
 #secondaryButton:hover { background: #eef5ff; border-color: #a8c7ee; }
 #secondaryButton:disabled { color: #a2acb9; background: #f5f7fa; }
+#dangerButton { background: #ffffff; border: 1px solid #e2b8b8; color: #b64242; }
+#dangerButton:hover { background: #fff2f2; border-color: #d77878; }
+#dangerButton:disabled { color: #b4a3a3; background: #f7f7f7; border-color: #e4e4e4; }
+#dataSourceEditor { background: #fbfcfe; border: 1px solid #e1e7ef; border-radius: 12px; }
+#dataSourceEditor::title { subcontrol-origin: margin; left: 14px; padding: 0 6px; }
+#tokenInput {
+    background: #ffffff; border: 1px solid #afbed0; border-radius: 9px;
+    color: #1c2d42; padding: 9px 12px;
+}
+#tokenInput:hover { border-color: #7ea8dc; }
+#tokenInput:focus { background: #ffffff; border: 2px solid #1679ed; }
+#tokenInputHint, #dataSourcePermission { color: #6f7e91; font-size: 13px; }
+#dataSourceValue, #dataSourceStatus { color: #34465d; }
 #footer { color: #7d8999; font-size: 13px; }
 #statusDot { font-size: 14px; padding-right: 3px; }
 #statusDot[state="healthy"] { color: #35b968; }

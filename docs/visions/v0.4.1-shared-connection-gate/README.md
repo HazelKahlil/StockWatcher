@@ -32,6 +32,8 @@ Windows 真实验收继续为 `FAIL`：冻结基线在统一 Token 连接校验�
 - [x] 各能力独立显示；历史或板块失败不删除 Token，实时仍独立检测。
 - [x] 429 不作短间隔重试，并在冷却结束后从失败项续检。
 - [x] Pro 与原生实时共享同一请求启动预算。
+- [x] 数据接口页的 Token 输入框、保存提示和操作按钮在 macOS/Windows 使用可伸展表单列；
+  “测试并保存”为清晰主操作，未保存前的“重新检测/清除”保留可见但明确置灰。
 - [x] 默认离线 pytest、Ruff、Mypy、workspace、lock 和 diff 检查通过（235 passed，20 skipped，2 deselected）。
 
 ## 后续

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -305,25 +306,71 @@ class _PrimaryEditor(QGroupBox):
         show_advanced_settings: bool = True,
     ) -> None:
         super().__init__("Tushare 数据接口", parent)
+        self.setObjectName("dataSourceEditor")
         self.controller = controller
         profile = controller.profile("primary")
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 26, 22, 20)
+        layout.setSpacing(16)
         form = QFormLayout()
+        # QMacStyle defaults to keeping fields at their size hint.  Without an
+        # explicit policy, the Token input collapses to a short placeholder and
+        # the explanatory labels are laid out as if they had a tiny column.
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(12)
+        form.setObjectName("dataSourceForm")
+
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.secret.setPlaceholderText(
-            f"输入 Token；只保存到{controller.credential_storage_label}"
+        self.secret.setObjectName("tokenInput")
+        self.secret.setMinimumWidth(380)
+        self.secret.setMinimumHeight(42)
+        self.secret.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
         )
+        self.secret.setClearButtonEnabled(True)
+        self.secret.setAccessibleName("Tushare Token")
+        self.secret.setToolTip("粘贴 Token 后，点击“测试并保存”。")
+        self.secret.setPlaceholderText(
+            f"粘贴 Token（保存到{controller.credential_storage_label}）"
+        )
+        token_field = QWidget()
+        token_layout = QVBoxLayout(token_field)
+        token_layout.setContentsMargins(0, 0, 0, 0)
+        token_layout.setSpacing(6)
+        token_layout.addWidget(self.secret)
+        self.token_hint = QLabel(
+            "粘贴 Token 后点击“测试并保存”。保存后可重新检测或清除。"
+        )
+        self.token_hint.setObjectName("tokenInputHint")
+        self.token_hint.setWordWrap(True)
+        token_layout.addWidget(self.token_hint)
+
         self.status = QLabel(
             "已设置，可测试或更换"
             if controller.credential_present("primary")
             else "尚未设置"
         )
+        self.status.setObjectName("dataSourceStatus")
         self.status.setWordWrap(True)
         self.last_test = QLabel("尚未检测")
+        self.last_test.setObjectName("dataSourceValue")
         self.credential_storage = QLabel(controller.credential_storage_status())
-        self.permission = QLabel("保存后将用于实时行情、历史和板块")
+        self.credential_storage.setObjectName("dataSourceValue")
+        self.permission = QLabel("接口配置已内置；保存后将用于实时行情、历史和板块。")
+        self.permission.setObjectName("dataSourcePermission")
         self.permission.setWordWrap(True)
+        self.permission.setMinimumHeight(38)
+        self.permission.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.MinimumExpanding,
+        )
         self.basic_capability = QLabel("等待保存 Token")
         self.realtime_capability = QLabel("等待保存 Token")
         self.sector_history_capability = QLabel("等待保存 Token")
@@ -332,8 +379,13 @@ class _PrimaryEditor(QGroupBox):
             self.realtime_capability,
             self.sector_history_capability,
         ):
+            label.setObjectName("dataSourceValue")
             label.setWordWrap(True)
-        form.addRow("Token", self.secret)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Minimum,
+            )
+        form.addRow("Token", token_field)
         form.addRow("安全存储", self.credential_storage)
         form.addRow("当前状态", self.status)
         form.addRow("最近检测", self.last_test)
@@ -344,11 +396,22 @@ class _PrimaryEditor(QGroupBox):
         layout.addLayout(form)
 
         buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 4, 0, 0)
+        buttons.setSpacing(10)
         self.save_button = QPushButton("测试并保存")
+        self.save_button.setObjectName("primaryButton")
+        self.save_button.setToolTip("先测试基础连接；通过后再确认保存 Token。")
         self.recheck_button = QPushButton("重新检测")
+        self.recheck_button.setObjectName("secondaryButton")
+        self.recheck_button.setToolTip("保存 Token 后重新检测基础、实时、板块与历史能力。")
         self.clear_button = QPushButton("清除")
+        self.clear_button.setObjectName("dangerButton")
+        self.clear_button.setToolTip("清除已保存的 Token 并暂停新候选。")
+        for button in (self.save_button, self.recheck_button, self.clear_button):
+            button.setMinimumHeight(42)
         buttons.addWidget(self.save_button)
         buttons.addWidget(self.recheck_button)
+        buttons.addStretch(1)
         buttons.addWidget(self.clear_button)
         layout.addLayout(buttons)
 
@@ -438,9 +501,12 @@ class _PrimaryEditor(QGroupBox):
 
     def _refresh_capabilities(self) -> None:
         self.credential_storage.setText(self.controller.credential_storage_status())
+        has_credential = self.controller.credential_present("primary")
+        self.recheck_button.setEnabled(has_credential)
+        self.clear_button.setEnabled(has_credential)
         statuses = self.controller.capability_statuses()
         if not statuses:
-            if self.controller.credential_present("primary"):
+            if has_credential:
                 self.basic_capability.setText("等待后台检测")
                 self.realtime_capability.setText("等待后台检测")
                 self.sector_history_capability.setText("等待后台检测")
@@ -497,6 +563,7 @@ class _PrimaryEditor(QGroupBox):
             if self.controller.clear_credential("primary"):
                 self.secret.clear()
                 self.status.setText("Token 已清除")
+                self._refresh_capabilities()
             else:
                 self.status.setText("未找到 Token，或系统安全存储拒绝了清除操作")
 
@@ -512,13 +579,17 @@ class DataSourceSettingsDialog(QDialog):
         super().__init__(parent)
         self.controller = controller or DataSourceSettingsController()
         self.setWindowTitle("数据接口")
-        self.resize(680, 590)
+        self.setMinimumSize(680, 590)
+        self.resize(760, 640)
         root = QVBoxLayout(self)
+        root.setContentsMargins(28, 26, 28, 24)
+        root.setSpacing(16)
 
         title = QLabel("数据接口")
         title.setObjectName("dialogTitle")
         description = QLabel(
-            f"只需一个 Tushare Token。Token 仅保存在{self.controller.credential_storage_label}，"
+            "接口配置已内置，只需一个 Tushare Token。"
+            f"Token 仅保存在{self.controller.credential_storage_label}，"
             "测试失败不会替换当前 Token。"
         )
         description.setObjectName("dialogDescription")
@@ -538,6 +609,7 @@ class DataSourceSettingsDialog(QDialog):
             and self.controller.credential_present("fast")
         ):
             migrate = QPushButton("迁移本机旧 Token")
+            migrate.setObjectName("secondaryButton")
             migrate.setToolTip("会先测试旧 Token，成功后才复制到统一凭据位置")
             migrate.clicked.connect(self._migrate_legacy)
             root.addWidget(migrate)
@@ -566,6 +638,7 @@ class DataSourceSettingsDialog(QDialog):
         root.addStretch()
 
         close = QPushButton("关闭")
+        close.setObjectName("secondaryButton")
         close.clicked.connect(self.accept)
         root.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
 
