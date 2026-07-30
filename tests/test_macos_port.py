@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtNetwork import QNetworkInformation  # noqa: E402
+from PySide6.QtNetwork import QLocalServer, QNetworkInformation  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMenuBar  # noqa: E402
 
 import stock_watcher.paths as paths_module  # noqa: E402
@@ -135,6 +135,25 @@ def test_single_instance_guard_wakes_existing_window() -> None:
     finally:
         secondary.close()
         primary.close()
+
+
+def test_single_instance_guard_recovers_after_interrupted_primary() -> None:
+    """A stale Unix socket must not make the next app launch permanently fail."""
+    application()
+    name = f"stockwatcher-stale-{uuid.uuid4().hex}"
+    interrupted = QLocalServer()
+    recovered = SingleInstanceGuard(name)
+
+    try:
+        assert interrupted.listen(name)
+        # Closing without removeServer mirrors an interrupted process: no
+        # primary is accepting connections, but the socket pathname remains.
+        interrupted.close()
+        assert recovered.acquire()
+        assert recovered.is_primary
+    finally:
+        recovered.close()
+        QLocalServer.removeServer(name)
 
 
 def test_macos_close_policy_hides_only_until_explicit_exit() -> None:

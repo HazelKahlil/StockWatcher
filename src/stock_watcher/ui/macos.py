@@ -73,7 +73,7 @@ class SingleInstanceGuard(QObject):
             return False
         # Only clear a socket path when no server exists.  A live primary must
         # never be removed merely because it was temporarily busy.
-        if self._socket_error_is_server_missing():
+        if self._socket_error_allows_stale_recovery():
             QLocalServer.removeServer(self.name)
             if self._server.listen(self.name):
                 self._primary = True
@@ -102,9 +102,20 @@ class SingleInstanceGuard(QObject):
         socket.deleteLater()
         return True
 
-    def _socket_error_is_server_missing(self) -> bool:
+    def _socket_error_allows_stale_recovery(self) -> bool:
+        """Allow recovery only when the local endpoint is demonstrably dead.
+
+        A normal explicit quit removes the socket, but an interrupted Python
+        process can leave its Unix-domain socket pathname behind.  Connecting
+        to that pathname yields ``ConnectionRefusedError`` rather than
+        ``ServerNotFoundError``.  A live primary accepts the activation above,
+        so clearing either of these two errors cannot replace an active app.
+        """
         error = getattr(self, "_last_socket_error", None)
-        return error == QLocalSocket.LocalSocketError.ServerNotFoundError
+        return error in {
+            QLocalSocket.LocalSocketError.ServerNotFoundError,
+            QLocalSocket.LocalSocketError.ConnectionRefusedError,
+        }
 
     @Slot()
     def _accept_connections(self) -> None:
