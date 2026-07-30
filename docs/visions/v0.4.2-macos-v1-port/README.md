@@ -41,6 +41,9 @@ TdxQuant/M0 通过证据。
   数据前不形成新候选。网络断开时停止定时扫描，保留旧三只但不产生新结果。
 - [x] 默认 Mac 入口延迟加载 TdxQuant 诊断代码，避免普通 Tushare Mac 进程加载 Windows
   Tdx 依赖；Windows PowerShell/VBS/Inno/TdxQuant 文件仍保留，后续 Mac 打包必须排除。
+- [x] 内部测试入口：`scripts/install_macos_dev_app.py` 可生成
+  `~/Applications/StockWatcher Dev.app`，使用 macOS 留白图标并从当前工程启动真实 UI，方便
+  Human Owner 打开“数据接口”手动输入 Token；它不是最终 PyInstaller 发布包。
 
 ### 仍待真实环境验证
 

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMenuBar  # noqa:
 
 import stock_watcher.paths as paths_module  # noqa: E402
 import stock_watcher.security.credential_store as credential_module  # noqa: E402
+import stock_watcher.ui.app as app_module  # noqa: E402
 from stock_watcher.domain import HealthState, Security  # noqa: E402
 from stock_watcher.providers.tushare.models import TransportResult  # noqa: E402
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest  # noqa: E402
@@ -51,6 +52,25 @@ from stock_watcher.ui.tushare_v1_session import TushareV1Session  # noqa: E402
 def application() -> QApplication:
     existing = QApplication.instance()
     return existing if isinstance(existing, QApplication) else QApplication([])
+
+
+def test_macos_application_uses_padded_icon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    icon_path = app_module.application_icon_path()
+
+    assert icon_path.name == "stockwatcher-macos.png"
+    assert icon_path.is_file()
+
+
+def test_non_macos_application_keeps_windows_icon_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    assert app_module.application_icon_path().name == "stockwatcher.png"
 
 
 def test_macos_runtime_paths_split_application_support_and_logs(

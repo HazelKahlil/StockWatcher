@@ -122,7 +122,12 @@ QPushButton { border-radius: 9px; padding: 9px 14px; }
 
 
 def application_icon_path() -> Path:
-    return Path(__file__).with_name("assets") / "stockwatcher.png"
+    assets = Path(__file__).with_name("assets")
+    if sys.platform == "darwin":
+        macos_icon = assets / "stockwatcher-macos.png"
+        if macos_icon.is_file():
+            return macos_icon
+    return assets / "stockwatcher.png"
 
 
 def run(
