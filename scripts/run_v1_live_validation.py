@@ -335,7 +335,9 @@ def main() -> int:
         "credential_persisted_or_printed": False,
         "raw_market_payload_persisted": False,
         "provider_routes": {
-            "ordinary_history_sector": "https://fastapic.stockai888.top",
+            "ordinary_history_sector": (
+                "https://fastapic.stockai888.top/<api_name> (documented SDK route)"
+            ),
             "realtime": "tushare.realtime_quote:sina",
         },
         "request_budget": {

@@ -221,6 +221,26 @@ def test_documented_sdk_pro_transport_uses_api_path_and_sdk_contract() -> None:
     assert "sdk-secret" not in repr(result)
 
 
+def test_documented_sdk_pro_transport_pins_its_own_routing_marker() -> None:
+    fake = FakeSession([response(200, {"code": 0, "data": [{"ok": True}]})])
+    transport = TushareSdkProTransport(
+        profile("fast"),
+        lambda: "sdk-secret",
+        session=cast(requests.Session, fake),
+    )
+
+    transport.execute(
+        TransportRequest(
+            endpoint="/",
+            api_name="daily",
+            params={"ts_type_name": "https://untrusted.invalid"},
+        )
+    )
+
+    body = cast(dict[str, Any], fake.requests[0]["json"])
+    assert body["params"] == {"ts_type_name": "https://fastapic.stockai888.top"}
+
+
 def test_documented_sdk_pro_transport_preserves_429_cooldown() -> None:
     fake = FakeSession([response(429, {"code": 0, "data": []})])
     transport = TushareSdkProTransport(

@@ -8,7 +8,7 @@
 | 项目 | 结果 |
 | --- | --- |
 | 依赖与锁定 | `uv sync --all-groups`、`uv lock --check` 通过 |
-| 全量测试 | 257 passed、20 skipped、2 deselected |
+| 全量测试 | 258 passed、20 skipped、2 deselected |
 | 静态检查 | `uv run ruff check .` 通过；`uv run mypy src tests` 通过（93 个源文件） |
 | 工作区 | `python3 scripts/validate_workspace.py` 通过（29 个必需文件） |
 | 差异 | `git diff --check` 通过 |

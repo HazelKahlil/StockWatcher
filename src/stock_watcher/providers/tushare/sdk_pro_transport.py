@@ -48,7 +48,9 @@ class TushareSdkProTransport(BaseHttpTransport):
         if not isinstance(api_name, str):
             raise ValueError("documented SDK transport requires api_name")
         params = dict(request.params)
-        params.setdefault("ts_type_name", str(self.profile.base_url).rstrip("/"))
+        # Keep the SDK's routing marker pinned to this configured profile;
+        # caller parameters must not redirect an ordinary product request.
+        params["ts_type_name"] = str(self.profile.base_url).rstrip("/")
         return (
             {
                 "Accept": "application/json",

@@ -86,7 +86,7 @@ TdxQuant/M0 通过证据。
   `ServerNotFoundError` 或 `ConnectionRefusedError` 时回收端点；可连接的主进程仍优先被
   唤起，避免第二次启动永久失败。
 - 2026-07-30：离线门重新通过：`uv sync --all-groups`、`uv lock --check`、全量 pytest
-  （257 passed、20 skipped、2 deselected）、Ruff、Mypy（93 个源文件）、workspace 和
+  （258 passed、20 skipped、2 deselected）、Ruff、Mypy（93 个源文件）、workspace 和
   `git diff --check`；离屏 Replay 五状态 PNG 5/5 生成，SQLite WAL/回滚定向回归通过。
 - 2026-07-30 15:33 CST：盘后主路线复核返回 `rate_limited`；15:43–15:44 CST 允许的
   Super 静态高级诊断返回 `empty_data`。两者均未生成报告、Top3 或当日日线覆盖，不构成
