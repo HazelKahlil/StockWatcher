@@ -17,7 +17,7 @@ from stock_watcher.engine import (
     DailySummaryEngine,
     FundCapability,
 )
-from stock_watcher.providers.tushare import ProProxyTransport, Tushare15000Provider
+from stock_watcher.providers.tushare import Tushare15000Provider, TushareSdkProTransport
 from stock_watcher.providers.tushare.capabilities import (
     CAPABILITY_ORDER,
     CapabilityCheckCoordinator,
@@ -735,7 +735,7 @@ def _runtime_factory(
     budget = request_budget or ApplicationRequestBudget(
         settings.request_budget_interval_seconds
     )
-    pro = ProProxyTransport(
+    pro = TushareSdkProTransport(
         settings.primary_profile,
         secret_getter,
         request_budget=budget,

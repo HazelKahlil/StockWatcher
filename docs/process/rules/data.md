@@ -24,6 +24,9 @@
 - 普通/历史主接口固定为内置的 Tushare Pro 代理 `https://fastapic.stockai888.top`；
   主实时入口固定为 `tushare.realtime_quote(..., src="sina")`，原生实时校验地址为
   `https://realtime.stockai888.top`。`rt_k`、旧 Super 和 TdxQuant 只保留高级诊断。
+- 普通 Pro 按供应商 SDK 配置的 wire contract 调用：POST `/<api_name>`、请求体含
+  `ts_type_name=https://fastapic.stockai888.top`，并显式请求 gzip。不得调用会写入
+  `~/tk.csv` 的 `ts.set_token()`；Token 继续只从系统凭据存储进入单次内存调用。
 - Pro、原生实时、Token/能力检测、历史预热和扫描共用应用级请求预算；默认请求启动间隔为
   1 秒、配置不得低于 0.6 秒，禁止逐股高并发循环。
 - `native_realtime` 是独立实时 profile：每批最多 800 只、请求启动间隔经上述共享预算控制，

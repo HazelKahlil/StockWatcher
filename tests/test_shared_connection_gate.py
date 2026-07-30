@@ -29,6 +29,7 @@ from stock_watcher.providers.tushare.models import (
 from stock_watcher.providers.tushare.native_realtime_transport import NativeRealtimeTransport
 from stock_watcher.providers.tushare.pro_proxy_transport import ProProxyTransport
 from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
+from stock_watcher.providers.tushare.sdk_pro_transport import TushareSdkProTransport
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 from stock_watcher.security import PRIMARY_CREDENTIAL, MemoryCredentialStore
 from stock_watcher.ui import data_source_status
@@ -146,7 +147,7 @@ def test_lightweight_primary_tester_uses_only_one_base_call(
 
     monkeypatch.setattr(
         data_source_status,
-        "ProProxyTransport",
+        "TushareSdkProTransport",
         lambda *_args, **_kwargs: RecordingPro(),
     )
 
@@ -427,7 +428,7 @@ def test_pro_and_native_transports_share_one_request_start_budget() -> None:
         sleeper=manual.sleep,
     )
     pro_session = FakeSession(http_response(200))
-    pro = ProProxyTransport(
+    pro = TushareSdkProTransport(
         primary_profile(),
         lambda: "test-token",
         session=cast(requests.Session, pro_session),

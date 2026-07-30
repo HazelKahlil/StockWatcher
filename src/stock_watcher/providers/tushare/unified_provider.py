@@ -4,15 +4,14 @@ from dataclasses import dataclass
 
 from .models import TransportResult
 from .native_realtime_transport import NativeRealtimeTransport
-from .pro_proxy_transport import ProProxyTransport
-from .transport_protocol import TransportRequest
+from .transport_protocol import TransportRequest, TushareTransport
 
 
 @dataclass(slots=True)
 class Tushare15000Provider:
     """One-token product provider for Pro data plus native realtime quotes."""
 
-    pro: ProProxyTransport
+    pro: TushareTransport
     realtime: NativeRealtimeTransport
 
     name: str = "tushare_15000"

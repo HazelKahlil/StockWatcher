@@ -13,8 +13,8 @@ from stock_watcher.domain import SHANGHAI
 from stock_watcher.engine import build_post_close_review
 from stock_watcher.providers.tushare import (
     ApplicationRequestBudget,
-    ProProxyTransport,
     Tushare15000Provider,
+    TushareSdkProTransport,
 )
 from stock_watcher.providers.tushare.capability_router import CapabilityRouter
 from stock_watcher.providers.tushare.errors import ProviderError
@@ -264,7 +264,7 @@ def _build_product_provider(
     secret_getter: Callable[[], str | None],
 ) -> tuple[Tushare15000Provider, ApplicationRequestBudget]:
     budget = ApplicationRequestBudget(settings.request_budget_interval_seconds)
-    pro = ProProxyTransport(
+    pro = TushareSdkProTransport(
         settings.primary_profile,
         secret_getter,
         request_budget=budget,

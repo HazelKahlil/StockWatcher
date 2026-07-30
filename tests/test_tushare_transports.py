@@ -13,6 +13,7 @@ from pydantic import HttpUrl
 from stock_watcher.config import HttpProfile
 from stock_watcher.providers.tushare import ProviderError, ProviderFailureReason
 from stock_watcher.providers.tushare.fast_transport import FastTransport
+from stock_watcher.providers.tushare.sdk_pro_transport import TushareSdkProTransport
 from stock_watcher.providers.tushare.super_transport import SuperTransport
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 
@@ -181,6 +182,59 @@ def test_fast_transport_uses_expected_body_and_never_url_query() -> None:
     assert body["token"] == "fast-secret"
     assert "fast-secret" not in cast(str, request["url"])
     assert result.provenance.quality.value == "DEGRADED"
+
+
+def test_documented_sdk_pro_transport_uses_api_path_and_sdk_contract() -> None:
+    fake = FakeSession([response(200, {"code": 0, "data": [{"ok": True}]})])
+    transport = TushareSdkProTransport(
+        profile("fast"),
+        lambda: "sdk-secret",
+        session=cast(requests.Session, fake),
+        clock=fixed_clock,
+        monotonic=monotonic([1.0, 1.1]),
+    )
+
+    result = transport.execute(
+        TransportRequest(endpoint="/", api_name="daily", params={"limit": 1})
+    )
+
+    request = fake.requests[0]
+    body = cast(dict[str, Any], request["json"])
+    assert request["method"] == "POST"
+    assert request["url"] == "https://fastapic.stockai888.top/daily"
+    assert request["headers"] == {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "Content-Type": "application/json",
+    }
+    assert body == {
+        "api_name": "daily",
+        "token": "sdk-secret",
+        "params": {
+            "limit": 1,
+            "ts_type_name": "https://fastapic.stockai888.top",
+        },
+        "fields": "",
+    }
+    assert result.provenance.endpoint == "/daily"
+    assert "sdk-secret" not in request["url"]
+    assert "sdk-secret" not in repr(result)
+
+
+def test_documented_sdk_pro_transport_preserves_429_cooldown() -> None:
+    fake = FakeSession([response(429, {"code": 0, "data": []})])
+    transport = TushareSdkProTransport(
+        profile("fast"),
+        lambda: "sdk-secret",
+        session=cast(requests.Session, fake),
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        transport.execute(TransportRequest(endpoint="/", api_name="trade_cal"))
+
+    assert raised.value.reason is ProviderFailureReason.RATE_LIMITED
+    assert raised.value.retry_after_seconds == 60.0
+    assert fake.requests[0]["url"] == "https://fastapic.stockai888.top/trade_cal"
 
 
 @pytest.mark.parametrize(

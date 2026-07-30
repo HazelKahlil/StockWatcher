@@ -13,9 +13,9 @@ from stock_watcher.config import HttpProfile, NativeRealtimeProfile
 from .errors import ProviderError, ProviderFailureReason
 from .models import Record, TransportResult
 from .native_realtime_transport import NativeRealtimeTransport
-from .pro_proxy_transport import ProProxyTransport
 from .rate_limit import ApplicationRequestBudget
-from .transport_protocol import TransportRequest
+from .sdk_pro_transport import TushareSdkProTransport
+from .transport_protocol import TransportRequest, TushareTransport
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -98,7 +98,7 @@ class CapabilityCheckCoordinator:
 
     def __init__(
         self,
-        pro: ProProxyTransport,
+        pro: TushareTransport,
         realtime: NativeRealtimeTransport,
         *,
         request_budget: ApplicationRequestBudget,
@@ -135,7 +135,7 @@ class CapabilityCheckCoordinator:
         clock: Callable[[], datetime] | None = None,
     ) -> CapabilityCheckCoordinator:
         return cls(
-            ProProxyTransport(
+            TushareSdkProTransport(
                 profile,
                 secret_getter,
                 request_budget=request_budget,

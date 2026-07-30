@@ -11,8 +11,8 @@ from stock_watcher.providers.tushare.http_transport import BaseHttpTransport
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
 )
-from stock_watcher.providers.tushare.pro_proxy_transport import ProProxyTransport
 from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
+from stock_watcher.providers.tushare.sdk_pro_transport import TushareSdkProTransport
 from stock_watcher.providers.tushare.super_transport import SuperTransport
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 
@@ -223,7 +223,7 @@ class LightweightCredentialTester:
         tested_at = self.clock.now().astimezone()
         start = tested_at - timedelta(days=7)
         try:
-            result = ProProxyTransport(
+            result = TushareSdkProTransport(
                 profile,
                 lambda: secret,
                 request_budget=self.request_budget,

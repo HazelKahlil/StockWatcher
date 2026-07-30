@@ -16,6 +16,7 @@ from .models import (
 from .pro_proxy_transport import ProProxyTransport
 from .rate_limit import ApplicationRequestBudget
 from .response_parser import parse_tushare_payload
+from .sdk_pro_transport import TushareSdkProTransport
 from .unified_provider import Tushare15000Provider
 
 __all__ = [
@@ -34,5 +35,6 @@ __all__ = [
     "SourceTimestampKind",
     "TransportResult",
     "Tushare15000Provider",
+    "TushareSdkProTransport",
     "parse_tushare_payload",
 ]

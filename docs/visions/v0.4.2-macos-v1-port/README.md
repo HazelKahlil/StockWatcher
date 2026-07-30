@@ -1,7 +1,7 @@
 # v0.4.2-macos-v1-port：Mac V1 真实数据与平台适配
 
-> 状态：进行中（已完成离线实现与系统 Keychain 实测；Primary 凭据已安全保存，但普通 Pro
-> 轻量校验仍受 `rate_limited` 限制，等待交易时段连续实测）
+> 状态：进行中（已完成离线实现与系统 Keychain 实测；Primary 凭据已安全保存，供应商文档
+> SDK 路径的轻量连接已通过，等待交易时段连续实测）
 >
 > 创建：2026-07-30
 >
@@ -60,6 +60,9 @@ TdxQuant/M0 通过证据。
 - 普通、历史和板块固定走 `https://fastapic.stockai888.top`；主实时固定走
   `tushare.realtime_quote(..., src="sina")`，原生校验地址为
   `https://realtime.stockai888.top`。
+- 普通 Pro 遵循供应商文档的 SDK 调用路径：`POST /<api_name>` 并带
+  `ts_type_name`；为避免 `ts.set_token()` 写入 `~/tk.csv`，应用以 Keychain 中的 Token
+  在内存中执行同一 SDK wire contract，不使用环境变量或文件兜底。
 - `rt_k` 不进入 15000 积分主实时路线；资金无可靠盘中数据时显示“资金未确认”，不得以
   日级 moneyflow 冒充盘中大单/超大单，也不得阻塞 Top3。
 - 应用级共享请求预算的默认请求起点间隔为 1 秒；429 保留 Token，遵守 `Retry-After`，
@@ -71,17 +74,18 @@ TdxQuant/M0 通过证据。
 
 - 2026-07-30：实际 backend 为 `keyring.backends.macOS.Keyring`；使用临时非敏感条目
   完成写入、读取、删除 round-trip，结果 PASS，未保留条目。
-- 2026-07-30：Primary 凭据以 Keychain 条目读取；两次间隔至少 60 秒的普通 Pro
-  `trade_cal` 轻量实测均返回 `rate_limited`。凭据保留，未将该结果写成 Token 无效或
-  主路线通过。
-- 2026-07-30：盘后原生 `realtime_quote(src="sina")` 单证券结构实测返回 HTTP 200、1 条，
+- 2026-07-30：旧的根路径普通 Pro `trade_cal` 轻量实测曾返回 `rate_limited`，凭据保留，
+  未将该结果写成 Token 无效。随后按供应商文档切换 SDK 路径，在 macOS Keychain 中读取
+  Primary Token 进行一次 `POST /trade_cal` 轻量实测，HTTP 200、8 条；这只证明基础连接，
+  不等同于全市场扫描或交易时段验收。
+- 2026-07-30：按文档原生 `realtime_quote(src="sina")` 单证券结构实测返回 HTTP 200、1 条，
   且有代码、价格、昨收、量、额和供应商时间字段；这只证明接口结构，不是交易时段全市场
   扫描或真实 Top3。
 - 2026-07-30：单实例 guard 已覆盖异常中断后遗留 Unix socket 的恢复：仅在
   `ServerNotFoundError` 或 `ConnectionRefusedError` 时回收端点；可连接的主进程仍优先被
   唤起，避免第二次启动永久失败。
 - 2026-07-30：离线门重新通过：`uv sync --all-groups`、`uv lock --check`、全量 pytest
-  （255 passed、20 skipped、2 deselected）、Ruff、Mypy（92 个源文件）、workspace 和
+  （257 passed、20 skipped、2 deselected）、Ruff、Mypy（93 个源文件）、workspace 和
   `git diff --check`；离屏 Replay 五状态 PNG 5/5 生成，SQLite WAL/回滚定向回归通过。
 - 2026-07-30 15:33 CST：盘后主路线复核返回 `rate_limited`；15:43–15:44 CST 允许的
   Super 静态高级诊断返回 `empty_data`。两者均未生成报告、Top3 或当日日线覆盖，不构成
@@ -95,6 +99,6 @@ TdxQuant/M0 通过证据。
 
 ## 唯一下一步
 
-下一交易日 09:25 使用已保存的 Primary 凭据受控执行主路线实时验证；若普通 Pro 解除限流，
-继续完成 1/100/300/800、Top3、固定提醒和恢复证据。普通 Pro 通过完整真实数据门后，才可
-进入 `.app` 构建与最终交接包。
+下一交易日 09:25 使用已保存的 Primary 凭据、供应商文档 SDK 路径和 1 秒共享预算受控执行
+主路线实时验证；再继续完成 1/100/300/800、Top3、固定提醒和恢复证据。普通 Pro 通过完整
+真实数据门后，才可进入 `.app` 构建与最终交接包。

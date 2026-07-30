@@ -18,11 +18,11 @@ from stock_watcher.providers.tushare import (
     CAPABILITY_ORDER,
     ApplicationRequestBudget,
     CapabilityCheckCoordinator,
-    ProProxyTransport,
     ProviderCapability,
     ProviderCapabilityState,
     ProviderCapabilityStatus,
     Tushare15000Provider,
+    TushareSdkProTransport,
 )
 from stock_watcher.providers.tushare.models import TransportResult
 from stock_watcher.providers.tushare.native_realtime_transport import (
@@ -377,10 +377,10 @@ def main() -> int:
 def _build_product_transports(
     settings: DataSourceSettings,
     secret_getter: Callable[[], str | None],
-) -> tuple[ProProxyTransport, NativeRealtimeTransport, ApplicationRequestBudget]:
+) -> tuple[TushareSdkProTransport, NativeRealtimeTransport, ApplicationRequestBudget]:
     budget = ApplicationRequestBudget(settings.request_budget_interval_seconds)
     return (
-        ProProxyTransport(
+        TushareSdkProTransport(
             settings.primary_profile,
             secret_getter,
             request_budget=budget,
