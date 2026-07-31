@@ -22,6 +22,7 @@ from stock_watcher.runtime import (
     write_post_close_report,
 )
 from stock_watcher.runtime.post_close_pdf import (
+    POST_CLOSE_PDF_LAYOUT_VERSION,
     list_post_close_report_dates,
     prune_post_close_reports,
     render_post_close_pdf,
@@ -246,6 +247,7 @@ def test_session_generates_full_market_review_automatically_at_1530(
 
 
 def test_fixed_pdf_renderer_and_report_retention_are_bounded(tmp_path: Path) -> None:
+    assert POST_CLOSE_PDF_LAYOUT_VERSION == "research-brief-v1"
     record = collect_post_close_review(
         FakeCloseProvider(),
         trade_date=TRADE_DATE,

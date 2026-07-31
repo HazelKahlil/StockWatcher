@@ -29,6 +29,9 @@ from reportlab.platypus import (
 
 REPORT_RETENTION_DAYS = 31
 REPORT_STEM_SUFFIX = "-A股盘后回顾"
+# Human Owner accepted this visual contract on 2026-07-31. Any layout change
+# requires an explicit decision and a version bump; daily exports only replace data.
+POST_CLOSE_PDF_LAYOUT_VERSION = "research-brief-v1"
 _FONT = "StockWatcherSans"
 _FONT_MEDIUM = "StockWatcherSansMedium"
 _INK = colors.HexColor("#172236")
