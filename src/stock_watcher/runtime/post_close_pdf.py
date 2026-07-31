@@ -14,7 +14,9 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
+    Flowable,
     HRFlowable,
     KeepTogether,
     PageBreak,
@@ -27,7 +29,8 @@ from reportlab.platypus import (
 
 REPORT_RETENTION_DAYS = 31
 REPORT_STEM_SUFFIX = "-A股盘后回顾"
-_FONT = "STSong-Light"
+_FONT = "StockWatcherSans"
+_FONT_MEDIUM = "StockWatcherSansMedium"
 _INK = colors.HexColor("#172236")
 _MUTED = colors.HexColor("#667085")
 _LINE = colors.HexColor("#DCE3EB")
@@ -36,20 +39,77 @@ _BLUE = colors.HexColor("#2457A6")
 _RED = colors.HexColor("#C9413A")
 _GREEN = colors.HexColor("#17814F")
 _AMBER = colors.HexColor("#B7791F")
+_CONTENT_WIDTH = A4[0] - (32 * mm)
+_UP_SOFT = colors.HexColor("#FCEDEC")
+_DOWN_SOFT = colors.HexColor("#EAF6F0")
+_BLUE_SOFT = colors.HexColor("#EAF1FB")
+
+
+class _MarketBreadthBar(Flowable):  # type: ignore[misc]
+    """Small vector chart that keeps the market-width relationship legible."""
+
+    def __init__(self, market: Mapping[str, Any]) -> None:
+        super().__init__()
+        self.market = market
+        self.width = _CONTENT_WIDTH
+        self.height = 27 * mm
+
+    def wrap(self, available_width: float, available_height: float) -> tuple[float, float]:
+        return min(self.width, available_width), self.height
+
+    def draw(self) -> None:
+        canvas = self.canv
+        total = max(_number_value(self.market.get("securities")), 1.0)
+        advances = max(_number_value(self.market.get("advances")), 0.0)
+        declines = max(_number_value(self.market.get("declines")), 0.0)
+        unchanged = max(_number_value(self.market.get("unchanged")), 0.0)
+        parts = (
+            ("上涨", advances, _RED, _UP_SOFT),
+            ("下跌", declines, _GREEN, _DOWN_SOFT),
+            ("平盘", unchanged, _MUTED, _SOFT),
+        )
+        pad = 12
+        bar_x = pad
+        bar_y = 20
+        bar_width = self.width - (pad * 2)
+        bar_height = 7
+        canvas.setFillColor(_SOFT)
+        canvas.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=0)
+        canvas.setFillColor(_INK)
+        canvas.setFont(_FONT_MEDIUM, 9.2)
+        canvas.drawString(pad, self.height - 13, "市场宽度")
+        cursor = bar_x
+        for _label, count, colour, _soft in parts:
+            segment_width = bar_width * count / total
+            if segment_width <= 0:
+                continue
+            canvas.setFillColor(colour)
+            canvas.roundRect(cursor, bar_y, segment_width, bar_height, 3, fill=1, stroke=0)
+            cursor += segment_width
+        canvas.setFont(_FONT, 7.8)
+        for index, (label, count, colour, _soft) in enumerate(parts):
+            ratio = count / total
+            canvas.setFillColor(colour if label != "平盘" else _MUTED)
+            label_x = pad + (bar_width / 3) * index
+            canvas.drawString(
+                label_x,
+                7,
+                f"{label} {_integer_text(count)}  {_percent_ratio(ratio)}",
+            )
 
 
 def render_post_close_pdf(record: Mapping[str, Any], output_path: Path) -> Path:
     """Render one credential-free post-close record as a fixed three-page A4 PDF."""
-    pdfmetrics.registerFont(UnicodeCIDFont(_FONT))
+    _register_fonts()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     normalized = _normalize_record(record)
     document = SimpleDocTemplate(
         str(output_path),
         pagesize=A4,
-        leftMargin=18 * mm,
-        rightMargin=18 * mm,
-        topMargin=19 * mm,
-        bottomMargin=17 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
         title=f"{normalized['trade_date']} A股盘后回顾",
         author="StockWatcher",
         subject="只读A股盘后回顾",
@@ -163,18 +223,16 @@ def _page_one(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> 
     )
     elements.extend(
         [
-            Paragraph(
-                f"今日市场判断：<font color='{_tone_color(str(data['tone']))}'>"
-                f"<b>{escape(str(data['tone']))}</b></font>",
-                styles["lead"],
-            ),
+            _market_hero(data, market, styles),
+            Spacer(1, 4 * mm),
+            _MarketBreadthBar(market),
             Spacer(1, 4 * mm),
             _metric_grid(market, styles),
-            Spacer(1, 6 * mm),
+            Spacer(1, 5 * mm),
             Paragraph("主要市场分段", styles["section"]),
             Spacer(1, 2 * mm),
             _segments_table(_sequence_of_mappings(data["segments"]), styles),
-            Spacer(1, 6 * mm),
+            Spacer(1, 5 * mm),
             Paragraph("强势行业", styles["section"]),
             Spacer(1, 2 * mm),
             _sectors_table(_sequence_of_mappings(data["sectors"])[:5], styles),
@@ -191,13 +249,19 @@ def _page_two(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> 
         "固定三只｜同板块最多两只｜资金缺失不阻塞",
         styles,
     )
+    elements.extend(
+        [
+            _top3_summary(top3, styles),
+            Spacer(1, 4 * mm),
+        ]
+    )
     if not top3:
         elements.append(Paragraph("本日没有形成可核对的收盘观察Top 3。", styles["body"]))
         return elements
     sector_counts = Counter(str(item.get("sector", "未分类")) for item in top3)
     for index, candidate in enumerate(top3, start=1):
         elements.append(_candidate_card(candidate, index, styles))
-        elements.append(Spacer(1, 4 * mm))
+        elements.append(Spacer(1, 3.5 * mm))
     allocation = "；".join(
         f"{sector} {count}只" for sector, count in sector_counts.items()
     )
@@ -215,6 +279,7 @@ def _page_two(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> 
 
 
 def _page_three(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> list[Any]:
+    summary = _closing_summary(data)
     elements = _page_heading(
         str(data["trade_date"]),
         "运行回顾与数据说明",
@@ -223,10 +288,14 @@ def _page_three(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -
     )
     elements.extend(
         [
+            _summary_panel(summary, styles),
+            Spacer(1, 4 * mm),
+            _run_stats(data, styles),
+            Spacer(1, 5 * mm),
             Paragraph("当日提醒记录", styles["section"]),
             Spacer(1, 2 * mm),
             _timeline_table(data, styles),
-            Spacer(1, 6 * mm),
+            Spacer(1, 5 * mm),
             Paragraph("资金与数据健康", styles["section"]),
             Spacer(1, 2 * mm),
             _status_box("资金状态", str(data["fund_summary"]), _AMBER, styles),
@@ -237,7 +306,7 @@ def _page_three(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -
                 _BLUE if int(data["interruptions"]) == 0 else _AMBER,
                 styles,
             ),
-            Spacer(1, 6 * mm),
+            Spacer(1, 5 * mm),
             Paragraph("数据限制", styles["section"]),
             Spacer(1, 2 * mm),
         ]
@@ -250,15 +319,10 @@ def _page_three(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -
         )
     if not limitations:
         limitations = ["未记录额外数据限制；仍应结合当日数据状态核对。"]
-    elements.append(
-        Paragraph(
-            "<br/>".join(f"• {escape(item)}" for item in limitations[:6]),
-            styles["body"],
-        )
-    )
+    elements.append(_limitations_table(limitations[:6], styles))
     elements.extend(
         [
-            Spacer(1, 6 * mm),
+            Spacer(1, 5 * mm),
             HRFlowable(width="100%", color=_LINE, thickness=0.8),
             Spacer(1, 4 * mm),
             Paragraph(
@@ -287,11 +351,11 @@ def _page_heading(
         Table(
             [
                 [
-                    Paragraph("STOCKWATCHER", styles["brand"]),
+                    Paragraph("STOCKWATCHER  /  A股观察简报", styles["brand"]),
                     Paragraph(escape(trade_date), styles["date"]),
                 ]
             ],
-            colWidths=[115 * mm, 44 * mm],
+                colWidths=[140 * mm, 38 * mm],
             style=TableStyle(
                 [
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -301,71 +365,243 @@ def _page_heading(
                 ]
             ),
         ),
-        Spacer(1, 5 * mm),
-        Paragraph(f"{escape(trade_date)} A股盘后回顾", styles["title"]),
-        Spacer(1, 2 * mm),
-        Paragraph(escape(page_title), styles["subtitle"]),
+        Spacer(1, 6 * mm),
+        Paragraph(f"{escape(trade_date)}  ·  收盘复盘", styles["kicker"]),
+        Spacer(1, 1.5 * mm),
+        Paragraph(escape(page_title), styles["title"]),
         Spacer(1, 3 * mm),
         Table(
             [[Paragraph(escape(badge), styles["badge"])]],
-            colWidths=[159 * mm],
+            colWidths=[_CONTENT_WIDTH],
             style=TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, -1), _SOFT),
                     ("BOX", (0, 0), (-1, -1), 0.6, _LINE),
                     ("LEFTPADDING", (0, 0), (-1, -1), 9),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 9),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ]
             ),
         ),
-        Spacer(1, 6 * mm),
+        Spacer(1, 5 * mm),
     ]
+
+
+def _market_hero(
+    data: Mapping[str, Any],
+    market: Mapping[str, Any],
+    styles: Mapping[str, ParagraphStyle],
+) -> Table:
+    tone = str(data["tone"])
+    tone_colour = _tone_color(tone)
+    up_ratio = _percent_ratio(market.get("up_ratio"))
+    median = _percent_value(market.get("median_change_pct"))
+    copy = (
+        f"全市场 {_integer_text(market.get('securities'))} 只股票，"
+        f"上涨比例 {up_ratio}，涨跌中位数 {median}。"
+    )
+    return Table(
+        [
+            [
+                Paragraph(
+                    "<font color='#8BA9D5'>今日市场判断</font><br/>"
+                    f"<font color='{tone_colour}'><b>{escape(tone)}</b></font>",
+                    styles["hero_tone"],
+                ),
+                Paragraph(escape(copy), styles["hero_copy"]),
+            ]
+        ],
+        colWidths=[56 * mm, _CONTENT_WIDTH - (56 * mm)],
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _INK),
+                ("LINEBEFORE", (0, 0), (0, 0), 4, tone_colour),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        ),
+    )
+
+
+def _top3_summary(
+    top3: Sequence[Mapping[str, Any]],
+    styles: Mapping[str, ParagraphStyle],
+) -> Table:
+    sectors = {str(item.get("sector", "未分类")) for item in top3}
+    same_sector_ok = max(
+        Counter(str(item.get("sector", "未分类")) for item in top3).values(),
+        default=0,
+    ) <= 2
+    values = (
+        ("收盘观察", f"{len(top3)} 只"),
+        ("覆盖行业", f"{len(sectors)} 个"),
+        ("同板块上限", "已满足" if same_sector_ok else "需核对"),
+    )
+    cells = [
+        Paragraph(
+            f"<font color='#667085'>{escape(label)}</font><br/>"
+            f"<b>{escape(value)}</b>",
+            styles["summary_stat"],
+        )
+        for label, value in values
+    ]
+    return Table(
+        [cells],
+        colWidths=[_CONTENT_WIDTH / 3] * 3,
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _BLUE_SOFT),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#C8D8EE")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#C8D8EE")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        ),
+    )
+
+
+def _summary_panel(summary: str, styles: Mapping[str, ParagraphStyle]) -> Table:
+    return Table(
+        [
+            [
+                Paragraph("收盘结论", styles["panel_label"]),
+                Paragraph(escape(summary), styles["panel_copy"]),
+            ]
+        ],
+        colWidths=[29 * mm, _CONTENT_WIDTH - (29 * mm)],
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _BLUE_SOFT),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#C8D8EE")),
+                ("LINEBEFORE", (0, 0), (0, 0), 3, _BLUE),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        ),
+    )
+
+
+def _run_stats(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> Table:
+    values = (
+        ("自动提醒", f"{int(data['alert_count'])} 次"),
+        ("数据中断", f"{int(data['interruptions'])} 次"),
+        ("报告口径", "静态收盘回溯" if data["retrospective"] else "当日收盘数据"),
+    )
+    cells = [
+        Paragraph(
+            f"<font color='#667085'>{escape(label)}</font><br/>"
+            f"<font color='#172236'><b>{escape(value)}</b></font>",
+            styles["summary_stat"],
+        )
+        for label, value in values
+    ]
+    return Table(
+        [cells],
+        colWidths=[_CONTENT_WIDTH / 3] * 3,
+        style=TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), _SOFT),
+                ("BOX", (0, 0), (-1, -1), 0.5, _LINE),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, _LINE),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        ),
+    )
+
+
+def _limitations_table(
+    limitations: Sequence[str],
+    styles: Mapping[str, ParagraphStyle],
+) -> Table:
+    rows: list[list[Any]] = []
+    for index, item in enumerate(limitations, start=1):
+        rows.append(
+            [
+                Paragraph(f"{index:02d}", styles["limit_number"]),
+                Paragraph(escape(item), styles["limit_copy"]),
+            ]
+        )
+    return Table(
+        rows
+        or [
+            [
+                Paragraph("--", styles["limit_number"]),
+                Paragraph("未记录额外限制", styles["limit_copy"]),
+            ]
+        ],
+        colWidths=[12 * mm, _CONTENT_WIDTH - (12 * mm)],
+        style=TableStyle(
+            [
+                ("LINEBELOW", (0, 0), (-1, -2), 0.4, _LINE),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        ),
+    )
+
+
+def _closing_summary(data: Mapping[str, Any]) -> str:
+    existing = str(data.get("summary_text", "")).strip()
+    if existing:
+        return existing
+    market = _mapping(data["market"])
+    sector_names = [
+        str(item.get("name", "未分类"))
+        for item in _sequence_of_mappings(data["sectors"])[:3]
+    ]
+    sectors = "、".join(sector_names) if sector_names else "强势行业"
+    return (
+        f"市场{data['tone']}：上涨比例 {_percent_ratio(market.get('up_ratio'))}，"
+        f"涨跌中位数 {_percent_value(market.get('median_change_pct'))}；"
+        f"强势集中在{sectors}，收盘观察 Top 3 均通过板块硬门。"
+    )
 
 
 def _metric_grid(market: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> Table:
     metrics = [
         ("统计股票", _integer_text(market.get("securities"), "只")),
-        ("上涨比例", _percent_ratio(market.get("up_ratio"))),
-        (
-            "涨 / 跌 / 平",
-            f"{_integer_text(market.get('advances'))} / "
-            f"{_integer_text(market.get('declines'))} / "
-            f"{_integer_text(market.get('unchanged'))}",
-        ),
         ("涨跌中位数", _percent_value(market.get("median_change_pct"))),
         ("明显走强", _integer_text(market.get("strong_count"), "只")),
         ("成交额", _amount_text(market.get("amount_cny"))),
     ]
-    cells = [
-        [
-            Paragraph(escape(label), styles["metric_label"]),
-            Paragraph(escape(value), styles["metric_value"]),
-        ]
+    cards = [
+        Paragraph(
+            f"<font color='#667085'>{escape(label)}</font><br/>"
+            f"<font color='#172236'><b>{escape(value)}</b></font>",
+            styles["metric_card"],
+        )
         for label, value in metrics
     ]
-    cards = [
-        [
-            Table([cells[row * 3 + column]], colWidths=[21 * mm, 21 * mm])
-            for column in range(3)
-        ]
-        for row in range(2)
-    ]
     return Table(
-        cards,
-        colWidths=[53 * mm] * 3,
-        rowHeights=[22 * mm] * 2,
+        [cards],
+        colWidths=[_CONTENT_WIDTH / 4] * 4,
         style=TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), _SOFT),
                 ("BOX", (0, 0), (-1, -1), 0.6, _LINE),
                 ("INNERGRID", (0, 0), (-1, -1), 0.6, _LINE),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 9),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
             ]
         ),
     )
@@ -396,7 +632,7 @@ def _segments_table(
             [Paragraph("暂无分段数据", styles["table"])]
             + [Paragraph("-", styles["table"])] * 3
         )
-    return _standard_table(rows, [48 * mm, 34 * mm, 38 * mm, 39 * mm])
+    return _standard_table(rows, [54 * mm, 38 * mm, 43 * mm, 43 * mm])
 
 
 def _sectors_table(
@@ -425,7 +661,7 @@ def _sectors_table(
             [Paragraph("无满足板块硬门的行业", styles["table"])]
             + [Paragraph("-", styles["table"])] * 4
         )
-    return _standard_table(rows, [42 * mm, 27 * mm, 31 * mm, 31 * mm, 28 * mm])
+    return _standard_table(rows, [48 * mm, 29 * mm, 35 * mm, 34 * mm, 32 * mm])
 
 
 def _candidate_card(
@@ -446,20 +682,26 @@ def _candidate_card(
     amount_ratio = _ratio_text(candidate.get("amount_ratio_3d"))
     trend = _percent_value(candidate.get("trend_3d_pct"))
     reasons = _string_sequence(candidate.get("reasons"))[:3]
-    facts = [
-        ["收盘价", f"¥{close}", "当日涨跌", change],
-        ["所属行业", sector, "行业上涨比例", sector_ratio],
-        ["行业明显走强", f"{strong_count}只", "相对行业", relative],
-        ["三日成交额比", amount_ratio, "最近三日趋势", trend],
-    ]
+    facts = (
+        ("收盘价", f"¥{close}"),
+        ("所属行业", sector),
+        ("行业上涨", sector_ratio),
+        ("相对行业", relative),
+        ("三日成交额比", amount_ratio),
+        ("三日趋势", trend),
+        ("行业走强", f"{strong_count}只"),
+        ("综合评分", _number_text(candidate.get("core_score"), 1)),
+    )
     fact_rows: list[list[Any]] = []
-    for row in facts:
+    for offset in range(0, len(facts), 4):
         fact_rows.append(
             [
-                Paragraph(escape(row[0]), styles["fact_label"]),
-                Paragraph(escape(row[1]), styles["fact_value"]),
-                Paragraph(escape(row[2]), styles["fact_label"]),
-                Paragraph(escape(row[3]), styles["fact_value"]),
+                Paragraph(
+                    f"<font color='#667085'>{escape(label)}</font><br/>"
+                    f"<b>{escape(value)}</b>",
+                    styles["fact_pair"],
+                )
+                for label, value in facts[offset : offset + 4]
             ]
         )
     hard_gate = _hard_gate_copy(candidate)
@@ -467,51 +709,62 @@ def _candidate_card(
     card = Table(
         [
             [
+                Paragraph(f"{rank:02d}", styles["rank"]),
                 Paragraph(
-                    f"<b>{rank}. {escape(name)}</b>　{escape(code)}",
+                    f"<b>{escape(name)}</b><br/>"
+                    f"<font color='#667085'>{escape(code)}  ·  {escape(sector)}</font>",
                     styles["candidate_title"],
                 ),
-                Paragraph(escape(level), styles["level"]),
+                Paragraph(
+                    f"<font color='#C9413A'><b>{escape(change)}</b></font><br/>"
+                    f"<font color='#667085'>{escape(level)}  |  收盘</font>",
+                    styles["change"],
+                ),
             ],
             [
                 Table(
                     fact_rows,
-                    colWidths=[25 * mm, 42 * mm, 28 * mm, 47 * mm],
+                    colWidths=[(_CONTENT_WIDTH - 10 * mm) / 4] * 4,
                     style=TableStyle(
                         [
                             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                            ("LINEBELOW", (0, 0), (-1, -2), 0.4, _LINE),
+                            ("LINEBELOW", (0, 0), (-1, -2), 0.35, _LINE),
                             ("LEFTPADDING", (0, 0), (-1, -1), 2),
-                            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
                             ("TOPPADDING", (0, 0), (-1, -1), 4),
                             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                         ]
                     ),
                 ),
                 "",
+                "",
             ],
             [
                 Paragraph(
-                    f"<font color='#2457A6'><b>板块硬门</b></font>　{escape(hard_gate)}"
-                    f"<br/><font color='#667085'>{escape(reasons_copy)}</font>",
+                    f"<font color='#2457A6'><b>板块硬门</b></font>  {escape(hard_gate)}"
+                    f"<br/><font color='#667085'>依据：{escape(reasons_copy)}</font>",
                     styles["candidate_reason"],
                 ),
                 "",
+                "",
             ],
         ],
-        colWidths=[143 * mm, 16 * mm],
+        colWidths=[14 * mm, 116 * mm, 48 * mm],
         style=TableStyle(
             [
-                ("SPAN", (0, 1), (1, 1)),
-                ("SPAN", (0, 2), (1, 2)),
+                ("SPAN", (1, 1), (2, 1)),
+                ("SPAN", (0, 2), (2, 2)),
                 ("BACKGROUND", (0, 0), (-1, 0), _SOFT),
+                ("BACKGROUND", (0, 0), (0, 0), _INK),
                 ("BOX", (0, 0), (-1, -1), 0.8, _LINE),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                ("ALIGN", (2, 0), (2, 0), "RIGHT"),
+                ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ]
         ),
     )
@@ -567,7 +820,7 @@ def _timeline_table(
             Paragraph("手动查看不计入提醒限额", styles["table"]),
         ]
     )
-    return _standard_table(rows, [42 * mm, 31 * mm, 86 * mm])
+    return _standard_table(rows, [46 * mm, 34 * mm, 98 * mm])
 
 
 def _status_box(
@@ -583,7 +836,7 @@ def _status_box(
                 Paragraph(escape(copy or "未记录"), styles["body"]),
             ]
         ],
-        colWidths=[29 * mm, 130 * mm],
+        colWidths=[32 * mm, _CONTENT_WIDTH - (32 * mm)],
         style=TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), _SOFT),
@@ -613,10 +866,10 @@ def _standard_table(rows: Sequence[Sequence[Any]], widths: Sequence[float]) -> T
                 ("BOX", (0, 0), (-1, -1), 0.6, _LINE),
                 ("INNERGRID", (0, 0), (-1, -1), 0.4, _LINE),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 7),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 5.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5.5),
             ]
         ),
     )
@@ -638,6 +891,7 @@ def _styles() -> dict[str, ParagraphStyle]:
             fontSize=9,
             leading=11,
             textColor=_BLUE,
+            fontName=_FONT_MEDIUM,
             spaceAfter=0,
         ),
         "date": ParagraphStyle(
@@ -648,12 +902,21 @@ def _styles() -> dict[str, ParagraphStyle]:
             textColor=_MUTED,
             alignment=2,
         ),
+        "kicker": ParagraphStyle(
+            "kicker",
+            parent=base,
+            fontSize=9,
+            leading=12,
+            textColor=_MUTED,
+            fontName=_FONT_MEDIUM,
+        ),
         "title": ParagraphStyle(
             "title",
             parent=base,
-            fontSize=25,
-            leading=31,
+            fontSize=22,
+            leading=27,
             textColor=_INK,
+            fontName=_FONT_MEDIUM,
         ),
         "subtitle": ParagraphStyle(
             "subtitle",
@@ -678,9 +941,10 @@ def _styles() -> dict[str, ParagraphStyle]:
         "section": ParagraphStyle(
             "section",
             parent=base,
-            fontSize=13,
-            leading=18,
+            fontSize=12.5,
+            leading=17,
             textColor=_INK,
+            fontName=_FONT_MEDIUM,
         ),
         "body": base,
         "note": ParagraphStyle(
@@ -712,12 +976,53 @@ def _styles() -> dict[str, ParagraphStyle]:
             leading=17,
             textColor=_INK,
         ),
+        "metric_card": ParagraphStyle(
+            "metric_card",
+            parent=base,
+            fontSize=9,
+            leading=14,
+        ),
+        "hero_tone": ParagraphStyle(
+            "hero_tone",
+            parent=base,
+            fontSize=10,
+            leading=16,
+            textColor=colors.white,
+            fontName=_FONT_MEDIUM,
+        ),
+        "hero_copy": ParagraphStyle(
+            "hero_copy",
+            parent=base,
+            fontSize=9.1,
+            leading=14,
+            textColor=colors.HexColor("#E7EEF8"),
+        ),
+        "summary_stat": ParagraphStyle(
+            "summary_stat",
+            parent=base,
+            fontSize=9,
+            leading=14,
+        ),
+        "panel_label": ParagraphStyle(
+            "panel_label",
+            parent=base,
+            fontSize=9.5,
+            leading=14,
+            fontName=_FONT_MEDIUM,
+        ),
+        "panel_copy": ParagraphStyle(
+            "panel_copy",
+            parent=base,
+            fontSize=9.2,
+            leading=14,
+        ),
         "table_head": ParagraphStyle(
             "table_head",
             parent=base,
             fontSize=8.2,
             leading=11,
             textColor=colors.white,
+            fontName=_FONT_MEDIUM,
         ),
         "table": ParagraphStyle(
             "table",
@@ -728,15 +1033,23 @@ def _styles() -> dict[str, ParagraphStyle]:
         "candidate_title": ParagraphStyle(
             "candidate_title",
             parent=base,
-            fontSize=12,
+            fontSize=12.5,
             leading=16,
         ),
-        "level": ParagraphStyle(
-            "level",
+        "rank": ParagraphStyle(
+            "rank",
+            parent=base,
+            fontSize=15,
+            leading=18,
+            textColor=colors.white,
+            alignment=TA_CENTER,
+            fontName=_FONT_MEDIUM,
+        ),
+        "change": ParagraphStyle(
+            "change",
             parent=base,
             fontSize=10,
-            leading=13,
-            textColor=_RED,
+            leading=14,
             alignment=2,
         ),
         "fact_label": ParagraphStyle(
@@ -752,6 +1065,12 @@ def _styles() -> dict[str, ParagraphStyle]:
             fontSize=8.4,
             leading=11,
         ),
+        "fact_pair": ParagraphStyle(
+            "fact_pair",
+            parent=base,
+            fontSize=8.3,
+            leading=12,
+        ),
         "candidate_reason": ParagraphStyle(
             "candidate_reason",
             parent=base,
@@ -764,20 +1083,80 @@ def _styles() -> dict[str, ParagraphStyle]:
             fontSize=9,
             leading=13,
             textColor=_INK,
+            fontName=_FONT_MEDIUM,
+        ),
+        "limit_number": ParagraphStyle(
+            "limit_number",
+            parent=base,
+            fontSize=8,
+            leading=12,
+            textColor=_BLUE,
+            fontName=_FONT_MEDIUM,
+        ),
+        "limit_copy": ParagraphStyle(
+            "limit_copy",
+            parent=base,
+            fontSize=8.1,
+            leading=12,
+            textColor=_MUTED,
         ),
     }
+
+
+def _register_fonts() -> None:
+    global _FONT, _FONT_MEDIUM
+    if _FONT in pdfmetrics.getRegisteredFontNames():
+        return
+    candidates = (
+        (
+            Path("/System/Library/Fonts/STHeiti Light.ttc"),
+            Path("/System/Library/Fonts/STHeiti Medium.ttc"),
+            1,
+            0,
+        ),
+        (
+            Path("C:/Windows/Fonts/msyh.ttc"),
+            Path("C:/Windows/Fonts/msyhbd.ttc"),
+            0,
+            0,
+        ),
+    )
+    for regular_path, medium_path, regular_index, medium_index in candidates:
+        if not regular_path.is_file():
+            continue
+        try:
+            pdfmetrics.registerFont(
+                TTFont(
+                    _FONT,
+                    str(regular_path),
+                    subfontIndex=regular_index,
+                )
+            )
+            pdfmetrics.registerFont(
+                TTFont(
+                    _FONT_MEDIUM,
+                    str(medium_path if medium_path.is_file() else regular_path),
+                    subfontIndex=medium_index if medium_path.is_file() else regular_index,
+                )
+            )
+            return
+        except Exception:
+            continue
+    _FONT = "STSong-Light"
+    _FONT_MEDIUM = _FONT
+    pdfmetrics.registerFont(UnicodeCIDFont(_FONT))
 
 
 def _decorate_page(canvas: Any, document: Any) -> None:
     canvas.saveState()
     canvas.setStrokeColor(_LINE)
     canvas.setLineWidth(0.5)
-    canvas.line(18 * mm, 13 * mm, A4[0] - 18 * mm, 13 * mm)
+    canvas.line(16 * mm, 13 * mm, A4[0] - 16 * mm, 13 * mm)
     canvas.setFillColor(_MUTED)
     canvas.setFont(_FONT, 7.5)
-    canvas.drawString(18 * mm, 8.5 * mm, "StockWatcher｜只读盘后观察")
+    canvas.drawString(16 * mm, 8.5 * mm, "StockWatcher | 只读盘后观察")
     canvas.drawRightString(
-        A4[0] - 18 * mm,
+        A4[0] - 16 * mm,
         8.5 * mm,
         f"{canvas.getPageNumber()} / 3",
     )
@@ -817,6 +1196,10 @@ def _string_sequence(value: object) -> tuple[str, ...]:
 
 
 def _float(value: object) -> float:
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _number_value(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
