@@ -89,6 +89,8 @@ class FakeSdkModule:
         assert ts_code == "000001.SH"
         assert src == "sina"
         assert getattr(self.verify_module, "get_token")() == "memory-only-secret"
+        response = getattr(self.verify_module, "verify_token")()
+        assert getattr(response, "status_code") == 200
         assert (
             getattr(self.constants, "verify_token_url")
             == "https://realtime.stockai888.top"
@@ -125,7 +127,16 @@ def request(codes: list[str]) -> TransportRequest:
 
 
 def test_sdk_client_injects_token_only_in_memory_and_restores_globals() -> None:
-    verify_module = SimpleNamespace(get_token=lambda: None)
+    def original_verify_token(
+        *_args: object,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(status_code=200)
+
+    verify_module = SimpleNamespace(
+        get_token=lambda: None,
+        verify_token=original_verify_token,
+    )
     constants = SimpleNamespace(verify_token_url="https://original.invalid")
     sdk = FakeSdkModule(verify_module, constants)
     modules = {
@@ -146,6 +157,45 @@ def test_sdk_client_injects_token_only_in_memory_and_restores_globals() -> None:
 
     assert rows == [{"TS_CODE": "000001.SH"}]
     assert verify_module.get_token() is None
+    assert verify_module.verify_token is original_verify_token
+    assert constants.verify_token_url == "https://original.invalid"
+
+
+def test_sdk_http_429_is_preserved_as_rate_limited_and_globals_are_restored() -> None:
+    def original_get_token() -> None:
+        return None
+
+    def original_verify_token(
+        *_args: object,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(status_code=429)
+
+    verify_module = SimpleNamespace(
+        get_token=original_get_token,
+        verify_token=original_verify_token,
+    )
+    constants = SimpleNamespace(verify_token_url="https://original.invalid")
+    sdk = FakeSdkModule(verify_module, constants)
+    modules = {
+        "tushare": sdk,
+        "tushare.stock.cons": constants,
+        "tushare.util.verify_token": verify_module,
+    }
+    client = TushareSdkRealtimeClient(importer=lambda name: modules[name])
+    transport = NativeRealtimeTransport(
+        NativeRealtimeProfile(),
+        lambda: "memory-only-secret",
+        client=client,
+    )
+
+    with pytest.raises(ProviderError) as captured:
+        transport.execute(request(["000001.SH"]))
+
+    assert captured.value.reason is ProviderFailureReason.RATE_LIMITED
+    assert captured.value.retry_after_seconds == 60.0
+    assert verify_module.get_token is original_get_token
+    assert verify_module.verify_token is original_verify_token
     assert constants.verify_token_url == "https://original.invalid"
 
 
@@ -170,6 +220,26 @@ def test_native_realtime_batches_at_800_and_respects_shared_one_second_default()
     assert result.provenance.provider_profile == "native_realtime"
     assert result.provenance.endpoint == "tushare.realtime_quote:sina"
     assert result.provenance.quality.value == "HEALTHY"
+
+
+def test_native_realtime_fetches_5500_names_in_seven_bounded_batches() -> None:
+    client = FakeClient()
+    manual = ManualTime()
+    transport = NativeRealtimeTransport(
+        NativeRealtimeProfile(),
+        lambda: "credential",
+        client=client,
+        clock=fixed_clock,
+        monotonic=manual.monotonic,
+        sleeper=manual.sleep,
+    )
+
+    result = transport.execute(request([code(index) for index in range(1, 5501)]))
+
+    assert [len(item[0]) for item in client.calls] == [800, 800, 800, 800, 800, 800, 700]
+    assert all(item[1] == "sina" for item in client.calls)
+    assert manual.sleeps == [1.0] * 6
+    assert len(result.records) == 5500
 
 
 def test_native_realtime_normalizes_supplier_timestamp_and_never_exposes_secret() -> None:

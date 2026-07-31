@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -16,13 +17,20 @@ from stock_watcher.engine import (
     CandidateBatch,
     FundCapability,
 )
-from stock_watcher.paths import report_directory_for_database
+from stock_watcher.paths import (
+    report_directory_for_database,
+    universe_cache_path_for_database,
+)
 from stock_watcher.providers.tushare import Tushare15000Provider, TushareSdkProTransport
 from stock_watcher.providers.tushare.capabilities import (
     CapabilityCheckCoordinator,
     ProviderCapability,
     ProviderCapabilityState,
     ProviderCapabilityStatus,
+)
+from stock_watcher.providers.tushare.errors import (
+    ProviderError,
+    ProviderFailureReason,
 )
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
@@ -33,6 +41,8 @@ from stock_watcher.runtime import (
     DataHealthTracker,
     FullMarketScanCoordinator,
     MarketSessionSchedule,
+    RuntimeUniverse,
+    RuntimeUniverseCache,
     TushareBootstrapLoader,
     TushareV1Runtime,
     alert_timeline_records,
@@ -97,6 +107,14 @@ class TushareV1Session:
         self._request_budget = ApplicationRequestBudget(
             self.settings.request_budget_interval_seconds
         )
+        self._universe_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="stockwatcher-universe",
+        )
+        self._universe_future: Future[RuntimeUniverse] | None = None
+        self._universe_future_runtime: TushareV1Runtime | None = None
+        self._universe_retry_at: datetime | None = None
+        self._universe_refresh_issue: str | None = None
         self._capability_checks_required = runtime_factory is None
         self.capability_checks = capability_checks
         if self.capability_checks is None and self._capability_checks_required:
@@ -115,6 +133,7 @@ class TushareV1Session:
                     current_settings,
                     store,
                     request_budget=self._request_budget,
+                    universe_cache_path=universe_cache_path_for_database(self.store.path),
                 )
 
             self._runtime_factory: RuntimeFactory = budgeted_runtime_factory
@@ -153,6 +172,12 @@ class TushareV1Session:
 
     def provider_changed(self, mode: DataSourceMode) -> None:
         self.settings = self.settings.model_copy(update={"mode": mode})
+        if self._universe_future is not None:
+            self._universe_future.cancel()
+        self._universe_future = None
+        self._universe_future_runtime = None
+        self._universe_retry_at = None
+        self._universe_refresh_issue = None
         self._runtime = None
         self._provider = None
         self._prepared_date = None
@@ -251,9 +276,6 @@ class TushareV1Session:
         if not secret_present:
             self._set_missing_credential()
             return
-        if self._capability_checks_required and not self._capabilities_ready():
-            self._set_capability_warming()
-            return
         self._apply_pending_platform_recovery()
         if self._runtime is None or self._provider is None:
             self._runtime, self._provider = self._runtime_factory(
@@ -266,6 +288,23 @@ class TushareV1Session:
             ):
                 self._prepared_date = now.date()
         assert self._runtime is not None
+        self._poll_universe_refresh(now)
+        if self.capability_checks is not None and self._runtime.universe is not None:
+            self.capability_checks.seed_realtime_codes(
+                security.code for security in self._runtime.universe.securities
+            )
+        if not _runtime_universe_is_current(self._runtime, now):
+            self._start_universe_refresh(now)
+            self._set_universe_warming(now)
+            return
+        if (
+            self.capability_checks is not None
+            and self._capability_checks_required
+            and not _realtime_capabilities_ready(self.capability_checks.statuses())
+        ):
+            self.capability_checks.start_realtime_background()
+            self._set_realtime_capability_warming()
+            return
         if self._schedule.summary_due(now) and self._is_open_date(now):
             self._generate_summary(now)
         open_dates = (
@@ -273,53 +312,22 @@ class TushareV1Session:
             if self._runtime.universe is not None
             else ()
         )
-        should_prepare_today = (
-            self._prepared_date is not None
-            and self._prepared_date != now.date()
-            and (
-                _is_preopen(now)
-                or self._schedule.is_session_time(now)
-            )
-        )
-        if should_prepare_today:
-            try:
-                prepared = self._runtime.prepare()
-            except Exception:
-                self._set_data_failure(
-                    "今日数据准备失败，将按10秒周期重试。",
-                    now=now,
-                )
-                return
-            self._prepared_date = now.date()
-            open_dates = prepared.open_dates
         if not force and not self._schedule.is_trading(now, open_dates):
-            if self._runtime.universe is None and (
-                _is_preopen(now) or self._schedule.is_session_time(now)
-            ):
-                try:
-                    prepared = self._runtime.prepare()
-                except Exception:
-                    self._set_data_failure(
-                        "开盘前数据准备失败，将按10秒周期重试。",
-                        now=now,
-                    )
-                    return
-                self._prepared_date = now.date()
-                open_dates = prepared.open_dates
-            if not self._schedule.is_trading(now, open_dates):
-                self.state = HealthState.WARMING
-                self.connection_state = TqConnectionState.CONNECTED
-                self.connection_detail = "Token已配置。"
-                self.data_gate_label = "非交易时段"
-                self.candidate_gate_label = "上次结果" if self.batch else "等待开盘"
-                self.phase_label = "非交易时段"
-                self.health_detail = "非交易时段不发起全市场实时扫描。"
-                self.status_issues = (
-                    (self._summary_issue,)
-                    if self._summary_issue is not None
-                    else ()
-                )
-                return
+            if self.capability_checks is not None:
+                self.capability_checks.start_background()
+            self.state = HealthState.WARMING
+            self.connection_state = TqConnectionState.CONNECTED
+            self.connection_detail = "Token已配置。"
+            self.data_gate_label = "非交易时段"
+            self.candidate_gate_label = "上次结果" if self.batch else "等待开盘"
+            self.phase_label = "非交易时段"
+            self.health_detail = "非交易时段不发起全市场实时扫描。"
+            self.status_issues = (
+                (self._summary_issue,)
+                if self._summary_issue is not None
+                else ()
+            )
+            return
         self.last_fetch_at = now
         outcome = self._runtime.scan_once()
         if self._is_network_interrupted():
@@ -353,7 +361,7 @@ class TushareV1Session:
         if outcome.batch is not None:
             self.batch = outcome.batch
         if outcome.failure_reason == "rate_limited":
-            remaining = self._request_budget.cooldown_remaining()
+            remaining = self._request_budget.cooldown_remaining(lane="realtime")
             self.data_gate_label = "等待限流恢复"
             self.candidate_gate_label = "保留上次结果" if self.batch else "暂停新候选"
             self.connection_state = TqConnectionState.CHECKING
@@ -627,6 +635,72 @@ class TushareV1Session:
         self.capability_checks.start_background()
         return _required_capabilities_ready(self.capability_checks.statuses())
 
+    def _start_universe_refresh(self, now: datetime) -> bool:
+        if self._runtime is None:
+            return False
+        if self._universe_future is not None:
+            return False
+        if self._universe_retry_at is not None and now < self._universe_retry_at:
+            return False
+        runtime = self._runtime
+        self._universe_future_runtime = runtime
+        self._universe_future = self._universe_executor.submit(runtime.prepare)
+        self._universe_refresh_issue = None
+        return True
+
+    def _poll_universe_refresh(self, now: datetime) -> None:
+        future = self._universe_future
+        runtime = self._universe_future_runtime
+        if future is None or not future.done():
+            return
+        self._universe_future = None
+        self._universe_future_runtime = None
+        try:
+            prepared = future.result()
+        except ProviderError as error:
+            retry_seconds = (
+                error.retry_after_seconds
+                if error.reason is ProviderFailureReason.RATE_LIMITED
+                else 60.0
+            )
+            self._universe_retry_at = now + timedelta(
+                seconds=retry_seconds if retry_seconds is not None else 60.0
+            )
+            self._universe_refresh_issue = (
+                "基础数据暂时限流；实时路线未调用普通Pro，等待后台缓存恢复。"
+                if error.reason is ProviderFailureReason.RATE_LIMITED
+                else "基础缓存刷新失败，将在60秒后后台重试。"
+            )
+            return
+        except Exception:
+            self._universe_retry_at = now + timedelta(seconds=60)
+            self._universe_refresh_issue = "基础缓存刷新失败，将在60秒后后台重试。"
+            return
+        if runtime is not self._runtime:
+            return
+        self._prepared_date = now.date() if now.date() in prepared.open_dates else None
+        self._universe_retry_at = None
+        self._universe_refresh_issue = None
+
+    def _set_universe_warming(self, now: datetime) -> None:
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.data_gate_label = "基础缓存准备中"
+        self.candidate_gate_label = "保留上次结果" if self.batch else "暂停新候选"
+        self.connection_detail = "Token已保存；实时扫描等待完整基础缓存。"
+        if self._universe_refresh_issue is not None:
+            self.health_detail = self._universe_refresh_issue
+            self.status_issues = (self._universe_refresh_issue,)
+            return
+        if self._universe_retry_at is not None and now < self._universe_retry_at:
+            self.health_detail = "基础缓存尚未恢复，本轮未发起实时请求。"
+            self.status_issues = (
+                f"预计 {self._universe_retry_at.strftime('%H:%M:%S')} 后台重试。",
+            )
+            return
+        self.health_detail = "股票名单、板块和三日趋势正在后台缓存；完成后自动开始实时预热。"
+        self.status_issues = ("实时扫描只会读取缓存并调用 realtime_quote(src=\"sina\")。",)
+
     def _set_capability_warming(self) -> None:
         assert self.capability_checks is not None
         statuses = self.capability_checks.statuses()
@@ -661,6 +735,49 @@ class TushareV1Session:
         self.health_detail = "核心能力检测完成后将开始预热；资金和历史分钟未确认不会阻塞候选。"
         self.status_issues = ("实时恢复后仍需连续3轮新鲜完整数据。",)
 
+    def _set_realtime_capability_warming(self) -> None:
+        assert self.capability_checks is not None
+        statuses = self.capability_checks.statuses()
+        realtime_statuses = tuple(
+            statuses[capability]
+            for capability in (
+                ProviderCapability.REALTIME_1,
+                ProviderCapability.REALTIME_100,
+                ProviderCapability.REALTIME_300,
+                ProviderCapability.REALTIME_800,
+            )
+        )
+        rate_limited = [
+            status
+            for status in realtime_statuses
+            if status.state is ProviderCapabilityState.RATE_LIMITED
+        ]
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.data_gate_label = "实时批次检测中"
+        self.candidate_gate_label = "等待实时验证"
+        if rate_limited:
+            earliest = min(
+                (
+                    status.next_retry_at
+                    for status in rate_limited
+                    if status.next_retry_at is not None
+                ),
+                default=None,
+            )
+            retry_note = (
+                f"预计 {earliest.strftime('%H:%M:%S')} 自动恢复。"
+                if earliest is not None
+                else "等待自动恢复。"
+            )
+            self.connection_detail = "实时接口暂时限流，已保存Token，等待自动恢复。"
+            self.health_detail = self.connection_detail
+            self.status_issues = (retry_note,)
+            return
+        self.connection_detail = "正在按1只、100只、300只、800只验证实时接口。"
+        self.health_detail = "验证只调用 realtime_quote(src=\"sina\")，不会请求普通Pro。"
+        self.status_issues = ("800只批次通过后才开始全市场七批扫描。",)
+
     def data_source_controller(self) -> object:
         """Create the settings controller on this session's shared budget."""
         from .data_source_settings import runtime_data_source_controller
@@ -675,6 +792,7 @@ class TushareV1Session:
     def shutdown(self) -> None:
         if self.capability_checks is not None:
             self.capability_checks.shutdown()
+        self._universe_executor.shutdown(wait=False, cancel_futures=True)
 
     def _set_missing_credential(self) -> None:
         try:
@@ -756,6 +874,7 @@ def _runtime_factory(
     credential_store: CredentialStore,
     *,
     request_budget: ApplicationRequestBudget | None = None,
+    universe_cache_path: Path | None = None,
 ) -> tuple[TushareV1Runtime, Tushare15000Provider]:
     def secret_getter() -> str | None:
         return credential_store.get(PRIMARY_CREDENTIAL)
@@ -791,6 +910,11 @@ def _runtime_factory(
             TushareBootstrapLoader(provider),
             coordinator,
             health=health,
+            universe_cache=(
+                RuntimeUniverseCache(universe_cache_path)
+                if universe_cache_path is not None
+                else None
+            ),
         ),
         provider,
     )
@@ -835,6 +959,31 @@ def _required_capabilities_ready(
         statuses[capability].state is ProviderCapabilityState.AVAILABLE
         for capability in required
     )
+
+
+def _realtime_capabilities_ready(
+    statuses: dict[ProviderCapability, ProviderCapabilityStatus],
+) -> bool:
+    required = (
+        ProviderCapability.REALTIME_1,
+        ProviderCapability.REALTIME_100,
+        ProviderCapability.REALTIME_300,
+        ProviderCapability.REALTIME_800,
+    )
+    return bool(statuses) and all(
+        statuses[capability].state is ProviderCapabilityState.AVAILABLE
+        for capability in required
+    )
+
+
+def _runtime_universe_is_current(
+    runtime: TushareV1Runtime,
+    now: datetime,
+) -> bool:
+    checker = getattr(runtime, "universe_is_current", None)
+    if callable(checker):
+        return bool(checker(now))
+    return runtime.universe is not None
 
 
 def _payload_codes(value: object) -> set[str]:

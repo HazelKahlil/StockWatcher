@@ -14,6 +14,7 @@ from typing import Protocol
 
 from stock_watcher.config import DataSourceSettings
 from stock_watcher.domain import SHANGHAI, HealthState
+from stock_watcher.paths import runtime_paths, universe_cache_path_for_database
 from stock_watcher.providers.tushare import (
     CAPABILITY_ORDER,
     ApplicationRequestBudget,
@@ -33,8 +34,10 @@ from stock_watcher.runtime import (
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
+    RuntimeUniverseCache,
     TushareBootstrapLoader,
     TushareV1Runtime,
+    UniverseCacheError,
 )
 from stock_watcher.security import (
     PRIMARY_CREDENTIAL,
@@ -100,6 +103,12 @@ def main() -> int:
     parser.add_argument("--duration-minutes", type=float, default=30.0)
     parser.add_argument("--interval-seconds", type=float, default=10.0)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--universe-cache",
+        type=Path,
+        default=universe_cache_path_for_database(runtime_paths().database),
+        help="verified static universe cache prepared before the live window",
+    )
     args = parser.parse_args()
     if args.duration_minutes <= 0 or not 5 <= args.interval_seconds <= 60:
         parser.error("duration must be positive and interval must be between 5 and 60 seconds")
@@ -110,6 +119,16 @@ def main() -> int:
         or wall_time(12, 55) <= current <= wall_time(15, 0)
     ):
         print("必须在A股交易时段运行；未读取或输出Token。")
+        return 2
+
+    universe_cache = RuntimeUniverseCache(args.universe_cache)
+    try:
+        cached_universe = universe_cache.load(now=now)
+    except UniverseCacheError as error:
+        print(
+            f"基础缓存不可用（{error.reason.value}）；"
+            "未读取Token，也未发起普通Pro或实时请求。"
+        )
         return 2
 
     store = KeyringCredentialStore()
@@ -130,10 +149,13 @@ def main() -> int:
         realtime,
         request_budget=request_budget,
     )
-    # This is deliberately serial and reports each independent capability.  A
-    # 429 stops at the affected capability, leaves the saved Token untouched,
-    # and is recorded below rather than being misreported as an invalid Token.
-    capability_checks.run_until_blocked()
+    capability_checks.seed_realtime_codes(
+        security.code for security in cached_universe.securities
+    )
+    # The live window validates only the approved native route progressively.
+    # Static/history/sector context was already verified when the atomic cache
+    # was produced, so no ordinary Pro request is issued here.
+    capability_checks.run_realtime_until_blocked()
     telemetry = MarketTelemetryTransport(realtime)
     runtime = TushareV1Runtime(
         TushareBootstrapLoader(provider),
@@ -149,6 +171,15 @@ def main() -> int:
                 recovery_cycles=settings.realtime_warmup_cycles,
             )
         ),
+        universe_cache=universe_cache,
+    )
+    if runtime.universe is None:
+        capability_checks.shutdown()
+        print("基础缓存加载失败；未发起全市场实时请求。")
+        return 2
+    realtime_batch_plan = _batch_plan(
+        len(runtime.universe.securities),
+        settings.native_realtime_profile.batch_size,
     )
     started = datetime.now(SHANGHAI)
     start_monotonic = time.monotonic()
@@ -230,10 +261,6 @@ def main() -> int:
         )
         if progress is not None:
             previous_progress = progress
-        # A first pass that hit 429 leaves its cursor on the failed capability.
-        # This synchronous retry becomes a no-op until its Retry-After/default
-        # cooldown has elapsed, then resumes without overlapping the scan.
-        capability_checks.run_until_blocked()
         slot += 1
         next_slot = start_monotonic + slot * args.interval_seconds
         remaining = next_slot - time.monotonic()
@@ -279,7 +306,22 @@ def main() -> int:
         default=None,
     )
     capability_statuses = capability_checks.statuses()
-    all_capabilities_available = _all_capabilities_available(capability_statuses)
+    realtime_capabilities_available = _realtime_capabilities_available(
+        capability_statuses
+    )
+    realtime_capability_statuses: dict[
+        ProviderCapability,
+        ProviderCapabilityStatus,
+    ] = {
+        capability: status
+        for capability, status in capability_statuses.items()
+        if capability in {
+            ProviderCapability.REALTIME_1,
+            ProviderCapability.REALTIME_100,
+            ProviderCapability.REALTIME_300,
+            ProviderCapability.REALTIME_800,
+        }
+    }
     metrics = {
         "rounds": len(rounds),
         "complete_rounds": len(complete_rounds),
@@ -302,7 +344,7 @@ def main() -> int:
         "failed_rounds": sum(row.get("failure_reason") is not None for row in rounds),
         "rate_limited_capabilities": sum(
             status.state is ProviderCapabilityState.RATE_LIMITED
-            for status in capability_statuses.values()
+            for status in realtime_capability_statuses.values()
         ),
     }
     fund_capability = (
@@ -321,10 +363,10 @@ def main() -> int:
         and metrics["duplicate_rejections"] == 0
         and metrics["overlapping_scans"] == 0
         and bool(candidate_rounds)
-        and all_capabilities_available
+        and realtime_capabilities_available
     )
     report = {
-        "schema_version": "stockwatcher-v1-live-validation-2",
+        "schema_version": "stockwatcher-v1-live-validation-3",
         "started_at": started.isoformat(),
         "finished_at": finished.isoformat(),
         "duration_minutes": args.duration_minutes,
@@ -334,21 +376,42 @@ def main() -> int:
         "credential_storage": _storage_label(store),
         "credential_persisted_or_printed": False,
         "raw_market_payload_persisted": False,
+        "static_context": {
+            "source": "verified_atomic_runtime_cache",
+            "ordinary_pro_requests_in_live_window": 0,
+            "generated_at": (
+                runtime.universe.generated_at.isoformat()
+                if runtime.universe.generated_at is not None
+                else None
+            ),
+            "trend_through_date": (
+                runtime.universe.trend_through_date.isoformat()
+                if runtime.universe.trend_through_date is not None
+                else None
+            ),
+            "security_count": len(runtime.universe.securities),
+            "membership_count": len(runtime.universe.memberships),
+        },
         "provider_routes": {
             "ordinary_history_sector": (
                 "https://fastapic.stockai888.top/<api_name> (documented SDK route)"
             ),
             "realtime": "tushare.realtime_quote:sina",
+            "rt_k_used": False,
+            "super_used": False,
         },
+        "realtime_batch_plan": realtime_batch_plan,
         "request_budget": {
             "shared_across_pro_and_realtime": True,
             "request_start_interval_seconds": request_budget.min_interval_seconds,
             "default_429_cooldown_seconds": (
                 ApplicationRequestBudget.default_rate_limit_cooldown_seconds
             ),
+            "route_specific_429_cooldowns": True,
         },
-        "capability_checks": _capability_records(capability_statuses),
-        "all_capabilities_available": all_capabilities_available,
+        "capability_check_scope": "native_realtime_1_100_300_800_only",
+        "capability_checks": _capability_records(realtime_capability_statuses),
+        "realtime_capabilities_available": realtime_capabilities_available,
         "fund_capability": (
             {
                 "capability": fund_capability.capability.value,
@@ -438,6 +501,30 @@ def _all_capabilities_available(
         is ProviderCapabilityState.AVAILABLE
         for capability in CAPABILITY_ORDER
     )
+
+
+def _realtime_capabilities_available(
+    statuses: dict[ProviderCapability, ProviderCapabilityStatus],
+) -> bool:
+    return all(
+        statuses.get(capability, ProviderCapabilityStatus(capability)).state
+        is ProviderCapabilityState.AVAILABLE
+        for capability in (
+            ProviderCapability.REALTIME_1,
+            ProviderCapability.REALTIME_100,
+            ProviderCapability.REALTIME_300,
+            ProviderCapability.REALTIME_800,
+        )
+    )
+
+
+def _batch_plan(count: int, batch_size: int) -> list[int]:
+    if count <= 0 or batch_size <= 0:
+        return []
+    return [
+        min(batch_size, count - offset)
+        for offset in range(0, count, batch_size)
+    ]
 
 
 def _market_progress(result: TransportResult) -> MarketProgress:

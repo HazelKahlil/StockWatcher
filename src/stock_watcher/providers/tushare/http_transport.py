@@ -78,7 +78,7 @@ class BaseHttpTransport:
         started = self._monotonic()
         response: requests.Response | None = None
         for attempt in range(attempts):
-            self._request_budget.acquire()
+            self._request_budget.acquire("pro")
             try:
                 timeout = (
                     self.profile.connect_timeout_seconds,
@@ -124,7 +124,10 @@ class BaseHttpTransport:
                     continue
                 raise ProviderError(ProviderFailureReason.NETWORK) from exc
             if response.status_code == 429:
-                self._request_budget.pause_for(_retry_after_seconds(response, now=self._clock()))
+                self._request_budget.pause_for(
+                    _retry_after_seconds(response, now=self._clock()),
+                    lane="pro",
+                )
                 break
             if response.status_code in {500, 502, 503, 504} and attempt + 1 < attempts:
                 self._sleeper(

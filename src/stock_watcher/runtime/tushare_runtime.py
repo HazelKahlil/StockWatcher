@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from threading import RLock
 from typing import Protocol
 
 from stock_watcher.domain import (
@@ -39,6 +40,11 @@ from .scan_coordinator import (
     IncompleteScanError,
     ScanCancelledError,
     ScanInProgressError,
+)
+from .universe_cache import (
+    RuntimeUniverseCache,
+    UniverseCacheError,
+    universe_is_current,
 )
 
 
@@ -102,6 +108,8 @@ class RuntimeUniverse:
         FundCapability.UNAVAILABLE,
         "尚未探测资金能力",
     )
+    generated_at: datetime | None = None
+    trend_through_date: date | None = None
 
     @property
     def securities(self) -> tuple[Security, ...]:
@@ -143,7 +151,7 @@ class TushareBootstrapLoader:
         trade_result = self.provider.trading_dates(
             exchange="SSE",
             start_date=(now.date() - timedelta(days=30)).strftime("%Y%m%d"),
-            end_date=now.date().strftime("%Y%m%d"),
+            end_date=(now.date() + timedelta(days=14)).strftime("%Y%m%d"),
             is_open="1",
         )
         open_dates = tuple(
@@ -160,20 +168,30 @@ class TushareBootstrapLoader:
             raise RuntimeError("交易日历不足，无法建立三日趋势基线")
         if not stock_result.records:
             raise RuntimeError("证券列表为空")
-        latest_dates = open_dates[-4:]
+        include_today = now.timetz().replace(tzinfo=None) >= time(15, 30)
+        completed_dates = tuple(
+            trading_date
+            for trading_date in open_dates
+            if trading_date < now.date()
+            or (include_today and trading_date == now.date())
+        )
+        if len(completed_dates) < 4:
+            raise RuntimeError("已完成交易日不足，无法建立三日趋势基线")
+        latest_dates = completed_dates[-4:]
         daily_records: list[dict[str, str | int | float | bool | None]] = []
         for trading_date in latest_dates:
-            daily_records.extend(
-                self.provider.daily_bars(
-                    trade_date=trading_date.strftime("%Y%m%d")
-                ).records
+            result = self.provider.daily_bars(
+                trade_date=trading_date.strftime("%Y%m%d")
             )
+            if not result.records:
+                raise RuntimeError("历史日线尚未完整，保留上一版基础缓存")
+            daily_records.extend(result.records)
         trends, high_3d = _daily_context(tuple(daily_records))
         corporate_actions = self._corporate_action_codes(latest_dates)
         resumptions = self._resumption_codes(now.date())
         profiles = _security_profiles(
             stock_result,
-            open_dates,
+            completed_dates,
             corporate_actions | resumptions,
         )
         if len(profiles) < 100:
@@ -190,6 +208,8 @@ class TushareBootstrapLoader:
             open_dates=open_dates,
             concept_loaded=bool(concept_memberships),
             fund_capability=fund_capability,
+            generated_at=now,
+            trend_through_date=latest_dates[-1],
         )
 
     def warmup_minutes(
@@ -201,7 +221,7 @@ class TushareBootstrapLoader:
         """Preheat a bounded strongest-name set with real 1-minute prices.
 
         The verified ``stk_mins`` contract accepts one security per request.
-        Requests remain sequential behind the provider's 0.5-second start
+        Requests remain sequential behind the provider's one-second start
         limiter; the small bound prevents startup preheating from turning into
         an unbounded per-stock loop.
         """
@@ -460,6 +480,8 @@ class TushareV1Runtime:
         stable_selector: StableTop3Selector | None = None,
         movement_detector: StrongMovementDetector | None = None,
         candidate_config: CandidateConfig | None = None,
+        universe_cache: RuntimeUniverseCache | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.loader = loader
         self.coordinator = coordinator
@@ -473,16 +495,40 @@ class TushareV1Runtime:
             version="v1-real-candidates-20260729",
             app_version="0.4.0a1",
         )
+        self.universe_cache = universe_cache
+        self._clock = clock or (lambda: datetime.now(SHANGHAI))
+        self._state_lock = RLock()
         self.universe: RuntimeUniverse | None = None
-        self._minutes_warmed = False
+        self.universe_cache_failure: str | None = None
+        if self.universe_cache is not None:
+            try:
+                self.universe = self.universe_cache.load(now=_shanghai(self._clock()))
+            except UniverseCacheError as error:
+                self.universe_cache_failure = error.reason.value
 
     def prepare(self) -> RuntimeUniverse:
-        self.buffer.clear()
-        self.pipeline.reset()
-        self.stable_selector.reset()
-        self._minutes_warmed = False
-        self.universe = self.loader.load()
-        return self.universe
+        """Refresh static context outside the critical realtime scan path.
+
+        The provider work happens before the state swap. A failed refresh therefore
+        preserves the previous verified universe and its on-disk cache.
+        """
+        fresh = self.loader.load()
+        if self.universe_cache is not None:
+            self.universe_cache.save(fresh)
+        with self._state_lock:
+            self.buffer.clear()
+            self.pipeline.reset()
+            self.stable_selector.reset()
+            self.movement_detector.reset()
+            self.health.reset_for_recovery()
+            self.universe = fresh
+            self.universe_cache_failure = None
+        return fresh
+
+    def universe_is_current(self, now: datetime) -> bool:
+        with self._state_lock:
+            universe = self.universe
+        return universe is not None and universe_is_current(universe, now=now)
 
     def request_scan_cancellation(self) -> None:
         self.coordinator.cancel_current_scan()
@@ -490,27 +536,36 @@ class TushareV1Runtime:
     def reset_for_external_recovery(self) -> None:
         """Clear volatile baselines while retaining validated static context."""
         self.request_scan_cancellation()
-        self.buffer.clear()
-        self.pipeline.reset()
-        self.stable_selector.reset()
-        self.movement_detector.reset()
-        self.health.reset_for_recovery()
-        self._minutes_warmed = False
+        with self._state_lock:
+            self.buffer.clear()
+            self.pipeline.reset()
+            self.stable_selector.reset()
+            self.movement_detector.reset()
+            self.health.reset_for_recovery()
 
     def scan_once(self) -> ScanOutcome:
-        if self.universe is None:
-            self.prepare()
-        assert self.universe is not None
+        with self._state_lock:
+            return self._scan_once_locked()
+
+    def _scan_once_locked(self) -> ScanOutcome:
+        universe = self.universe
+        if universe is None:
+            state = self.health.fail()
+            return ScanOutcome(
+                state,
+                "基础缓存未准备完成，本轮未发起实时请求。",
+                None,
+                None,
+                None,
+                None,
+                None,
+                failure_reason="universe_cache",
+            )
         try:
-            scan = self.coordinator.fetch_once(self.universe.securities)
-            if not self._minutes_warmed:
-                warmed = self.loader.warmup_minutes(scan.quotes)
-                if warmed:
-                    self.buffer.prime(warmed)
-                self._minutes_warmed = True
+            scan = self.coordinator.fetch_once(universe.securities)
             features = self.buffer.update(
                 scan.quotes,
-                high_3d=self.universe.high_3d,
+                high_3d=universe.high_3d,
             )
             state = self.health.observe(scan)
         except Exception as error:
@@ -543,9 +598,9 @@ class TushareV1Runtime:
         inputs = self.pipeline.build(
             scan.quotes,
             features,
-            self.universe.profiles,
-            self.universe.memberships,
-            trends=self.universe.trends,
+            universe.profiles,
+            universe.memberships,
+            trends=universe.trends,
             config_version=self.candidate_config.version,
         )
         raw = self.candidate_engine.calculate(

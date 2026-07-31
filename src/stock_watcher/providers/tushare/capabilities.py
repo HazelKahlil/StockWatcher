@@ -91,9 +91,10 @@ class CapabilityCheckCoordinator:
     """Runs independent, serial capability checks after a Token is saved.
 
     A failed optional capability never invalidates the Token.  In particular,
-    a 429 marks only the current check as rate-limited, asks the shared budget
-    to hold all product-route starts, and later resumes from that check rather
-    than replaying the completed checks.
+    a 429 marks only the current check as rate-limited, cools that provider
+    lane, and later resumes from that check rather than replaying completed
+    checks. Pro and native realtime still share one serialized request-start
+    interval, while a Pro cooldown cannot hide the independent realtime route.
     """
 
     def __init__(
@@ -117,7 +118,6 @@ class CapabilityCheckCoordinator:
         self._lock = Lock()
         self._in_flight = False
         self._future: Future[None] | None = None
-        self._resume_from: ProviderCapability | None = None
         self._sample_codes: tuple[str, ...] = ()
         self._statuses = {
             capability: ProviderCapabilityStatus(capability)
@@ -152,7 +152,6 @@ class CapabilityCheckCoordinator:
     def reset(self) -> None:
         """Forget prior capability observations after a Token replacement."""
         with self._lock:
-            self._resume_from = None
             self._sample_codes = ()
             self._statuses = {
                 capability: ProviderCapabilityStatus(capability)
@@ -172,31 +171,88 @@ class CapabilityCheckCoordinator:
         with self._lock:
             return self._statuses[capability]
 
+    def seed_realtime_codes(self, codes: Iterable[str]) -> None:
+        """Use a verified static cache so Pro 429 cannot hide realtime status."""
+        normalized = tuple(
+            dict.fromkeys(
+                code.strip().upper()
+                for code in codes
+                if _valid_code(code.strip().upper())
+            )
+        )
+        if not normalized:
+            return
+        with self._lock:
+            previous_count = len(self._sample_codes)
+            if len(normalized) <= previous_count:
+                return
+            self._sample_codes = normalized
+            for capability in REALTIME_CAPABILITIES:
+                expected = _expected_count(capability)
+                status = self._statuses[capability]
+                if (
+                    previous_count < expected <= len(normalized)
+                    and status.state is ProviderCapabilityState.UNAVAILABLE
+                    and status.safe_reason == ProviderFailureReason.EMPTY_DATA.value
+                ):
+                    self._statuses[capability] = ProviderCapabilityStatus(
+                        capability,
+                        last_success_at=status.last_success_at,
+                    )
+
     def start_background(self) -> bool:
         """Schedule one serial pass if a due check exists and none is running."""
+        return self._start_selected_background(CAPABILITY_ORDER)
+
+    def start_realtime_background(self) -> bool:
+        """Schedule only the approved 1/100/300/800 realtime progression."""
+        return self._start_selected_background(
+            tuple(
+                capability
+                for capability in CAPABILITY_ORDER
+                if capability in REALTIME_CAPABILITIES
+            )
+        )
+
+    def _start_selected_background(
+        self,
+        order: tuple[ProviderCapability, ...],
+    ) -> bool:
         with self._lock:
-            # Do not call ``_next_due_locked`` here: selecting a due retry
-            # consumes ``_resume_from``.  The worker must be the only caller
-            # that advances the cursor, otherwise a background wake-up after
-            # a 429 would skip the failed capability and move to a later one.
-            if self._in_flight or not self._has_due_check_locked():
+            if self._in_flight or not self._has_due_check_locked(order):
                 return False
             self._in_flight = True
-            self._future = self._executor.submit(self._run_loop)
+            self._future = self._executor.submit(self._run_loop, order)
             return True
 
     def run_until_blocked(self) -> None:
         """Synchronously execute due checks; intended for deterministic tests."""
+        self._run_selected(CAPABILITY_ORDER)
+
+    def run_realtime_until_blocked(self) -> None:
+        """Check only the approved 1/100/300/800 realtime progression."""
+        self._run_selected(
+            tuple(
+                capability
+                for capability in CAPABILITY_ORDER
+                if capability in REALTIME_CAPABILITIES
+            )
+        )
+
+    def _run_selected(self, order: tuple[ProviderCapability, ...]) -> None:
         with self._lock:
             if self._in_flight:
                 return
             self._in_flight = True
-        self._run_loop()
+        self._run_loop(order)
 
-    def _run_loop(self) -> None:
+    def _run_loop(
+        self,
+        order: tuple[ProviderCapability, ...] = CAPABILITY_ORDER,
+    ) -> None:
         while True:
             with self._lock:
-                capability = self._next_due_locked()
+                capability = self._next_due_locked(order)
                 if capability is None:
                     self._in_flight = False
                     return
@@ -209,10 +265,11 @@ class CapabilityCheckCoordinator:
                     record_count=previous.record_count,
                 )
             state = self._check(capability)
+            # A Pro 429 must not hide the independent native realtime checks,
+            # and a realtime 429 must not erase ordinary capability status.
+            # The lane cooldown makes the next selector skip only that route.
             if state is ProviderCapabilityState.RATE_LIMITED:
-                with self._lock:
-                    self._in_flight = False
-                return
+                continue
 
     def retry_now(self) -> bool:
         """Explicitly retry non-rate-limited checks without disturbing successes."""
@@ -233,30 +290,51 @@ class CapabilityCheckCoordinator:
         if self._owns_executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
 
-    def _next_due_locked(self) -> ProviderCapability | None:
+    def _next_due_locked(
+        self,
+        order: tuple[ProviderCapability, ...] = CAPABILITY_ORDER,
+    ) -> ProviderCapability | None:
         now = _shanghai(self._clock())
-        if self._resume_from is not None:
-            status = self._statuses[self._resume_from]
-            if status.next_retry_at is not None and status.next_retry_at > now:
-                return None
-            capability = self._resume_from
-            self._resume_from = None
-            return capability
-        for capability in CAPABILITY_ORDER:
-            if self._statuses[capability].state is ProviderCapabilityState.UNKNOWN:
+        for capability in order:
+            status = self._statuses[capability]
+            if (
+                status.state is ProviderCapabilityState.RATE_LIMITED
+                and (status.next_retry_at is None or status.next_retry_at <= now)
+            ):
+                return capability
+        for capability in order:
+            if (
+                self._statuses[capability].state is ProviderCapabilityState.UNKNOWN
+                and self._request_budget.cooldown_remaining(
+                    lane=_capability_lane(capability)
+                )
+                <= 0
+            ):
                 return capability
         return None
 
-    def _has_due_check_locked(self) -> bool:
-        """Return whether a pass can start without advancing its cursor."""
+    def _has_due_check_locked(
+        self,
+        order: tuple[ProviderCapability, ...] = CAPABILITY_ORDER,
+    ) -> bool:
+        """Return whether either route has a due check."""
         now = _shanghai(self._clock())
-        if self._resume_from is not None:
-            status = self._statuses[self._resume_from]
-            return status.next_retry_at is None or status.next_retry_at <= now
-        return any(
-            status.state is ProviderCapabilityState.UNKNOWN
-            for status in self._statuses.values()
-        )
+        for capability in order:
+            status = self._statuses[capability]
+            if (
+                status.state is ProviderCapabilityState.RATE_LIMITED
+                and (status.next_retry_at is None or status.next_retry_at <= now)
+            ):
+                return True
+            if (
+                status.state is ProviderCapabilityState.UNKNOWN
+                and self._request_budget.cooldown_remaining(
+                    lane=_capability_lane(capability)
+                )
+                <= 0
+            ):
+                return True
+        return False
 
     def _check(self, capability: ProviderCapability) -> ProviderCapabilityState:
         now = _shanghai(self._clock())
@@ -357,8 +435,6 @@ class CapabilityCheckCoordinator:
         now: datetime,
         result: TransportResult,
     ) -> ProviderCapabilityState:
-        if capability is ProviderCapability.STOCK_LIST:
-            self._sample_codes = _codes_from_records(result.records)
         expected = _expected_count(capability)
         state = (
             ProviderCapabilityState.STALE
@@ -369,6 +445,10 @@ class CapabilityCheckCoordinator:
             else ProviderCapabilityState.UNAVAILABLE
         )
         with self._lock:
+            if capability is ProviderCapability.STOCK_LIST:
+                discovered_codes = _codes_from_records(result.records)
+                if len(discovered_codes) > len(self._sample_codes):
+                    self._sample_codes = discovered_codes
             old = self._statuses[capability]
             self._statuses[capability] = ProviderCapabilityStatus(
                 capability=capability,
@@ -397,9 +477,13 @@ class CapabilityCheckCoordinator:
             # coordinator translates the exception into UI state.  Test and
             # alternate transports may not have a budget, so establish it
             # here when needed.
-            retry_after = self._request_budget.cooldown_remaining()
+            lane = "realtime" if capability in REALTIME_CAPABILITIES else "pro"
+            retry_after = self._request_budget.cooldown_remaining(lane=lane)
             if retry_after <= 0:
-                retry_after = self._request_budget.pause_for(error.retry_after_seconds)
+                retry_after = self._request_budget.pause_for(
+                    error.retry_after_seconds,
+                    lane=lane,
+                )
             state = ProviderCapabilityState.RATE_LIMITED
             next_retry_at = now + timedelta(seconds=retry_after)
         elif error.reason is ProviderFailureReason.PERMISSION_DENIED:
@@ -419,8 +503,6 @@ class CapabilityCheckCoordinator:
                 next_retry_at=next_retry_at,
                 record_count=old.record_count,
             )
-            if state is ProviderCapabilityState.RATE_LIMITED:
-                self._resume_from = capability
         return state
 
 
@@ -459,9 +541,21 @@ def _codes_from_records(records: tuple[Record, ...]) -> tuple[str, ...]:
         if not isinstance(value, str):
             continue
         code = value.strip().upper()
-        if len(code) == 9 and code[:6].isdigit() and code[6:] in {".SH", ".SZ", ".BJ"}:
+        if _valid_code(code):
             codes.append(code)
     return tuple(dict.fromkeys(codes))
+
+
+def _valid_code(code: str) -> bool:
+    return (
+        len(code) == 9
+        and code[:6].isdigit()
+        and code[6:] in {".SH", ".SZ", ".BJ"}
+    )
+
+
+def _capability_lane(capability: ProviderCapability) -> str:
+    return "realtime" if capability in REALTIME_CAPABILITIES else "pro"
 
 
 def _shanghai(value: datetime) -> datetime:

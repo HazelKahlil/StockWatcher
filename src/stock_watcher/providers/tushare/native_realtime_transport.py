@@ -76,6 +76,7 @@ class TushareConstantsModule(Protocol):
 
 class TushareVerifyTokenModule(Protocol):
     get_token: Callable[[], str | None]
+    verify_token: Callable[..., object]
 
 
 class TushareSdkRealtimeClient:
@@ -119,9 +120,23 @@ class TushareSdkRealtimeClient:
         # upstream text can contain identifiers or implementation details.
         with SDK_RUNTIME_LOCK:
             previous_get_token = self._verify_token.get_token
+            previous_verify_token = self._verify_token.verify_token
             previous_verify_url = self._constants.verify_token_url
+
+            def checked_verify_token(*args: object, **kwargs: object) -> object:
+                response = previous_verify_token(*args, **kwargs)
+                status_code = getattr(response, "status_code", None)
+                if status_code in {401, 403, 429, 500, 502, 503, 504}:
+                    # The SDK's permission decorator can otherwise replace an
+                    # HTTP failure with an AttributeError while formatting its
+                    # response. Preserve only the non-sensitive status marker
+                    # so the transport can apply the correct safe policy.
+                    raise RuntimeError(f"HTTP {status_code}")
+                return response
+
             try:
                 self._verify_token.get_token = lambda: token
+                self._verify_token.verify_token = checked_verify_token
                 self._constants.verify_token_url = verify_url
                 with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                     frame = self._sdk.realtime_quote(
@@ -130,6 +145,7 @@ class TushareSdkRealtimeClient:
                     )
             finally:
                 self._verify_token.get_token = previous_get_token
+                self._verify_token.verify_token = previous_verify_token
                 self._constants.verify_token_url = previous_verify_url
         if frame is None:
             return None
@@ -187,7 +203,7 @@ class NativeRealtimeTransport:
             self._client.configure(token, str(self.profile.verify_url).rstrip("/"))
             for offset in range(0, len(codes), self.profile.batch_size):
                 batch = codes[offset : offset + self.profile.batch_size]
-                self._request_budget.acquire()
+                self._request_budget.acquire("realtime")
                 try:
                     rows = self._client.fetch(batch, source=self.profile.source)
                 except Exception as exc:
@@ -198,7 +214,10 @@ class NativeRealtimeTransport:
                         else None
                     )
                     if reason is ProviderFailureReason.RATE_LIMITED:
-                        retry_after = self._request_budget.pause_for(retry_after)
+                        retry_after = self._request_budget.pause_for(
+                            retry_after,
+                            lane="realtime",
+                        )
                     raise ProviderError(
                         reason,
                         retry_after_seconds=retry_after,
@@ -375,11 +394,33 @@ def _as_shanghai(value: datetime) -> datetime:
 def _safe_failure_reason(exc: Exception) -> ProviderFailureReason:
     if isinstance(exc, ProviderError):
         return exc.reason
-    if isinstance(exc, PermissionError):
-        return ProviderFailureReason.PERMISSION_DENIED
+    message = str(exc).casefold()
     status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status == 429 or "429" in str(exc) or "rate limit" in str(exc).casefold():
+    if status == 429 or any(
+        marker in message
+        for marker in (
+            "429",
+            "rate limit",
+            "too many requests",
+            "访问过于频繁",
+            "次数超限",
+            "暂时限流",
+        )
+    ):
         return ProviderFailureReason.RATE_LIMITED
+    if status == 401 or "http 401" in message:
+        return ProviderFailureReason.CREDENTIAL_INVALID
+    if (
+        isinstance(exc, PermissionError)
+        or type(exc).__name__.casefold() == "permissionerror"
+        or status == 403
+        or "http 403" in message
+    ):
+        return ProviderFailureReason.PERMISSION_DENIED
+    if status in {500, 502, 503, 504} or any(
+        f"http {code}" in message for code in (500, 502, 503, 504)
+    ):
+        return ProviderFailureReason.SERVER_ERROR
     name = type(exc).__name__.casefold()
     if "timeout" in name:
         return ProviderFailureReason.TIMEOUT

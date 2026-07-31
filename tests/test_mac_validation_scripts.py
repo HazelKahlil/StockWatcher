@@ -169,11 +169,27 @@ def test_live_validation_report_lists_each_progressive_capability(
         capability.value for capability in CAPABILITY_ORDER
     ]
     assert live_validation._all_capabilities_available(statuses)
+    assert live_validation._realtime_capabilities_available(statuses)
     statuses[ProviderCapability.REALTIME_800] = ProviderCapabilityStatus(
         capability=ProviderCapability.REALTIME_800,
         state=ProviderCapabilityState.RATE_LIMITED,
     )
     assert not live_validation._all_capabilities_available(statuses)
+    assert not live_validation._realtime_capabilities_available(statuses)
+
+
+def test_live_validation_uses_seven_batches_for_5500_cached_codes(
+    live_validation: Any,
+) -> None:
+    assert live_validation._batch_plan(5500, 800) == [
+        800,
+        800,
+        800,
+        800,
+        800,
+        800,
+        700,
+    ]
 
 
 def test_validation_scripts_inject_one_budget_per_product_provider(

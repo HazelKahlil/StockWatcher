@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import cast
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from stock_watcher.domain import (
+    DataQuality,
+    HealthState,
+    SectorMembership,
+    Security,
+    SourceTimestampKind,
+)
+from stock_watcher.engine import SecurityProfile, ThreeDayTrend
+from stock_watcher.providers.tushare.models import (
+    DataQuality as ProviderDataQuality,
+)
+from stock_watcher.providers.tushare.models import (
+    ProviderProvenance,
+    TransportResult,
+)
+from stock_watcher.providers.tushare.models import (
+    SourceTimestampKind as ProviderTimestampKind,
+)
+from stock_watcher.runtime import (
+    FullMarketScanCoordinator,
+    RuntimeUniverse,
+    RuntimeUniverseCache,
+    TushareBootstrapLoader,
+    TushareV1Runtime,
+    UniverseCacheError,
+    UniverseCacheFailure,
+)
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+NOW = datetime(2026, 7, 31, 9, 40, tzinfo=SHANGHAI)
+
+
+def _security(index: int) -> Security:
+    code = f"{index:06d}.SZ"
+    return Security(code, f"缓存样本{index:06d}", "SZ")
+
+
+def _universe() -> RuntimeUniverse:
+    securities = tuple(_security(index) for index in range(1, 121))
+    profiles = tuple(
+        SecurityProfile(security=item, listed_trading_days=999)
+        for item in securities
+    )
+    memberships = tuple(
+        SectorMembership(
+            security=item,
+            sector_code=f"I{(index - 1) // 30 + 1}",
+            sector_name=f"行业{(index - 1) // 30 + 1}",
+            sector_type="industry",
+            member_count=30,
+            effective_date=NOW.date(),
+            source_ts=NOW,
+            received_ts=NOW,
+            provider_version="pro-cache-test",
+            config_version="runtime-universe-v1",
+            quality=DataQuality.DEGRADED,
+            source_timestamp_kind=SourceTimestampKind.RECEIVED_FALLBACK,
+        )
+        for index, item in enumerate(securities, start=1)
+    )
+    trends = {
+        item.code: ThreeDayTrend(
+            cumulative_change_pct=1.2,
+            highs_rising=True,
+            lows_rising=True,
+            amount_rising=True,
+            highest_price=10.5,
+        )
+        for item in securities
+    }
+    open_dates = (
+        date(2026, 7, 24),
+        date(2026, 7, 27),
+        date(2026, 7, 28),
+        date(2026, 7, 29),
+        date(2026, 7, 30),
+        date(2026, 7, 31),
+        date(2026, 8, 3),
+    )
+    return RuntimeUniverse(
+        profiles=profiles,
+        memberships=memberships,
+        trends=trends,
+        high_3d={item.code: 10.5 for item in securities},
+        open_dates=open_dates,
+        concept_loaded=False,
+        generated_at=NOW,
+        trend_through_date=date(2026, 7, 30),
+    )
+
+
+def _realtime_result(universe: RuntimeUniverse) -> TransportResult:
+    records: tuple[dict[str, str | int | float | bool | None], ...] = tuple(
+        {
+            "ts_code": security.code,
+            "name": security.name,
+            "price": 10.1,
+            "pre_close": 10.0,
+            "open": 10.0,
+            "high": 10.2,
+            "low": 9.9,
+            "vol": 1000.0,
+            "amount": 10000.0,
+            "source_ts": NOW.isoformat(),
+            "received_ts": NOW.isoformat(),
+            "data_quality": "HEALTHY",
+        }
+        for security in universe.securities
+    )
+    return TransportResult(
+        records=records,
+        http_status=200,
+        elapsed_seconds=1.0,
+        provenance=ProviderProvenance(
+            provider_profile="native_realtime",
+            endpoint="tushare.realtime_quote:sina",
+            provider_version="native-test",
+            schema_version="native-realtime-v1",
+            source_ts=NOW,
+            received_ts=NOW,
+            source_timestamp_kind=ProviderTimestampKind.SUPPLIER,
+            freshness_seconds=0.0,
+            quality=ProviderDataQuality.HEALTHY,
+            degraded=False,
+            fields_used=(),
+        ),
+    )
+
+
+class _ForbiddenLoader:
+    calls = 0
+
+    def load(self) -> RuntimeUniverse:
+        self.calls += 1
+        raise AssertionError("ordinary Pro must not run inside scan_once")
+
+
+class _RecordingRealtime:
+    def __init__(self, result: TransportResult) -> None:
+        self.result = result
+        self.calls = 0
+
+    def execute(self, _request: object) -> TransportResult:
+        self.calls += 1
+        return self.result
+
+
+def test_runtime_universe_cache_round_trip_and_failed_replace_keeps_old_file(
+    tmp_path: Path,
+) -> None:
+    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    universe = _universe()
+
+    cache.save(universe)
+    original = cache.path.read_bytes()
+    loaded = cache.load(now=NOW + timedelta(minutes=5))
+
+    assert loaded.securities == universe.securities
+    assert loaded.trend_through_date == date(2026, 7, 30)
+    assert loaded.generated_at == NOW
+    assert not cache.path.with_suffix(".json.tmp").exists()
+
+    with pytest.raises(UniverseCacheError) as captured:
+        cache.save(replace(universe, profiles=universe.profiles[:10]))
+
+    assert captured.value.reason is UniverseCacheFailure.INCOMPLETE
+    assert cache.path.read_bytes() == original
+
+
+def test_runtime_universe_cache_rejects_checksum_damage_and_stale_context(
+    tmp_path: Path,
+) -> None:
+    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache.save(_universe())
+    payload = json.loads(cache.path.read_text(encoding="utf-8"))
+    payload["universe"]["profiles"][0]["security"]["name"] = "被篡改"
+    cache.path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(UniverseCacheError) as corrupt:
+        cache.load(now=NOW)
+    assert corrupt.value.reason is UniverseCacheFailure.CORRUPT
+
+    cache.save(_universe())
+    with pytest.raises(UniverseCacheError) as stale:
+        cache.load(now=datetime(2026, 8, 3, 9, 40, tzinfo=SHANGHAI))
+    assert stale.value.reason is UniverseCacheFailure.STALE
+
+
+def test_scan_uses_verified_cache_and_never_calls_ordinary_pro(
+    tmp_path: Path,
+) -> None:
+    universe = _universe()
+    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache.save(universe)
+    loader = _ForbiddenLoader()
+    realtime = _RecordingRealtime(_realtime_result(universe))
+    runtime = TushareV1Runtime(
+        cast(TushareBootstrapLoader, loader),
+        FullMarketScanCoordinator(realtime, clock=lambda: NOW),
+        universe_cache=cache,
+        clock=lambda: NOW,
+    )
+
+    outcome = runtime.scan_once()
+
+    assert outcome.health is HealthState.WARMING
+    assert outcome.coverage_ratio == 1.0
+    assert loader.calls == 0
+    assert realtime.calls == 1
+
+
+def test_missing_cache_stops_safely_without_pro_or_realtime_call(
+    tmp_path: Path,
+) -> None:
+    loader = _ForbiddenLoader()
+    realtime = _RecordingRealtime(_realtime_result(_universe()))
+    runtime = TushareV1Runtime(
+        cast(TushareBootstrapLoader, loader),
+        FullMarketScanCoordinator(realtime, clock=lambda: NOW),
+        universe_cache=RuntimeUniverseCache(tmp_path / "missing.json"),
+        clock=lambda: NOW,
+    )
+
+    outcome = runtime.scan_once()
+
+    assert outcome.health is HealthState.STOPPED
+    assert outcome.failure_reason == "universe_cache"
+    assert loader.calls == 0
+    assert realtime.calls == 0

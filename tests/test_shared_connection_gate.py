@@ -14,6 +14,7 @@ import requests
 
 from stock_watcher.config import DataSourceSettings, HttpProfile, NativeRealtimeProfile
 from stock_watcher.providers.tushare.capabilities import (
+    CAPABILITY_ORDER,
     CapabilityCheckCoordinator,
     ProviderCapability,
     ProviderCapabilityState,
@@ -160,7 +161,7 @@ def test_lightweight_primary_tester_uses_only_one_base_call(
 
 @pytest.mark.parametrize(
     ("retry_after", "expected"), [(None, 60.0), ("17", 17.0)])
-def test_http_429_sets_shared_cooldown_without_retrying(
+def test_http_429_sets_pro_lane_cooldown_without_retrying(
     retry_after: str | None,
     expected: float,
 ) -> None:
@@ -248,6 +249,10 @@ def test_capability_checks_keep_token_after_sector_429_and_resume_from_failure()
         "trade_cal",
         "index_classify",
     ]
+    assert (
+        coordinator.status(ProviderCapability.REALTIME_800).state
+        is ProviderCapabilityState.AVAILABLE
+    )
 
     manual.value += 60.0
     wall_clock[0] += timedelta(seconds=60)
@@ -270,6 +275,191 @@ def test_capability_checks_keep_token_after_sector_429_and_resume_from_failure()
         coordinator.status(ProviderCapability.REALTIME_800).state
         is ProviderCapabilityState.AVAILABLE
     )
+    coordinator.shutdown()
+
+
+def test_cached_codes_reopen_progressive_realtime_checks_after_pro_429() -> None:
+    manual = ManualTime()
+    budget = ApplicationRequestBudget(
+        clock=manual.monotonic,
+        sleeper=manual.sleep,
+    )
+    pro = SequenceTransport(
+        [ProviderError(ProviderFailureReason.RATE_LIMITED)]
+    )
+    native = SequenceTransport(
+        [realtime(1), realtime(100), realtime(300), realtime(800)]
+    )
+    coordinator = CapabilityCheckCoordinator(
+        cast(ProProxyTransport, pro),
+        cast(NativeRealtimeTransport, native),
+        request_budget=budget,
+        clock=fixed_now,
+    )
+
+    coordinator.run_until_blocked()
+
+    assert (
+        coordinator.status(ProviderCapability.STOCK_LIST).state
+        is ProviderCapabilityState.RATE_LIMITED
+    )
+    assert (
+        coordinator.status(ProviderCapability.REALTIME_1).state
+        is ProviderCapabilityState.AVAILABLE
+    )
+    assert (
+        coordinator.status(ProviderCapability.REALTIME_800).state
+        is ProviderCapabilityState.UNAVAILABLE
+    )
+    assert len(native.calls) == 1
+
+    coordinator.seed_realtime_codes(code(index) for index in range(1, 801))
+    coordinator.run_until_blocked()
+
+    assert (
+        coordinator.status(ProviderCapability.STOCK_LIST).state
+        is ProviderCapabilityState.RATE_LIMITED
+    )
+    assert all(
+        coordinator.status(capability).state is ProviderCapabilityState.AVAILABLE
+        for capability in (
+            ProviderCapability.REALTIME_1,
+            ProviderCapability.REALTIME_100,
+            ProviderCapability.REALTIME_300,
+            ProviderCapability.REALTIME_800,
+        )
+    )
+    assert len(native.calls) == 4
+    coordinator.shutdown()
+
+
+def test_realtime_only_progression_never_calls_ordinary_pro() -> None:
+    pro = SequenceTransport([])
+    native = SequenceTransport(
+        [realtime(1), realtime(100), realtime(300), realtime(800)]
+    )
+    coordinator = CapabilityCheckCoordinator(
+        cast(ProProxyTransport, pro),
+        cast(NativeRealtimeTransport, native),
+        request_budget=ApplicationRequestBudget(),
+        clock=fixed_now,
+    )
+    coordinator.seed_realtime_codes(code(index) for index in range(1, 801))
+
+    coordinator.run_realtime_until_blocked()
+
+    assert pro.calls == []
+    assert all(
+        coordinator.status(capability).state is ProviderCapabilityState.UNKNOWN
+        for capability in (
+            ProviderCapability.STOCK_LIST,
+            ProviderCapability.TRADE_CALENDAR,
+            ProviderCapability.SECTOR_CLASSIFICATION,
+            ProviderCapability.HISTORICAL_MINUTES,
+        )
+    )
+    assert all(
+        coordinator.status(capability).state is ProviderCapabilityState.AVAILABLE
+        for capability in (
+            ProviderCapability.REALTIME_1,
+            ProviderCapability.REALTIME_100,
+            ProviderCapability.REALTIME_300,
+            ProviderCapability.REALTIME_800,
+        )
+    )
+    coordinator.shutdown()
+
+
+def test_realtime_background_progression_never_calls_ordinary_pro() -> None:
+    pro = SequenceTransport([])
+    native = SequenceTransport(
+        [realtime(1), realtime(100), realtime(300), realtime(800)]
+    )
+    coordinator = CapabilityCheckCoordinator(
+        cast(ProProxyTransport, pro),
+        cast(NativeRealtimeTransport, native),
+        request_budget=ApplicationRequestBudget(),
+        clock=fixed_now,
+    )
+    coordinator.seed_realtime_codes(code(index) for index in range(1, 801))
+
+    assert coordinator.start_realtime_background()
+    deadline = time.monotonic() + 2
+    while coordinator.in_flight and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert not coordinator.in_flight
+    assert pro.calls == []
+    assert all(
+        coordinator.status(capability).state is ProviderCapabilityState.AVAILABLE
+        for capability in (
+            ProviderCapability.REALTIME_1,
+            ProviderCapability.REALTIME_100,
+            ProviderCapability.REALTIME_300,
+            ProviderCapability.REALTIME_800,
+        )
+    )
+    coordinator.shutdown()
+
+
+def test_pro_and_realtime_429_lanes_both_resume_without_skips_or_looping() -> None:
+    manual = ManualTime()
+    wall_clock = [fixed_now()]
+    budget = ApplicationRequestBudget(
+        clock=manual.monotonic,
+        sleeper=manual.sleep,
+    )
+    pro = SequenceTransport(
+        [
+            ProviderError(ProviderFailureReason.RATE_LIMITED),
+            stock_list(),
+            result(({"cal_date": "20260730"},)),
+            result(({"index_code": "I1"},)),
+            result(({"ts_code": code(1)},)),
+        ]
+    )
+    native = SequenceTransport(
+        [
+            ProviderError(ProviderFailureReason.RATE_LIMITED),
+            realtime(1),
+            realtime(100),
+            realtime(300),
+            realtime(800),
+        ]
+    )
+    coordinator = CapabilityCheckCoordinator(
+        cast(ProProxyTransport, pro),
+        cast(NativeRealtimeTransport, native),
+        request_budget=budget,
+        clock=lambda: wall_clock[0],
+    )
+    coordinator.seed_realtime_codes(code(index) for index in range(1, 801))
+
+    coordinator.run_until_blocked()
+
+    assert not coordinator.in_flight
+    assert (
+        coordinator.status(ProviderCapability.STOCK_LIST).state
+        is ProviderCapabilityState.RATE_LIMITED
+    )
+    assert (
+        coordinator.status(ProviderCapability.REALTIME_1).state
+        is ProviderCapabilityState.RATE_LIMITED
+    )
+    assert len(pro.calls) == 1
+    assert len(native.calls) == 1
+
+    manual.value += 60.0
+    wall_clock[0] += timedelta(seconds=60)
+    coordinator.run_until_blocked()
+
+    assert not coordinator.in_flight
+    assert all(
+        coordinator.status(capability).state is ProviderCapabilityState.AVAILABLE
+        for capability in CAPABILITY_ORDER
+    )
+    assert len(pro.calls) == 5
+    assert len(native.calls) == 5
     coordinator.shutdown()
 
 
@@ -487,6 +677,80 @@ def test_pro_and_native_transports_share_one_request_start_budget() -> None:
     )
 
     assert manual.sleeps == [1.0]
+
+
+def test_pro_429_cooldown_does_not_block_native_realtime_lane() -> None:
+    manual = ManualTime()
+    budget = ApplicationRequestBudget(
+        clock=manual.monotonic,
+        sleeper=manual.sleep,
+    )
+    pro = TushareSdkProTransport(
+        primary_profile(),
+        lambda: "test-token",
+        session=cast(requests.Session, FakeSession(http_response(429))),
+        request_budget=budget,
+    )
+
+    @dataclass
+    class LaneNativeClient:
+        version: str = "test"
+        calls: list[tuple[str, ...]] = field(default_factory=list)
+
+        def configure(self, _token: str, _verify_url: str) -> None:
+            return
+
+        def fetch(
+            self,
+            codes: tuple[str, ...],
+            *,
+            source: str,
+        ) -> list[dict[str, object]]:
+            assert source == "sina"
+            self.calls.append(codes)
+            return [
+                {
+                    "TS_CODE": item,
+                    "DATE": "2026-07-30",
+                    "TIME": "10:00:00",
+                    "PRICE": 10,
+                    "PRE_CLOSE": 9.9,
+                    "OPEN": 9.8,
+                    "HIGH": 10.1,
+                    "LOW": 9.7,
+                    "VOLUME": 1,
+                    "AMOUNT": 10,
+                }
+                for item in codes
+            ]
+
+    native_client = LaneNativeClient()
+    native = NativeRealtimeTransport(
+        NativeRealtimeProfile(),
+        lambda: "test-token",
+        client=native_client,
+        clock=fixed_now,
+        monotonic=manual.monotonic,
+        sleeper=manual.sleep,
+        request_budget=budget,
+    )
+
+    with pytest.raises(ProviderError):
+        pro.execute(TransportRequest(endpoint="/", api_name="stock_basic"))
+    native.execute(
+        TransportRequest(
+            endpoint="tushare.realtime_quote:sina",
+            api_name="realtime_quote",
+            params={"ts_code": code(1)},
+            realtime=True,
+            method="SDK",
+        )
+    )
+
+    assert manual.sleeps == [1.0]
+    assert budget.cooldown_remaining(lane="pro") == 59.0
+    assert budget.cooldown_remaining(lane="realtime") == 0.0
+    assert len(native_client.calls) == 1
 
 
 def test_native_realtime_preserves_supplier_retry_after() -> None:

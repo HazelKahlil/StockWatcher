@@ -41,10 +41,12 @@ class ApplicationRequestBudget:
         self._sleeper = sleeper
         self._lock = Lock()
         self._last_started: float | None = None
-        self._not_before = 0.0
+        self._not_before_by_lane: dict[str, float] = {}
 
-    def acquire(self) -> float:
+    def acquire(self, lane: str = "shared") -> float:
         """Reserve the next request start and return any applied wait."""
+        if not lane:
+            raise ValueError("request budget lane must not be empty")
         with self._lock:
             now = self._clock()
             interval_deadline = (
@@ -52,7 +54,11 @@ class ApplicationRequestBudget:
                 if self._last_started is not None
                 else now
             )
-            deadline = max(self._not_before, interval_deadline)
+            deadline = max(
+                self._not_before_by_lane.get("shared", 0.0),
+                self._not_before_by_lane.get(lane, 0.0),
+                interval_deadline,
+            )
             delay = max(0.0, deadline - now)
             if delay:
                 self._sleeper(delay)
@@ -62,8 +68,10 @@ class ApplicationRequestBudget:
             self._last_started = max(deadline, self._clock())
             return delay
 
-    def pause_for(self, seconds: float | None) -> float:
-        """Apply a shared 429 cooldown and return its duration."""
+    def pause_for(self, seconds: float | None, *, lane: str = "shared") -> float:
+        """Apply a 429 cooldown without conflating independent provider routes."""
+        if not lane:
+            raise ValueError("request budget lane must not be empty")
         delay = (
             self.default_rate_limit_cooldown_seconds
             if seconds is None
@@ -72,12 +80,23 @@ class ApplicationRequestBudget:
         if delay < 0:
             raise ValueError("rate-limit delay must not be negative")
         with self._lock:
-            self._not_before = max(self._not_before, self._clock() + delay)
+            self._not_before_by_lane[lane] = max(
+                self._not_before_by_lane.get(lane, 0.0),
+                self._clock() + delay,
+            )
         return delay
 
-    def cooldown_remaining(self) -> float:
+    def cooldown_remaining(self, *, lane: str | None = None) -> float:
         with self._lock:
-            return max(0.0, self._not_before - self._clock())
+            now = self._clock()
+            if lane is None:
+                deadlines = self._not_before_by_lane.values()
+                return max((max(0.0, deadline - now) for deadline in deadlines), default=0.0)
+            return max(
+                0.0,
+                self._not_before_by_lane.get("shared", 0.0) - now,
+                self._not_before_by_lane.get(lane, 0.0) - now,
+            )
 
     @property
     def next_start_not_before(self) -> float:
@@ -87,7 +106,10 @@ class ApplicationRequestBudget:
                 if self._last_started is not None
                 else 0.0
             )
-            return max(self._not_before, interval_deadline)
+            return max(
+                (*self._not_before_by_lane.values(), interval_deadline),
+                default=interval_deadline,
+            )
 
 
 @dataclass(slots=True)

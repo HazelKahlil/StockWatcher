@@ -37,6 +37,7 @@ from stock_watcher.engine import (
 from stock_watcher.providers.tushare import Tushare15000Provider
 from stock_watcher.providers.tushare.capabilities import (
     CAPABILITY_ORDER,
+    CapabilityCheckCoordinator,
     ProviderCapability,
     ProviderCapabilityState,
     ProviderCapabilityStatus,
@@ -71,6 +72,7 @@ from stock_watcher.ui.data_source_settings import DataSourceSettingsController
 from stock_watcher.ui.data_source_status import CredentialTestResult
 from stock_watcher.ui.tushare_v1_session import (
     TushareV1Session,
+    _realtime_capabilities_ready,
     _required_capabilities_ready,
 )
 
@@ -764,8 +766,10 @@ class FakeV1Runtime:
     def __init__(self, universe: RuntimeUniverse, outcome: ScanOutcome) -> None:
         self.universe = universe
         self.outcome = outcome
+        self.scan_calls = 0
 
     def scan_once(self) -> ScanOutcome:
+        self.scan_calls += 1
         return self.outcome
 
 
@@ -855,6 +859,7 @@ def test_v1_session_emits_0945_and_1445_even_when_top3_is_unchanged(
     session.recover()
     afternoon = session.consume_pending_alert()
     assert afternoon is not None and afternoon.title == "14:45 观察提醒"
+    assert fake.scan_calls == 3
 
     restarted = TushareV1Session(
         tmp_path / "session.sqlite3",
@@ -1006,3 +1011,176 @@ def test_optional_historical_minutes_does_not_block_realtime_top3() -> None:
     }
 
     assert _required_capabilities_ready(statuses)
+    assert _realtime_capabilities_ready(statuses)
+
+
+def test_static_capability_429_does_not_block_cached_manual_realtime_scan(
+    tmp_path: Path,
+) -> None:
+    base = CandidateEngine().calculate(
+        tuple(
+            candidate_input(
+                f"60000{index}.SH",
+                sector_code=f"I{index}",
+                sector_score=24,
+                change=5,
+                velocity=1,
+            )
+            for index in range(1, 4)
+        ),
+        HealthState.HEALTHY,
+        CandidateConfig("v1", "0.4"),
+    )
+    assert base is not None
+    now = timestamp().replace(hour=10, minute=15)
+    batch = replace(base, source_ts=now, generated_at=now)
+    universe = RuntimeUniverse(
+        profiles=(),
+        memberships=(),
+        trends={},
+        high_3d={},
+        open_dates=(now.date(),),
+        concept_loaded=False,
+    )
+    fake = FakeV1Runtime(
+        universe,
+        ScanOutcome(
+            HealthState.HEALTHY,
+            "正常",
+            batch,
+            batch,
+            None,
+            7.0,
+            1.0,
+            1.0,
+            6.0,
+        ),
+    )
+    statuses = {
+        capability: ProviderCapabilityStatus(
+            capability,
+            state=(
+                ProviderCapabilityState.RATE_LIMITED
+                if capability is ProviderCapability.STOCK_LIST
+                else ProviderCapabilityState.AVAILABLE
+                if capability
+                in {
+                    ProviderCapability.REALTIME_1,
+                    ProviderCapability.REALTIME_100,
+                    ProviderCapability.REALTIME_300,
+                    ProviderCapability.REALTIME_800,
+                }
+                else ProviderCapabilityState.UNKNOWN
+            ),
+        )
+        for capability in CAPABILITY_ORDER
+    }
+
+    class StaticCapabilities:
+        def seed_realtime_codes(self, _codes: object) -> None:
+            return
+
+        def statuses(self) -> dict[ProviderCapability, ProviderCapabilityStatus]:
+            return statuses
+
+        def start_background(self) -> bool:
+            return False
+
+        def start_realtime_background(self) -> bool:
+            return False
+
+        def shutdown(self) -> None:
+            return
+
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-token")
+    session = TushareV1Session(
+        tmp_path / "cached-manual.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, fake),
+            cast(Tushare15000Provider, object()),
+        ),
+        capability_checks=cast(CapabilityCheckCoordinator, StaticCapabilities()),
+        clock=SequenceClock([now, now + timedelta(seconds=8)]),
+    )
+    session._capability_checks_required = True
+
+    session.manual_fetch()
+
+    assert fake.scan_calls == 1
+    alert = session.consume_pending_alert()
+    assert alert is not None and alert.title == "当前最新3只"
+
+
+def test_cached_session_waits_for_realtime_progression_before_full_scan(
+    tmp_path: Path,
+) -> None:
+    now = timestamp().replace(hour=10, minute=15)
+    universe = RuntimeUniverse(
+        profiles=(),
+        memberships=(),
+        trends={},
+        high_3d={},
+        open_dates=(now.date(),),
+        concept_loaded=False,
+    )
+    fake = FakeV1Runtime(
+        universe,
+        ScanOutcome(
+            HealthState.HEALTHY,
+            "正常",
+            None,
+            None,
+            None,
+            7.0,
+            1.0,
+            1.0,
+            6.0,
+        ),
+    )
+    statuses = {
+        capability: ProviderCapabilityStatus(capability)
+        for capability in CAPABILITY_ORDER
+    }
+
+    class RealtimeProgression:
+        starts = 0
+
+        def seed_realtime_codes(self, _codes: object) -> None:
+            return
+
+        def statuses(self) -> dict[ProviderCapability, ProviderCapabilityStatus]:
+            return statuses
+
+        def start_background(self) -> bool:
+            raise AssertionError("交易时段不能启动普通Pro能力检查")
+
+        def start_realtime_background(self) -> bool:
+            self.starts += 1
+            return True
+
+        def shutdown(self) -> None:
+            return
+
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-token")
+    checks = RealtimeProgression()
+    session = TushareV1Session(
+        tmp_path / "progressive-realtime.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, fake),
+            cast(Tushare15000Provider, object()),
+        ),
+        capability_checks=cast(CapabilityCheckCoordinator, checks),
+        clock=SequenceClock([now, now]),
+    )
+    session._capability_checks_required = True
+
+    session.manual_fetch()
+
+    assert checks.starts == 1
+    assert fake.scan_calls == 0
+    assert session.data_gate_label == "实时批次检测中"
+    assert "realtime_quote" in session.health_detail

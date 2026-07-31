@@ -46,3 +46,8 @@ def report_directory_for_database(database: Path) -> Path:
     if database.parent.name == "data":
         return database.parent.parent / "reports"
     return database.parent / "reports"
+
+
+def universe_cache_path_for_database(database: Path) -> Path:
+    """Keep static market context beside SQLite without putting it inside the DB."""
+    return database.parent / "runtime-universe-v1.json"
