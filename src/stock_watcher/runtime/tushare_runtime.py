@@ -31,7 +31,10 @@ from stock_watcher.engine import (
     StrongMovementEvent,
     ThreeDayTrend,
 )
-from stock_watcher.providers.tushare.errors import ProviderError
+from stock_watcher.providers.tushare.errors import (
+    ProviderError,
+    ProviderFailureReason,
+)
 from stock_watcher.providers.tushare.models import TransportResult
 
 from .data_health import DataHealthTracker
@@ -44,6 +47,7 @@ from .scan_coordinator import (
 from .universe_cache import (
     RuntimeUniverseCache,
     UniverseCacheError,
+    UniverseCacheFailure,
     universe_is_current,
 )
 
@@ -128,10 +132,15 @@ class ScanOutcome:
     source_age_seconds: float | None = None
     source_span_seconds: float | None = None
     failure_reason: str | None = None
+    stale_excluded_count: int = 0
+    unavailable_excluded_count: int = 0
 
 
 class TushareBootstrapLoader:
     """Loads daily universe/sector/trend context using batched Pro requests."""
+
+    completed_session_count = 4
+    maximum_calendar_lookback_days = 20
 
     def __init__(
         self,
@@ -141,76 +150,130 @@ class TushareBootstrapLoader:
     ) -> None:
         self.provider = provider
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
+        self._stock_result: TransportResult | None = None
+        self._daily_results: dict[date, TransportResult] = {}
+        self._empty_daily_dates: set[date] = set()
 
     def load(self) -> RuntimeUniverse:
         now = _shanghai(self._clock())
-        stock_result = self.provider.stock_list(
-            exchange="",
-            list_status="L",
-        )
-        trade_result = self.provider.trading_dates(
-            exchange="SSE",
-            start_date=(now.date() - timedelta(days=30)).strftime("%Y%m%d"),
-            end_date=(now.date() + timedelta(days=14)).strftime("%Y%m%d"),
-            is_open="1",
-        )
-        open_dates = tuple(
-            sorted(
-                {
-                    parsed
-                    for record in trade_result.records
-                    if (parsed := _compact_date(record.get("cal_date"))) is not None
-                    and _truthy(record.get("is_open"))
-                }
+        stock_result = self._stock_result
+        if stock_result is None:
+            stock_result = self.provider.stock_list(
+                exchange="",
+                list_status="L",
             )
-        )
-        if len(open_dates) < 4:
-            raise RuntimeError("交易日历不足，无法建立三日趋势基线")
+            self._stock_result = stock_result
         if not stock_result.records:
             raise RuntimeError("证券列表为空")
         include_today = now.timetz().replace(tzinfo=None) >= time(15, 30)
-        completed_dates = tuple(
-            trading_date
-            for trading_date in open_dates
-            if trading_date < now.date()
-            or (include_today and trading_date == now.date())
+        latest_dates, daily_results = self._recent_daily_snapshots(
+            now.date() if include_today else now.date() - timedelta(days=1)
         )
-        if len(completed_dates) < 4:
-            raise RuntimeError("已完成交易日不足，无法建立三日趋势基线")
-        latest_dates = completed_dates[-4:]
-        daily_records: list[dict[str, str | int | float | bool | None]] = []
-        for trading_date in latest_dates:
-            result = self.provider.daily_bars(
-                trade_date=trading_date.strftime("%Y%m%d")
-            )
-            if not result.records:
-                raise RuntimeError("历史日线尚未完整，保留上一版基础缓存")
-            daily_records.extend(result.records)
+        daily_records = [
+            record
+            for trading_date in latest_dates
+            for record in daily_results[trading_date].records
+        ]
+        open_dates = latest_dates
+        if not include_today and now.date().weekday() < 5:
+            # trade_cal is a separately throttled capability and must not block
+            # an intraday manual Top3 request. A weekday is provisionally
+            # admitted here; the native realtime freshness gate remains the
+            # authoritative fail-closed check on exchange holidays.
+            open_dates = tuple(sorted((*open_dates, now.date())))
         trends, high_3d = _daily_context(tuple(daily_records))
-        corporate_actions = self._corporate_action_codes(latest_dates)
-        resumptions = self._resumption_codes(now.date())
         profiles = _security_profiles(
             stock_result,
-            completed_dates,
-            corporate_actions | resumptions,
+            open_dates,
+            _missing_latest_daily_codes(
+                tuple(daily_records),
+                latest_date=latest_dates[-1],
+            ),
         )
         if len(profiles) < 100:
             raise RuntimeError("证券列表覆盖不足")
-        memberships = list(self._industry_memberships(profiles, now))
-        concept_memberships = self._concept_memberships(profiles, now)
-        memberships.extend(concept_memberships)
-        fund_capability = self._fund_capability(latest_dates)
+        profile_codes = {profile.security.code for profile in profiles}
+        trends = {
+            code: trend
+            for code, trend in trends.items()
+            if code in profile_codes
+        }
+        high_3d = {
+            code: highest
+            for code, highest in high_3d.items()
+            if code in profile_codes
+        }
+        memberships = _stock_basic_industry_memberships(
+            profiles,
+            stock_result,
+            observed_at=now,
+        )
+        if len({membership.security.code for membership in memberships}) < 100:
+            raise RuntimeError("行业成分覆盖不足")
         return RuntimeUniverse(
             profiles=profiles,
-            memberships=tuple(memberships),
+            memberships=memberships,
             trends=trends,
             high_3d=high_3d,
             open_dates=open_dates,
-            concept_loaded=bool(concept_memberships),
-            fund_capability=fund_capability,
+            # The locked gate accepts either industry or concept.  The
+            # full-market daily response supplies industry for every liquid
+            # security in one batched route, so a separately throttled concept
+            # endpoint cannot delay the user's immediate Top3.
+            concept_loaded=False,
+            fund_capability=FundCapabilityResult(
+                FundCapability.UNAVAILABLE,
+                "资金未确认；不阻塞候选",
+            ),
             generated_at=now,
             trend_through_date=latest_dates[-1],
         )
+
+    def _recent_daily_snapshots(
+        self,
+        last_completed_date: date,
+    ) -> tuple[tuple[date, ...], dict[date, TransportResult]]:
+        """Find four completed sessions using only the verified daily route.
+
+        ``trade_cal`` can be rate-limited independently of the full-market
+        ``daily`` endpoint. Empty weekday responses are treated as market
+        holidays and skipped, while auth, network and rate-limit failures still
+        fail closed with their original reason.
+        """
+
+        daily_results: dict[date, TransportResult] = {}
+        for offset in range(self.maximum_calendar_lookback_days):
+            trading_date = last_completed_date - timedelta(days=offset)
+            if trading_date.weekday() >= 5:
+                continue
+            if trading_date in self._empty_daily_dates:
+                continue
+            result = self._daily_results.get(trading_date)
+            if result is not None:
+                daily_results[trading_date] = result
+                if len(daily_results) == self.completed_session_count:
+                    break
+                continue
+            try:
+                result = self.provider.daily_bars(
+                    trade_date=trading_date.strftime("%Y%m%d")
+                )
+            except ProviderError as error:
+                if error.reason is ProviderFailureReason.EMPTY_DATA:
+                    self._empty_daily_dates.add(trading_date)
+                    continue
+                raise
+            if not result.records:
+                self._empty_daily_dates.add(trading_date)
+                continue
+            self._daily_results[trading_date] = result
+            daily_results[trading_date] = result
+            if len(daily_results) == self.completed_session_count:
+                break
+        if len(daily_results) < self.completed_session_count:
+            raise RuntimeError("已完成日线不足4个交易日，保留上一版基础缓存")
+        latest_dates = tuple(sorted(daily_results))
+        return latest_dates, daily_results
 
     def warmup_minutes(
         self,
@@ -512,6 +575,10 @@ class TushareV1Runtime:
         The provider work happens before the state swap. A failed refresh therefore
         preserves the previous verified universe and its on-disk cache.
         """
+        cold_start = (
+            self.universe is None
+            and self.universe_cache_failure in {None, UniverseCacheFailure.MISSING.value}
+        )
         fresh = self.loader.load()
         if self.universe_cache is not None:
             self.universe_cache.save(fresh)
@@ -520,7 +587,10 @@ class TushareV1Runtime:
             self.pipeline.reset()
             self.stable_selector.reset()
             self.movement_detector.reset()
-            self.health.reset_for_recovery()
+            if cold_start:
+                self.health.reset_for_initial()
+            else:
+                self.health.reset_for_recovery()
             self.universe = fresh
             self.universe_cache_failure = None
         return fresh
@@ -585,7 +655,7 @@ class TushareV1Runtime:
                 state,
                 (
                     f"实时数据恢复预热 {self.health.fresh_cycles}/"
-                    f"{self.health.config.recovery_cycles} 轮。"
+                    f"{self.health.required_cycles} 轮。"
                 ),
                 None,
                 None,
@@ -594,6 +664,8 @@ class TushareV1Runtime:
                 scan.coverage_ratio,
                 scan.max_source_age_seconds,
                 scan.source_span_seconds,
+                stale_excluded_count=scan.stale_excluded_count,
+                unavailable_excluded_count=scan.unavailable_excluded_count,
             )
         inputs = self.pipeline.build(
             scan.quotes,
@@ -621,14 +693,37 @@ class TushareV1Runtime:
                 scan.max_source_age_seconds,
                 scan.source_span_seconds,
                 failure_reason="candidates",
+                stale_excluded_count=scan.stale_excluded_count,
+                unavailable_excluded_count=scan.unavailable_excluded_count,
             )
-        stable = self.stable_selector.update(raw)
+        current_codes = tuple(
+            candidate.code for candidate in self.stable_selector.current
+        )
+        current_candidates = self.candidate_engine.refresh_stable_candidates(
+            inputs,
+            current_codes,
+            self.candidate_config,
+        )
+        stable = self.stable_selector.update(
+            raw,
+            current_candidates=current_candidates,
+        )
         strong_event = self.movement_detector.evaluate(stable)
+        excluded_count = (
+            scan.stale_excluded_count + scan.unavailable_excluded_count
+        )
+        excluded_detail = (
+            f"，排除旧或不可用行情 {excluded_count} 只"
+            if excluded_count
+            else ""
+        )
         return ScanOutcome(
             HealthState.HEALTHY,
             (
                 f"全市场覆盖 {scan.coverage_ratio:.1%}，"
-                f"本轮 {scan.elapsed_seconds:.1f} 秒。"
+                f"本轮 {scan.elapsed_seconds:.1f} 秒，"
+                f"行情最旧 {scan.max_source_age_seconds:.1f} 秒"
+                f"{excluded_detail}。"
             ),
             stable,
             raw,
@@ -637,6 +732,8 @@ class TushareV1Runtime:
             scan.coverage_ratio,
             scan.max_source_age_seconds,
             scan.source_span_seconds,
+            stale_excluded_count=scan.stale_excluded_count,
+            unavailable_excluded_count=scan.unavailable_excluded_count,
         )
 
 
@@ -665,6 +762,62 @@ def _security_profiles(
             )
         )
     return tuple(sorted(output, key=lambda profile: profile.security.code))
+
+
+def _missing_latest_daily_codes(
+    records: tuple[dict[str, str | int | float | bool | None], ...],
+    *,
+    latest_date: date,
+) -> set[str]:
+    """Conservatively exclude codes absent from the latest completed session."""
+
+    all_codes: set[str] = set()
+    latest_codes: set[str] = set()
+    for record in records:
+        code = _text(record.get("ts_code")).upper()
+        if not code:
+            continue
+        all_codes.add(code)
+        if _compact_date(record.get("trade_date")) == latest_date:
+            latest_codes.add(code)
+    return all_codes - latest_codes
+
+
+def _stock_basic_industry_memberships(
+    profiles: tuple[SecurityProfile, ...],
+    result: TransportResult,
+    *,
+    observed_at: datetime,
+) -> tuple[SectorMembership, ...]:
+    """Create the industry gate directly from one full stock_basic response."""
+
+    securities = {profile.security.code: profile.security for profile in profiles}
+    grouped: dict[str, list[str]] = {}
+    for record in result.records:
+        code = _text(record.get("ts_code")).upper()
+        if code not in securities:
+            continue
+        industry = _text(record.get("industry"))
+        if industry:
+            grouped.setdefault(industry, []).append(code)
+    output: list[SectorMembership] = []
+    for industry in sorted(grouped):
+        codes = tuple(sorted(set(grouped[industry])))
+        if len(codes) < 3:
+            continue
+        for code in codes:
+            output.append(
+                _membership(
+                    securities[code],
+                    sector_code=f"industry:{industry}",
+                    sector_name=industry,
+                    sector_type="industry",
+                    member_count=len(codes),
+                    observed_at=observed_at,
+                    result=result,
+                )
+            )
+    return tuple(output)
 
 
 def _safe_scan_failure(error: Exception) -> str:

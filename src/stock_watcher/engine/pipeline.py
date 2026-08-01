@@ -76,6 +76,11 @@ class CandidatePipeline:
             sector_name = selection.metrics.sector_name if selection else "板块待确认"
             sector_score = selection.metrics.score if selection else 0.0
             completeness = _completeness(feature, selection is not None)
+            core_snapshot_complete = _core_snapshot_complete(
+                quote,
+                sector_present=selection is not None,
+                trend_present=code in trends,
+            )
             output.append(
                 CandidateInput(
                     security=profile.security,
@@ -97,7 +102,14 @@ class CandidatePipeline:
                         profile.listed_trading_days < 3
                         or profile.is_corporate_action_day
                     ),
-                    is_complete=completeness >= 0.65,
+                    # A first full-market snapshot has no honest 1/3/5-minute
+                    # baseline yet.  It may still produce explicitly weak
+                    # ``近`` supplements when current quote, sector and
+                    # completed-day trend are all present.  The unchanged
+                    # completeness value prevents that cold-start result from
+                    # being labelled ``强``; rolling windows promote later
+                    # scans naturally without fabricating velocity.
+                    is_complete=core_snapshot_complete or completeness >= 0.65,
                     velocity_1m_pct=feature.velocity_1m_pct,
                     velocity_3m_pct=feature.velocity_3m_pct,
                     velocity_5m_pct=feature.velocity_5m_pct,
@@ -120,6 +132,13 @@ class CandidatePipeline:
                         if selection
                         else None
                     ),
+                    sector_median_change_pct=(
+                        selection.metrics.median_change_pct if selection else None
+                    ),
+                    sector_rank=selection.rank if selection else None,
+                    sector_valid_count=(
+                        selection.metrics.valid_count if selection else None
+                    ),
                     highs_rising_3d=trend.highs_rising,
                     lows_rising_3d=trend.lows_rising,
                     amount_rising_3d=trend.amount_rising,
@@ -140,6 +159,24 @@ def _completeness(feature: RollingFeatures, sector_present: bool) -> float:
     )
     present = sum(value is not None for value in fields) + int(sector_present)
     return round(present / 6.0, 4)
+
+
+def _core_snapshot_complete(
+    quote: RealtimeQuote,
+    *,
+    sector_present: bool,
+    trend_present: bool,
+) -> bool:
+    """Admit a fresh cross-sectional snapshot only as a low-confidence input."""
+
+    return (
+        quote.price > 0
+        and quote.previous_close > 0
+        and quote.volume_shares >= 0
+        and quote.amount_cny >= 0
+        and sector_present
+        and trend_present
+    )
 
 
 def _is_one_price_limit_up(quote: RealtimeQuote) -> bool:

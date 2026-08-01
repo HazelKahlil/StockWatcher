@@ -74,6 +74,7 @@ from stock_watcher.ui.tushare_v1_session import (
     TushareV1Session,
     _realtime_capabilities_ready,
     _required_capabilities_ready,
+    _visible_phase,
 )
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -176,6 +177,31 @@ def test_snapshot_buffer_rejects_time_or_cumulative_rollback() -> None:
                 ),
             )
         )
+
+
+def test_snapshot_buffer_reuses_identical_supplier_event_across_scans() -> None:
+    buffer = MarketSnapshotBuffer()
+    first = quote(
+        "600001.SH",
+        timestamp(),
+        price=10.0,
+        volume=1000,
+        amount=10000,
+        scan_id="scan-1",
+    )
+    repeated = replace(
+        first,
+        received_ts=first.received_ts + timedelta(seconds=30),
+        scan_id="scan-2",
+    )
+
+    buffer.update((first,))
+    repeated_feature = buffer.update((repeated,))[0]
+
+    assert repeated_feature.source_ts == first.source_ts
+    assert repeated_feature.velocity_1m_pct is None
+    with pytest.raises(SnapshotSequenceError, match="conflicting duplicate"):
+        buffer.update((replace(repeated, price=10.1),))
 
 
 def rolling(code: str, change: float, velocity: float) -> RollingFeatures:
@@ -309,6 +335,9 @@ def candidate_input(
         sector_up_ratio=0.8,
         sector_strong_count=6,
         sector_rank_percentile=0.1,
+        sector_median_change_pct=1.2,
+        sector_rank=1,
+        sector_valid_count=10,
         highs_rising_3d=True,
         lows_rising_3d=True,
         data_completeness=0.9,
@@ -333,6 +362,15 @@ def test_candidate_engine_keeps_funds_optional_diversifies_and_fills_three() -> 
     assert any(candidate.sector_code == "I2" for candidate in batch.candidates)
     assert all(candidate.fund_score == 0 for candidate in batch.candidates)
     assert all(candidate.fund_label == "资金未确认" for candidate in batch.candidates)
+    assert all(candidate.sector_gate_passed for candidate in batch.candidates)
+    assert all(candidate.sector_up_ratio == pytest.approx(0.8) for candidate in batch.candidates)
+    assert all(candidate.sector_strong_count == 6 for candidate in batch.candidates)
+    assert all(
+        candidate.sector_median_change_pct == pytest.approx(1.2)
+        for candidate in batch.candidates
+    )
+    assert all(candidate.sector_rank == 1 for candidate in batch.candidates)
+    assert all(candidate.sector_valid_count == 10 for candidate in batch.candidates)
     assert batch.formal_count == 3
     assert not batch.overall_weak
 
@@ -341,11 +379,39 @@ def test_candidate_engine_keeps_funds_optional_diversifies_and_fills_three() -> 
         HealthState.HEALTHY,
         CandidateConfig("v1", "0.4"),
     )
-    assert weak is not None and len(weak.candidates) == 3
+    assert weak is not None and len(weak.candidates) == 2
     assert weak.formal_count == 2
-    assert weak.candidates[-1].is_supplement
-    assert weak.candidates[-1].level == "近"
     assert weak.overall_weak
+
+    cold = tuple(
+        replace(
+            item,
+            velocity_pct=0.0,
+            velocity_1m_pct=None,
+            velocity_3m_pct=None,
+            velocity_5m_pct=None,
+            acceleration_pct=None,
+            volume_ratio_1m=None,
+            amount_ratio_1m=None,
+            data_completeness=0.3333,
+        )
+        for item in inputs
+    )
+    cold_batch = CandidateEngine().calculate(
+        cold,
+        HealthState.HEALTHY,
+        CandidateConfig("v1", "0.4"),
+    )
+    assert cold_batch is not None
+    assert len(cold_batch.candidates) == 3
+    assert [candidate.sector_code for candidate in cold_batch.candidates].count("I1") == 2
+    assert cold_batch.candidates[-1].sector_code == "I2"
+    assert all(candidate.level == "近" for candidate in cold_batch.candidates)
+    assert all(not candidate.velocity_available for candidate in cold_batch.candidates)
+    assert all(
+        "1/3/5分钟涨速 —/—/—" in candidate.reasons
+        for candidate in cold_batch.candidates
+    )
 
 
 def test_stable_top3_requires_three_small_leads_but_accepts_eight_points() -> None:
@@ -404,6 +470,138 @@ def test_stable_top3_requires_three_small_leads_but_accepts_eight_points() -> No
         ),
     )
     assert selector.update(immediate).candidates[-1].code == replacement_third.code
+
+
+def test_stable_top3_refreshes_held_rows_from_current_fresh_scan() -> None:
+    inputs = tuple(
+        candidate_input(
+            f"60000{index}.SH",
+            sector_code=f"I{index}",
+            sector_score=25 - index,
+            change=6 - index * 0.2,
+            velocity=1.5,
+        )
+        for index in range(1, 5)
+    )
+    engine = CandidateEngine()
+    config = CandidateConfig("v1", "0.4")
+    baseline = engine.calculate(inputs[:3], HealthState.HEALTHY, config)
+    replacement = engine.calculate(
+        (inputs[0], inputs[1], inputs[3]),
+        HealthState.HEALTHY,
+        config,
+    )
+    assert baseline is not None and replacement is not None
+    baseline_third = baseline.candidates[2]
+    replacement_third = replace(
+        replacement.candidates[2],
+        level=baseline_third.level,
+        total_score=baseline_third.total_score + 2,
+        score=baseline_third.total_score + 2,
+    )
+    replacement = replace(
+        replacement,
+        candidates=(
+            replacement.candidates[0],
+            replacement.candidates[1],
+            replacement_third,
+        ),
+    )
+    refreshed_at = baseline_third.source_ts + timedelta(minutes=1)
+    refreshed_third = replace(
+        baseline_third,
+        source_ts=refreshed_at,
+        price=10.8,
+        change_pct=8.0,
+        reasons=("本轮新鲜字段",),
+    )
+    current = {
+        baseline.candidates[0].code: baseline.candidates[0],
+        baseline.candidates[1].code: baseline.candidates[1],
+        refreshed_third.code: refreshed_third,
+    }
+    selector = StableTop3Selector()
+    selector.update(baseline)
+
+    held = selector.update(replacement, current_candidates=current)
+
+    assert held.candidates[-1].code == baseline_third.code
+    assert held.candidates[-1].source_ts == refreshed_at
+    assert held.candidates[-1].price == 10.8
+    assert held.candidates[-1].reasons == ("本轮新鲜字段",)
+
+
+def test_stable_top3_drops_row_missing_from_current_fresh_scan() -> None:
+    inputs = tuple(
+        candidate_input(
+            f"60000{index}.SH",
+            sector_code=f"I{index}",
+            sector_score=25 - index,
+            change=6 - index * 0.2,
+            velocity=1.5,
+        )
+        for index in range(1, 5)
+    )
+    engine = CandidateEngine()
+    config = CandidateConfig("v1", "0.4")
+    baseline = engine.calculate(inputs[:3], HealthState.HEALTHY, config)
+    replacement = engine.calculate(
+        (inputs[0], inputs[1], inputs[3]),
+        HealthState.HEALTHY,
+        config,
+    )
+    assert baseline is not None and replacement is not None
+    replacement = replace(
+        replacement,
+        candidates=(
+            replacement.candidates[0],
+            replacement.candidates[1],
+            replace(
+                replacement.candidates[2],
+                level=baseline.candidates[2].level,
+                total_score=baseline.candidates[2].total_score + 2,
+                score=baseline.candidates[2].total_score + 2,
+            ),
+        ),
+    )
+    selector = StableTop3Selector()
+    selector.update(baseline)
+    current = {
+        baseline.candidates[0].code: baseline.candidates[0],
+        baseline.candidates[1].code: baseline.candidates[1],
+    }
+
+    selected = selector.update(replacement, current_candidates=current)
+
+    assert tuple(row.code for row in selected.candidates) == tuple(
+        row.code for row in replacement.candidates
+    )
+
+
+def test_refresh_stable_candidates_strictly_preserves_same_sector_limit() -> None:
+    inputs = tuple(
+        candidate_input(
+            f"60000{index}.SH",
+            sector_code="I1",
+            sector_score=25 - index,
+            change=6 - index * 0.2,
+            velocity=1.5,
+        )
+        for index in range(1, 4)
+    )
+    engine = CandidateEngine()
+    config = CandidateConfig("v1", "0.4")
+
+    refreshed = engine.refresh_stable_candidates(
+        inputs,
+        tuple(item.security.code for item in inputs),
+        config,
+    )
+
+    assert tuple(refreshed) == tuple(
+        item.security.code for item in inputs[:2]
+    )
+    assert all(row.is_formal for row in refreshed.values())
 
 
 def test_strong_movement_needs_two_rounds_and_allows_unconfirmed_funds() -> None:
@@ -509,8 +707,13 @@ class StaticTransport:
         )
 
 
-def realtime_record(code: str) -> dict[str, object]:
-    now = timestamp()
+def realtime_record(
+    code: str,
+    *,
+    at: datetime | None = None,
+    quality: str = "HEALTHY",
+) -> dict[str, object]:
+    now = at or timestamp()
     return {
         "ts_code": code,
         "name": code,
@@ -523,11 +726,11 @@ def realtime_record(code: str) -> dict[str, object]:
         "amount": 10000,
         "source_ts": now.isoformat(),
         "received_ts": now.isoformat(),
-        "data_quality": "HEALTHY",
+        "data_quality": quality,
     }
 
 
-def test_full_market_scan_rejects_partial_round_and_health_needs_three_rounds() -> None:
+def test_full_market_scan_rejects_partial_round_and_recovery_needs_three_rounds() -> None:
     securities = tuple(
         security(code)
         for code in ("600001.SH", "600002.SH", "000001.SZ")
@@ -561,11 +764,119 @@ def test_full_market_scan_rejects_partial_round_and_health_needs_three_rounds() 
         max_source_age_seconds=1,
         elapsed_seconds=1,
     )
-    assert tracker.observe(base) is HealthState.WARMING
-    assert tracker.observe(replace(base, scan_id="scan2")) is HealthState.WARMING
-    assert tracker.observe(replace(base, scan_id="scan3")) is HealthState.HEALTHY
+    assert tracker.observe(base) is HealthState.HEALTHY
+    assert tracker.fail() is HealthState.STOPPED
+    assert tracker.observe(replace(base, scan_id="recovery1")) is HealthState.WARMING
+    assert tracker.observe(replace(base, scan_id="recovery2")) is HealthState.WARMING
+    assert tracker.observe(replace(base, scan_id="recovery3")) is HealthState.HEALTHY
     stale = replace(base, scan_id="stale", max_source_age_seconds=70)
     assert tracker.observe(stale) is HealthState.STALE
+    assert tracker.observe(replace(base, scan_id="after-stale")) is HealthState.WARMING
+
+
+def test_full_market_scan_excludes_six_stale_rows_and_keeps_real_timestamps() -> None:
+    now = timestamp(second=30)
+    fresh_at = now - timedelta(seconds=4)
+    stale_at = now - timedelta(hours=2)
+    securities = tuple(
+        security(f"{index:06d}.SZ")
+        for index in range(1, 5531)
+    )
+    records = [
+        realtime_record(item.code, at=fresh_at)
+        for item in securities
+    ]
+    for index in range(len(records) - 6, len(records)):
+        records[index] = realtime_record(
+            securities[index].code,
+            at=stale_at,
+            quality="STALE",
+        )
+    original_stale_timestamps = tuple(
+        record["source_ts"] for record in records[-6:]
+    )
+
+    scan = FullMarketScanCoordinator(
+        StaticTransport(tuple(records)),
+        clock=lambda: now,
+    ).fetch_once(securities)
+
+    assert len(scan.quotes) == 5524
+    assert scan.coverage_ratio == pytest.approx(5524 / 5530)
+    assert scan.stale_excluded_count == 6
+    assert scan.unavailable_excluded_count == 0
+    assert scan.excluded_count == 6
+    assert scan.max_source_age_seconds == 4
+    assert scan.source_span_seconds == 0
+    assert all(quote.source_ts == fresh_at for quote in scan.quotes)
+    assert tuple(record["source_ts"] for record in records[-6:]) == (
+        original_stale_timestamps
+    )
+
+
+def test_full_market_scan_fails_when_fresh_coverage_is_below_99_percent() -> None:
+    now = timestamp(second=30)
+    securities = tuple(
+        security(f"{index:06d}.SZ")
+        for index in range(1, 101)
+    )
+    records = [
+        realtime_record(item.code, at=now)
+        for item in securities
+    ]
+    for index in (-1, -2):
+        records[index] = realtime_record(
+            securities[index].code,
+            at=now - timedelta(minutes=10),
+            quality="STALE",
+        )
+
+    coordinator = FullMarketScanCoordinator(
+        StaticTransport(tuple(records)),
+        clock=lambda: now,
+    )
+
+    with pytest.raises(IncompleteScanError, match="coverage 0.9800"):
+        coordinator.fetch_once(securities)
+
+
+def test_excluded_stale_row_does_not_seed_rolling_baseline() -> None:
+    first_at = timestamp()
+    second_at = first_at + timedelta(minutes=1)
+    securities = tuple(
+        security(f"{index:06d}.SZ")
+        for index in range(1, 102)
+    )
+    stale_code = securities[-1].code
+    first_records = [
+        realtime_record(item.code, at=first_at)
+        for item in securities
+    ]
+    first_records[-1] = realtime_record(
+        stale_code,
+        at=first_at - timedelta(minutes=10),
+        quality="STALE",
+    )
+    first_scan = FullMarketScanCoordinator(
+        StaticTransport(tuple(first_records)),
+        clock=lambda: first_at,
+    ).fetch_once(securities)
+    second_scan = FullMarketScanCoordinator(
+        StaticTransport(
+            tuple(realtime_record(item.code, at=second_at) for item in securities)
+        ),
+        clock=lambda: second_at,
+    ).fetch_once(securities)
+    buffer = MarketSnapshotBuffer()
+
+    buffer.update(first_scan.quotes)
+    second_features = {
+        feature.code: feature
+        for feature in buffer.update(second_scan.quotes)
+    }
+
+    assert second_features[securities[0].code].velocity_1m_pct == 0
+    assert second_features[stale_code].velocity_1m_pct is None
 
 
 class PassingTester:
@@ -773,12 +1084,32 @@ class FakeV1Runtime:
         return self.outcome
 
 
+class SequenceV1Runtime(FakeV1Runtime):
+    def __init__(
+        self,
+        universe: RuntimeUniverse,
+        outcomes: list[ScanOutcome],
+    ) -> None:
+        super().__init__(universe, outcomes[-1])
+        self.outcomes = outcomes
+
+    def scan_once(self) -> ScanOutcome:
+        self.scan_calls += 1
+        return self.outcomes.pop(0)
+
+
 class SequenceClock:
     def __init__(self, values: list[datetime]) -> None:
         self.values = values
 
     def __call__(self) -> datetime:
         return self.values.pop(0)
+
+
+def test_visible_phase_does_not_call_1113_non_trading() -> None:
+    assert _visible_phase(timestamp().replace(hour=11, minute=13)) == "上午盘中观察"
+    assert _visible_phase(timestamp().replace(hour=12, minute=0)) == "午间休市"
+    assert _visible_phase(timestamp().replace(hour=15, minute=1)) == "已收盘"
 
 
 def test_v1_session_emits_0945_and_1445_even_when_top3_is_unchanged(
@@ -950,6 +1281,82 @@ def test_manual_fetch_updates_top3_persists_batch_and_always_emits_popup(
     with session.store.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM candidate_snapshots").fetchone() == (2,)
         assert connection.execute("SELECT COUNT(*) FROM alert_events").fetchone() == (0,)
+
+
+def test_manual_fetch_completes_three_fresh_rounds_in_one_user_action(
+    tmp_path: Path,
+) -> None:
+    base = CandidateEngine().calculate(
+        tuple(
+            candidate_input(
+                f"60000{index}.SH",
+                sector_code=f"I{index}",
+                sector_score=24,
+                change=5,
+                velocity=1,
+            )
+            for index in range(1, 4)
+        ),
+        HealthState.HEALTHY,
+        CandidateConfig("v1", "0.4"),
+    )
+    assert base is not None
+    now = timestamp().replace(hour=10, minute=20)
+    batch = replace(base, source_ts=now, generated_at=now)
+    universe = RuntimeUniverse(
+        profiles=(),
+        memberships=(),
+        trends={},
+        high_3d={},
+        open_dates=(now.date(),),
+        concept_loaded=False,
+    )
+    warming = ScanOutcome(
+        HealthState.WARMING,
+        "实时数据恢复预热",
+        None,
+        None,
+        None,
+        7.0,
+        1.0,
+        1.0,
+        6.0,
+    )
+    healthy = ScanOutcome(
+        HealthState.HEALTHY,
+        "全市场覆盖 100.0%，本轮 7.0 秒。",
+        batch,
+        batch,
+        None,
+        7.0,
+        1.0,
+        1.0,
+        6.0,
+    )
+    fake = SequenceV1Runtime(universe, [warming, warming, healthy])
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-token")
+    clock_values = [
+        now + timedelta(seconds=index)
+        for index in range(6)
+    ]
+    session = TushareV1Session(
+        tmp_path / "manual-three-rounds.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, fake),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=SequenceClock(clock_values),
+    )
+
+    session.manual_fetch()
+
+    assert fake.scan_calls == 3
+    assert session.state is HealthState.HEALTHY
+    assert session.candidate_gate_label == "3只观察"
+    alert = session.consume_pending_alert()
+    assert alert is not None and alert.title == "当前最新3只"
 
 
 def test_manual_fetch_failure_keeps_previous_top3_without_new_popup(
@@ -1184,3 +1591,87 @@ def test_cached_session_waits_for_realtime_progression_before_full_scan(
     assert fake.scan_calls == 0
     assert session.data_gate_label == "实时批次检测中"
     assert "realtime_quote" in session.health_detail
+
+
+def test_manual_fetch_stops_waiting_with_visible_60_second_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = timestamp().replace(hour=10, minute=15)
+    universe = RuntimeUniverse(
+        profiles=(),
+        memberships=(),
+        trends={},
+        high_3d={},
+        open_dates=(now.date(),),
+        concept_loaded=False,
+    )
+    fake = FakeV1Runtime(
+        universe,
+        ScanOutcome(
+            HealthState.HEALTHY,
+            "不应执行扫描",
+            None,
+            None,
+            None,
+            7.0,
+            1.0,
+            1.0,
+            6.0,
+        ),
+    )
+    statuses = {
+        capability: ProviderCapabilityStatus(capability)
+        for capability in CAPABILITY_ORDER
+    }
+
+    class StalledRealtimeProgression:
+        in_flight = True
+
+        def seed_realtime_codes(self, _codes: object) -> None:
+            return
+
+        def statuses(self) -> dict[ProviderCapability, ProviderCapabilityStatus]:
+            return statuses
+
+        def start_background(self) -> bool:
+            raise AssertionError("交易时段不能启动普通Pro能力检查")
+
+        def start_realtime_background(self) -> bool:
+            return False
+
+        def shutdown(self) -> None:
+            return
+
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-token")
+    session = TushareV1Session(
+        tmp_path / "manual-timeout.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, fake),
+            cast(Tushare15000Provider, object()),
+        ),
+        capability_checks=cast(
+            CapabilityCheckCoordinator,
+            StalledRealtimeProgression(),
+        ),
+        clock=lambda: now,
+    )
+    session._capability_checks_required = True
+    monotonic_values = iter((0.0, 30.0, 61.0))
+    monkeypatch.setattr(
+        "stock_watcher.ui.tushare_v1_session.monotonic_time",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr(
+        "stock_watcher.ui.tushare_v1_session.sleep_seconds",
+        lambda _seconds: None,
+    )
+
+    session.manual_fetch()
+
+    assert fake.scan_calls == 0
+    assert session.data_gate_label == "本次超过60秒"
+    assert session.candidate_gate_label == "尚无新结果"
+    assert session.last_fetch_detail == "本次超过60秒，未生成新Top3。"

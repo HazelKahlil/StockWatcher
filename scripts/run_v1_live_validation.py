@@ -163,6 +163,7 @@ def main() -> int:
             telemetry,
             minimum_coverage_ratio=0.99,
             max_source_span_seconds=settings.full_scan_max_seconds,
+            max_quote_age_seconds=settings.source_fresh_seconds,
         ),
         health=DataHealthTracker(
             DataHealthConfig(
@@ -238,6 +239,8 @@ def main() -> int:
                 "coverage_ratio": outcome.coverage_ratio,
                 "source_age_seconds": outcome.source_age_seconds,
                 "source_span_seconds": outcome.source_span_seconds,
+                "stale_excluded_count": outcome.stale_excluded_count,
+                "unavailable_excluded_count": outcome.unavailable_excluded_count,
                 "failure_reason": outcome.failure_reason,
                 "market_progress": (
                     progress.as_record(previous_progress)
@@ -332,6 +335,12 @@ def main() -> int:
         "elapsed_seconds_max": max(elapsed) if elapsed else None,
         "minimum_coverage_ratio": minimum_coverage_ratio,
         "maximum_source_age_seconds": maximum_source_age,
+        "stale_excluded_rows": sum(
+            _integer(row, "stale_excluded_count") for row in rounds
+        ),
+        "unavailable_excluded_rows": sum(
+            _integer(row, "unavailable_excluded_count") for row in rounds
+        ),
         "duplicate_rejections": sum(
             row.get("failure_reason") == "duplicate" for row in rounds
         ),
@@ -366,7 +375,7 @@ def main() -> int:
         and realtime_capabilities_available
     )
     report = {
-        "schema_version": "stockwatcher-v1-live-validation-3",
+        "schema_version": "stockwatcher-v1-live-validation-4",
         "started_at": started.isoformat(),
         "finished_at": finished.isoformat(),
         "duration_minutes": args.duration_minutes,
@@ -570,6 +579,13 @@ def _number(row: dict[str, object], key: str) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _integer(row: dict[str, object], key: str) -> int:
+    value = row.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
 
 
 if __name__ == "__main__":

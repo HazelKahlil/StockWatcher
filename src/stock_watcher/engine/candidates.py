@@ -60,6 +60,14 @@ class Candidate:
     fund_label: str = "资金未确认"
     trend_label: str = "一般"
     acceleration_pct: float | None = None
+    velocity_available: bool = False
+    sector_gate_passed: bool = False
+    sector_up_ratio: float | None = None
+    sector_strong_count: int | None = None
+    sector_rank_percentile: float | None = None
+    sector_median_change_pct: float | None = None
+    sector_rank: int | None = None
+    sector_valid_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +131,35 @@ class CandidateEngine:
             formal_count=formal_count,
         )
 
+    def evaluate_input(
+        self,
+        item: CandidateInput,
+        config: CandidateConfig,
+    ) -> Candidate | None:
+        """Refresh one currently displayed row from this scan's eligible input."""
+        if item.exclusion_reason is not None:
+            return None
+        return self._evaluate(item, config)
+
+    def refresh_stable_candidates(
+        self,
+        inputs: tuple[CandidateInput, ...],
+        codes: tuple[str, ...],
+        config: CandidateConfig,
+    ) -> dict[str, Candidate]:
+        """Refresh retained positions without weakening eligibility or diversity."""
+        inputs_by_code = {item.security.code: item for item in inputs}
+        refreshed: list[Candidate] = []
+        for code in codes:
+            item = inputs_by_code.get(code)
+            if item is None:
+                continue
+            candidate = self.evaluate_input(item, config)
+            if candidate is not None:
+                refreshed.append(candidate)
+        normalized = self._enforce_sector_limit(refreshed, config)
+        return {candidate.code: candidate for candidate in normalized}
+
     def _diversify_and_fill(
         self,
         evaluated: list[Candidate],
@@ -147,6 +184,12 @@ class CandidateEngine:
         for candidate in evaluated:
             if candidate in selected:
                 continue
+            sector_key = candidate.sector_code or candidate.sector
+            if (
+                enforce_sector_limit
+                and sector_counts.get(sector_key, 0) >= config.maximum_same_sector
+            ):
+                continue
             supplement = candidate
             if candidate.is_formal:
                 supplement = replace(
@@ -157,9 +200,30 @@ class CandidateEngine:
                     reasons=candidate.reasons + ("同板块名额已满，作为补位观察",),
                 )
             selected.append(supplement)
+            sector_counts[sector_key] = sector_counts.get(sector_key, 0) + 1
             if len(selected) == config.display_count:
-                break
+                return selected
         return selected
+
+    @staticmethod
+    def _enforce_sector_limit(
+        candidates: list[Candidate],
+        config: CandidateConfig,
+    ) -> tuple[Candidate, ...]:
+        """Keep a retained three-row set honest after refreshing its live fields."""
+        enforce = any(candidate.sector_code for candidate in candidates)
+        sector_counts: dict[str, int] = {}
+        output: list[Candidate] = []
+        for candidate in candidates:
+            sector_key = candidate.sector_code or candidate.sector
+            if (
+                enforce
+                and sector_counts.get(sector_key, 0) >= config.maximum_same_sector
+            ):
+                continue
+            output.append(candidate)
+            sector_counts[sector_key] = sector_counts.get(sector_key, 0) + 1
+        return tuple(output)
 
     def _evaluate(self, item: CandidateInput, config: CandidateConfig) -> Candidate:
         velocities = tuple(
@@ -196,7 +260,6 @@ class CandidateEngine:
             item,
             sector_passed=sector_passed,
             individual_passed=individual_passed,
-            display_velocity=display_velocity,
             penalty=penalty,
         )
         if not is_formal:
@@ -246,6 +309,14 @@ class CandidateEngine:
             fund_label=self._fund_label(item),
             trend_label=self._trend_label(item),
             acceleration_pct=item.acceleration_pct,
+            velocity_available=item.velocity_1m_pct is not None,
+            sector_gate_passed=sector_passed,
+            sector_up_ratio=item.sector_up_ratio,
+            sector_strong_count=item.sector_strong_count,
+            sector_rank_percentile=item.sector_rank_percentile,
+            sector_median_change_pct=item.sector_median_change_pct,
+            sector_rank=item.sector_rank,
+            sector_valid_count=item.sector_valid_count,
         )
 
     @staticmethod
@@ -365,19 +436,13 @@ class CandidateEngine:
         *,
         sector_passed: bool,
         individual_passed: bool,
-        display_velocity: float,
         penalty: float,
     ) -> tuple[str, ...]:
-        velocity_1m = (
-            display_velocity
-            if item.velocity_1m_pct is None
-            else item.velocity_1m_pct
-        )
         reasons = [
             f"当前涨幅 {item.change_pct:.2f}%",
             (
                 f"1/3/5分钟涨速 "
-                f"{_optional_pct(velocity_1m)}/"
+                f"{_optional_pct(item.velocity_1m_pct)}/"
                 f"{_optional_pct(item.velocity_3m_pct)}/"
                 f"{_optional_pct(item.velocity_5m_pct)}"
             ),

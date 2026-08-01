@@ -23,11 +23,16 @@ from stock_watcher.runtime import (
 )
 from stock_watcher.runtime.post_close_pdf import (
     POST_CLOSE_PDF_LAYOUT_VERSION,
+    _generation_badge,
     list_post_close_report_dates,
     prune_post_close_reports,
     render_post_close_pdf,
 )
-from stock_watcher.security import PRIMARY_CREDENTIAL, MemoryCredentialStore
+from stock_watcher.security import (
+    PRIMARY_CREDENTIAL,
+    SUPER_CREDENTIAL,
+    MemoryCredentialStore,
+)
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
 
 TRADE_DATE = date(2026, 7, 30)
@@ -243,6 +248,40 @@ def test_session_generates_full_market_review_automatically_at_1530(
     report = tmp_path / "reports" / "2026-07-30-A股盘后回顾.md"
     assert report.is_file()
     assert "A股盘后回顾" in report.read_text(encoding="utf-8")
+    assert (tmp_path / "reports" / "2026-07-30-A股盘后回顾.pdf").is_file()
+
+
+def test_session_uses_labeled_super_static_fallback_for_1530_review(
+    tmp_path: Path,
+) -> None:
+    credentials = MemoryCredentialStore()
+    credentials.set(PRIMARY_CREDENTIAL, "test-primary-token")
+    credentials.set(SUPER_CREDENTIAL, "test-super-key")
+    runtime = NoScanRuntime()
+    primary = FailingCloseProvider()
+
+    session = TushareV1Session(
+        tmp_path / "fallback.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, runtime),
+            cast(Tushare15000Provider, primary),
+        ),
+        post_close_fallback_provider=FakeCloseProvider(),
+        clock=lambda: GENERATED_AT,
+    )
+
+    session.recover()
+
+    summary = session.store.get_daily_summary(TRADE_DATE.isoformat())
+    assert summary is not None
+    assert summary["version"] == "daily-summary-retrospective-v1"
+    report_path = tmp_path / "reports" / "2026-07-30-A股盘后回顾.json"
+    report = report_path.read_text(encoding="utf-8")
+    assert '"verdict": "RETROSPECTIVE_ONLY"' in report
+    assert "super_static_advanced_diagnostic_fallback" in report
+    assert _generation_badge(True).startswith("盘后补生成")
+    assert _generation_badge(False).startswith("15:30自动生成")
     assert (tmp_path / "reports" / "2026-07-30-A股盘后回顾.pdf").is_file()
 
 

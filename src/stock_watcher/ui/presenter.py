@@ -26,6 +26,7 @@ class CandidateRow:
     trend_label: str
     is_formal: bool
     is_supplement: bool
+    velocity_available: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,7 @@ def snapshot_from_batch(
                 trend_label=item.trend_label,
                 is_formal=item.is_formal,
                 is_supplement=item.is_supplement,
+                velocity_available=item.velocity_available,
             )
             for item in batch.candidates
         )
@@ -118,8 +120,12 @@ def detail_reasons(row: CandidateRow) -> tuple[tuple[str, str], ...]:
     if not reasons:
         reasons = [
             f"{row.sector}板块提供当前观察依据。",
-            f"当前涨幅 {format_change(row.change_pct)}，1分钟涨速"
-            f" {format_change(row.velocity_pct)}。",
+            (
+                f"当前涨幅 {format_change(row.change_pct)}，1分钟涨速"
+                f" {format_change(row.velocity_pct)}。"
+                if row.velocity_available
+                else f"当前涨幅 {format_change(row.change_pct)}，1分钟基线尚未形成。"
+            ),
             f"最近三日趋势为{row.trend_label}。",
         ]
     reasons.append(row.fund_label)

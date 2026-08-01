@@ -286,7 +286,7 @@ def _page_three(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -
     elements = _page_heading(
         str(data["trade_date"]),
         "运行回顾与数据说明",
-        "15:30自动生成｜最近31个自然日保留｜本地确定性脚本",
+        _generation_badge(bool(data["retrospective"])),
         styles,
     )
     elements.extend(
@@ -1233,6 +1233,12 @@ def _evidence_label(retrospective: bool) -> str:
     if retrospective:
         return "真实静态收盘数据｜高级诊断兜底｜非盘中Live"
     return "15:30自动生成｜真实收盘数据｜只读观察"
+
+
+def _generation_badge(retrospective: bool) -> str:
+    if retrospective:
+        return "盘后补生成｜最近31个自然日保留｜本地确定性脚本"
+    return "15:30自动生成｜最近31个自然日保留｜本地确定性脚本"
 
 
 def _integer_text(value: object, suffix: str = "") -> str:

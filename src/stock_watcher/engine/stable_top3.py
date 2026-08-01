@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .candidates import Candidate, CandidateBatch
@@ -27,10 +28,25 @@ class StableTop3Selector:
         self._pending_signature = ()
         self._pending_cycles = 0
 
-    def update(self, raw: CandidateBatch) -> CandidateBatch:
+    def update(
+        self,
+        raw: CandidateBatch,
+        *,
+        current_candidates: Mapping[str, Candidate] | None = None,
+    ) -> CandidateBatch:
         if not self.current:
             self.current = raw.candidates
             return raw
+        if current_candidates is not None:
+            current_codes = tuple(candidate.code for candidate in self.current)
+            if any(code not in current_candidates for code in current_codes):
+                # Stability may delay a rank replacement, but it must never
+                # preserve a security that is absent from the current fresh,
+                # eligible full-market snapshot.
+                self.current = raw.candidates
+                self._clear_pending()
+                return raw
+            self.current = tuple(current_candidates[code] for code in current_codes)
         raw_signature = tuple(candidate.code for candidate in raw.candidates)
         current_signature = tuple(candidate.code for candidate in self.current)
         if raw_signature == current_signature:
@@ -50,7 +66,12 @@ class StableTop3Selector:
             self.current = raw.candidates
             self._clear_pending()
             return raw
-        latest_by_code = {candidate.code: candidate for candidate in raw.candidates}
+        latest_by_code = dict(current_candidates or {})
+        # Selected raw rows carry the final formal/supplement classification,
+        # so they take precedence over the pre-selection current pool.
+        latest_by_code.update(
+            {candidate.code: candidate for candidate in raw.candidates}
+        )
         refreshed = tuple(
             latest_by_code.get(candidate.code, candidate) for candidate in self.current
         )

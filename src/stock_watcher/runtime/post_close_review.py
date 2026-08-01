@@ -40,6 +40,7 @@ class PostCloseReviewCollection:
     open_dates_checked: int
     mechanical_jump_exclusions: int
     optional_failures: tuple[str, ...]
+    retrospective_only: bool = False
 
     def source_coverage(self) -> dict[str, Any]:
         return {
@@ -56,6 +57,14 @@ class PostCloseReviewCollection:
         record["title"] = f"{self.review.trade_date} A股盘后回顾"
         record["report_type"] = "post_close_review"
         record["source_coverage"] = self.source_coverage()
+        if self.retrospective_only:
+            record["verdict"] = "RETROSPECTIVE_ONLY"
+            limitations = record.get("data_limitations")
+            existing = list(limitations) if isinstance(limitations, list) else []
+            record["data_limitations"] = [
+                *existing,
+                "Primary普通Pro限流；本次仅使用已授权Super静态高级诊断兜底，不构成主路线或盘中Live验收。",
+            ]
         return record
 
 
@@ -213,7 +222,11 @@ def application_summary_record(
             f"今日自动观察提醒 {alert_count} 次；手动查看不计入提醒限额。"
             f"{review.fund_summary}"
         ),
-        "version": "daily-summary-market-review-v1",
+        "version": (
+            "daily-summary-retrospective-v1"
+            if collection.retrospective_only
+            else "daily-summary-market-review-v1"
+        ),
     }
 
 

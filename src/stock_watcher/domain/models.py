@@ -321,6 +321,9 @@ class CandidateInput:
     sector_strong_count: int | None = None
     sector_rank_percentile: float | None = None
     sector_relative_strength: float | None = None
+    sector_median_change_pct: float | None = None
+    sector_rank: int | None = None
+    sector_valid_count: int | None = None
     highs_rising_3d: bool = False
     lows_rising_3d: bool = False
     amount_rising_3d: bool = False

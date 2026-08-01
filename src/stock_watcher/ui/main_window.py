@@ -167,7 +167,13 @@ class CandidateDetailDialog(QDialog):
         for label, value, level_name in (
             ("当前价格", f"¥{row.price:.2f}", "neutral"),
             ("当前涨幅", format_change(row.change_pct), "up"),
-            ("1分钟涨速", format_change(row.velocity_pct), "medium"),
+            (
+                "1分钟涨速",
+                format_change(row.velocity_pct)
+                if row.velocity_available
+                else "尚未形成",
+                "medium",
+            ),
             ("最强板块", row.sector, "neutral"),
         ):
             cell = QVBoxLayout()
@@ -398,6 +404,7 @@ class MainWindow(QMainWindow):
         self._operation_thread: QThread | None = None
         self._operation_worker: _SessionOperationWorker | None = None
         self._active_operation: str | None = None
+        self._queued_manual_fetch = False
         self._mac_window_close_policy = MacWindowClosePolicy()
         self._secondary_notification: Callable[[str, str], bool] | None = None
         self._initial_data_source_dialog: DataSourceSettingsDialog | None = None
@@ -407,6 +414,9 @@ class MainWindow(QMainWindow):
         self._build()
         self._refresh()
         self._auto_check_timer = QTimer(self)
+        self._operation_progress_timer = QTimer(self)
+        self._operation_progress_timer.setInterval(1000)
+        self._operation_progress_timer.timeout.connect(self._refresh)
         if not self.session.is_replay:
             interval_ms = max(5, self.session.auto_check_interval_seconds) * 1000
             self._auto_check_timer.setInterval(interval_ms)
@@ -612,10 +622,18 @@ class MainWindow(QMainWindow):
         healthy = snapshot.health is HealthState.HEALTHY
         stopped = snapshot.health is HealthState.STOPPED
         connection = self.session.connection_state
-        if self.session.is_replay:
+        if self._active_operation == "fetch":
+            self._page_title.setText("正在获取最新3只")
+        elif self.session.data_gate_label == "本次超过60秒":
+            self._page_title.setText("本次未在60秒内完成")
+        elif "限流" in self.session.data_gate_label:
+            self._page_title.setText("接口暂时限流")
+        elif "失败" in self.session.data_gate_label:
+            self._page_title.setText("数据准备失败")
+        elif self.session.is_replay:
             self._page_title.setText("当前观察" if healthy else "数据中断")
-        elif connection is TqConnectionState.CONNECTED and healthy:
-            self._page_title.setText("当前观察")
+        elif connection is TqConnectionState.CONNECTED:
+            self._page_title.setText("当前观察" if healthy else "数据接口已连接")
         elif connection is TqConnectionState.CHECKING:
             self._page_title.setText(f"正在检测{self.session.connection_name}")
         else:
@@ -661,9 +679,13 @@ class MainWindow(QMainWindow):
                     f"{'本轮整体偏弱' if snapshot.overall_label == '本轮整体偏弱' else '运行正常'}"
                 )
                 if healthy
+                else "正在扫描全市场并按规则筛选"
+                if self._active_operation == "fetch"
                 else "上次结果，仅供参考"
             )
-            if connection is TqConnectionState.CONNECTED:
+            if self._active_operation == "fetch":
+                self._interrupt_title.setText("正在获取，目标60秒内完成")
+            elif connection is TqConnectionState.CONNECTED:
                 self._interrupt_title.setText("连接正常，正在准备新结果")
             elif connection is TqConnectionState.CHECKING:
                 self._interrupt_title.setText("正在检测连接")
@@ -679,6 +701,15 @@ class MainWindow(QMainWindow):
         )
         last_fetch = self._format_status_time(self.session.last_fetch_at)
         fetch_detail = self.session.last_fetch_detail.replace("\n", " ")
+        remaining_getter = getattr(
+            self.session,
+            "manual_fetch_remaining_seconds",
+            None,
+        )
+        if self._active_operation == "fetch" and callable(remaining_getter):
+            remaining = remaining_getter()
+            if isinstance(remaining, int):
+                fetch_detail = f"{fetch_detail}｜倒计时 {remaining} 秒"
         self._interrupt_last_update.setText(
             f"最近连接检测：{self._format_status_time(self.session.last_connection_check)}"
             f"｜最近抓取：{last_fetch}｜{fetch_detail}"
@@ -693,7 +724,9 @@ class MainWindow(QMainWindow):
             self._cards.addWidget(card)
         if not rows:
             empty = QLabel(
-                "完成数据准备后，这里会固定显示3只观察股票。"
+                "正在获取全市场实时数据；完成后这里会立即显示3只观察股票。"
+                if self._active_operation == "fetch"
+                else "完成数据准备后，这里会固定显示3只观察股票。"
             )
             empty.setObjectName("emptyState")
             empty.setMinimumHeight(150)
@@ -708,12 +741,18 @@ class MainWindow(QMainWindow):
                 "连接中…" if self._active_operation == "check" else self.session.reconnect_label
             )
         self._manual_fetch_action.setText(
-            "抓取中…" if self._active_operation == "fetch" else self.session.manual_fetch_label
+            "正在获取（目标60秒内）…"
+            if self._active_operation == "fetch"
+            else "已排队，当前扫描结束后获取…"
+            if self._queued_manual_fetch
+            else self.session.manual_fetch_label
         )
         self._manual_fetch_action.setVisible(self.session.supports_manual_fetch)
         busy = self._active_operation is not None
         self._primary_action.setEnabled(not busy)
-        self._manual_fetch_action.setEnabled(not busy)
+        self._manual_fetch_action.setEnabled(
+            not busy or self._active_operation == "check"
+        )
         self._secondary_action.setText("历史记录")
 
         if healthy:
@@ -859,6 +898,12 @@ class MainWindow(QMainWindow):
     def _manual_fetch_tq(self) -> None:
         if self.session.is_replay or not self.session.supports_manual_fetch:
             return
+        if self._active_operation == "check":
+            self._queued_manual_fetch = True
+            self._refresh()
+            return
+        if self._active_operation is not None:
+            return
         self.session.begin_manual_fetch()
         self._start_tq_operation("fetch")
 
@@ -873,14 +918,19 @@ class MainWindow(QMainWindow):
         ):
             return
         self._active_operation = operation
+        self._operation_progress_timer.start()
         self._refresh()
         thread = QThread(self)
         worker = _SessionOperationWorker(self.session, operation)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(self._on_tq_operation_finished)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+        # Rebuilding candidate widgets while the worker is being destroyed can
+        # deadlock PySide on Qt's connection mutex: the GUI thread owns the GIL
+        # while the worker destructor tries to acquire it.  Refresh only after
+        # the worker thread has fully exited.
+        thread.finished.connect(self._on_tq_operation_finished)
         thread.finished.connect(self._on_tq_thread_finished)
         thread.finished.connect(thread.deleteLater)
         self._operation_thread = thread
@@ -889,6 +939,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_tq_operation_finished(self) -> None:
+        self._operation_progress_timer.stop()
         self._active_operation = None
         self._refresh()
         consume = getattr(self.session, "consume_pending_alert", None)
@@ -920,6 +971,9 @@ class MainWindow(QMainWindow):
     def _on_tq_thread_finished(self) -> None:
         self._operation_thread = None
         self._operation_worker = None
+        if self._queued_manual_fetch:
+            self._queued_manual_fetch = False
+            self._manual_fetch_tq()
 
     def _open_detail_by_code(self, code: str) -> None:
         row = self._rows.get(code)
@@ -966,6 +1020,8 @@ class MainWindow(QMainWindow):
             self.hide()
             return
         self._auto_check_timer.stop()
+        self._operation_progress_timer.stop()
+        self._queued_manual_fetch = False
         if self._operation_thread is not None and self._operation_thread.isRunning():
             self._operation_thread.quit()
             self._operation_thread.wait(6000)

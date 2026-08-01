@@ -45,6 +45,8 @@ class MarketScan:
     source_span_seconds: float
     max_source_age_seconds: float
     elapsed_seconds: float
+    stale_excluded_count: int = 0
+    unavailable_excluded_count: int = 0
 
     @property
     def complete(self) -> bool:
@@ -53,6 +55,10 @@ class MarketScan:
             and self.coverage_ratio >= 0.99
             and self.duplicate_count == 0
         )
+
+    @property
+    def excluded_count(self) -> int:
+        return self.stale_excluded_count + self.unavailable_excluded_count
 
 
 class FullMarketScanCoordinator:
@@ -65,12 +71,14 @@ class FullMarketScanCoordinator:
         clock: Callable[[], datetime] | None = None,
         minimum_coverage_ratio: float = 0.99,
         max_source_span_seconds: float = 60.0,
+        max_quote_age_seconds: float = 60.0,
         max_future_skew_seconds: float = 10.0,
     ) -> None:
         self._transport = transport
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self.minimum_coverage_ratio = minimum_coverage_ratio
         self.max_source_span_seconds = max_source_span_seconds
+        self.max_quote_age_seconds = max_quote_age_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
         self._scan_lock = threading.Lock()
         self._cancellation_lock = threading.Lock()
@@ -130,6 +138,8 @@ class FullMarketScanCoordinator:
         completed = _shanghai(self._clock())
         seen: set[str] = set()
         duplicates = 0
+        stale_excluded = 0
+        unavailable_excluded = 0
         quotes: list[RealtimeQuote] = []
         for record in result.records:
             code = _text(record.get("ts_code"))
@@ -139,8 +149,29 @@ class FullMarketScanCoordinator:
                 duplicates += 1
                 continue
             seen.add(code)
-            quotes.append(_quote(record, requested[code], scan_id, result))
-        coverage = len(seen) / len(requested)
+            quality_name = _text(record.get("data_quality"))
+            if quality_name == "STALE":
+                stale_excluded += 1
+                continue
+            if quality_name != "HEALTHY":
+                unavailable_excluded += 1
+                continue
+            try:
+                quote = _quote(record, requested[code], scan_id, result)
+            except IncompleteScanError:
+                unavailable_excluded += 1
+                continue
+            future_skew = (quote.source_ts - completed).total_seconds()
+            if future_skew > self.max_future_skew_seconds:
+                raise IncompleteScanError(
+                    "supplier timestamp is unexpectedly in the future"
+                )
+            source_age = max(0.0, (completed - quote.source_ts).total_seconds())
+            if source_age > self.max_quote_age_seconds:
+                stale_excluded += 1
+                continue
+            quotes.append(quote)
+        coverage = len(quotes) / len(requested)
         if duplicates:
             raise IncompleteScanError("supplier returned duplicate security codes")
         if coverage < self.minimum_coverage_ratio:
@@ -156,11 +187,6 @@ class FullMarketScanCoordinator:
         )
         if source_span > self.max_source_span_seconds:
             raise IncompleteScanError("full-market source timestamp span is too wide")
-        if any(
-            (source_ts - completed).total_seconds() > self.max_future_skew_seconds
-            for source_ts in source_times
-        ):
-            raise IncompleteScanError("supplier timestamp is unexpectedly in the future")
         max_age = max(
             (max(0.0, (completed - quote.source_ts).total_seconds()) for quote in quotes),
             default=float("inf"),
@@ -176,6 +202,8 @@ class FullMarketScanCoordinator:
             source_span_seconds=source_span,
             max_source_age_seconds=max_age,
             elapsed_seconds=result.elapsed_seconds,
+            stale_excluded_count=stale_excluded,
+            unavailable_excluded_count=unavailable_excluded,
         )
 
     def _raise_if_cancelled(self, generation: int) -> None:

@@ -16,7 +16,11 @@ from stock_watcher.domain import (
     Security,
     SourceTimestampKind,
 )
-from stock_watcher.engine import SecurityProfile, ThreeDayTrend
+from stock_watcher.engine import FundCapability, SecurityProfile, ThreeDayTrend
+from stock_watcher.providers.tushare.errors import (
+    ProviderError,
+    ProviderFailureReason,
+)
 from stock_watcher.providers.tushare.models import (
     DataQuality as ProviderDataQuality,
 )
@@ -105,10 +109,10 @@ def _realtime_result(universe: RuntimeUniverse) -> TransportResult:
         {
             "ts_code": security.code,
             "name": security.name,
-            "price": 10.1,
+            "price": 10.6,
             "pre_close": 10.0,
             "open": 10.0,
-            "high": 10.2,
+            "high": 10.7,
             "low": 9.9,
             "vol": 1000.0,
             "amount": 10000.0,
@@ -154,6 +158,213 @@ class _RecordingRealtime:
     def execute(self, _request: object) -> TransportResult:
         self.calls += 1
         return self.result
+
+
+class _BatchedBootstrapProvider:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.open_dates: tuple[date, ...] = (
+            date(2026, 7, 24),
+            date(2026, 7, 27),
+            date(2026, 7, 28),
+            date(2026, 7, 29),
+            date(2026, 7, 30),
+            date(2026, 7, 31),
+            date(2026, 8, 3),
+        )
+
+    def stock_list(self, **_params: object) -> TransportResult:
+        self.calls.append("stock_basic")
+        return _transport_result(
+            tuple(
+                {
+                    "ts_code": f"{index:06d}.SZ",
+                    "name": f"真实样本{index:06d}",
+                    "industry": f"行业{(index - 1) // 30 + 1}",
+                    "market": "主板",
+                    "list_date": (
+                        "20260729" if index == 1 else "20100101"
+                    ),
+                    "list_status": "L",
+                }
+                for index in range(1, 121)
+            )
+        )
+
+    def sector_classification(self, **_params: object) -> TransportResult:
+        raise AssertionError("index_classify must not block the fast daily bootstrap")
+
+    def sector_components(self, **_params: object) -> TransportResult:
+        raise AssertionError("index_member_all must not block the fast daily bootstrap")
+
+    def trading_dates(self, **_params: object) -> TransportResult:
+        raise AssertionError("trade_cal must not block the fast daily bootstrap")
+
+    def daily_bars(self, **params: object) -> TransportResult:
+        compact = str(params["trade_date"])
+        self.calls.append(f"daily:{compact}")
+        trading_day = datetime.strptime(compact, "%Y%m%d").date()
+        if trading_day not in self.open_dates:
+            return _transport_result(())
+        rows: list[dict[str, str | int | float | bool | None]] = []
+        for index in range(1, 121):
+            # Code 1 appears on only two completed days and remains excluded as
+            # a new/incomplete listing. Code 2 is absent from the latest day and
+            # is conservatively marked as a resumption/mechanical jump.
+            if index == 1 and trading_day < date(2026, 7, 29):
+                continue
+            if index == 2 and trading_day == date(2026, 7, 30):
+                continue
+            rows.append(
+                {
+                    "ts_code": f"{index:06d}.SZ",
+                    "trade_date": compact,
+                    "open": 10.0,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "pre_close": 10.0,
+                    "vol": 1000.0,
+                    "amount": 10000.0,
+                }
+            )
+        rows.append(
+            {
+                "ts_code": "999999.SZ",
+                "trade_date": compact,
+                "open": 10.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "pre_close": 10.0,
+                "vol": 1000.0,
+                "amount": 10000.0,
+            }
+        )
+        return _transport_result(tuple(rows))
+
+
+def _transport_result(
+    records: tuple[dict[str, str | int | float | bool | None], ...],
+) -> TransportResult:
+    return TransportResult(
+        records=records,
+        http_status=200,
+        elapsed_seconds=0.1,
+        provenance=ProviderProvenance(
+            provider_profile="fast-primary",
+            endpoint="/daily",
+            provider_version="tushare-sdk-pro-route-v1",
+            schema_version="v1",
+            source_ts=None,
+            received_ts=NOW,
+            source_timestamp_kind=ProviderTimestampKind.MISSING,
+            freshness_seconds=None,
+            quality=ProviderDataQuality.DEGRADED,
+            degraded=True,
+            fields_used=(),
+        ),
+    )
+
+
+def test_batched_bootstrap_builds_universe_and_industry_without_sector_routes() -> None:
+    provider = _BatchedBootstrapProvider()
+    universe = TushareBootstrapLoader(
+        cast(object, provider),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    ).load()
+
+    assert len(universe.profiles) == 120
+    assert len(universe.memberships) == 120
+    assert len({membership.sector_name for membership in universe.memberships}) == 4
+    assert not universe.concept_loaded
+    assert universe.fund_capability.capability is FundCapability.UNAVAILABLE
+    by_code = {profile.security.code: profile for profile in universe.profiles}
+    assert by_code["000001.SZ"].listed_trading_days == 3
+    assert by_code["000002.SZ"].is_corporate_action_day
+    assert by_code["000003.SZ"].listed_trading_days == 999
+    assert "999999.SZ" not in universe.trends
+    assert "999999.SZ" not in universe.high_3d
+    assert provider.calls == [
+        "stock_basic",
+        "daily:20260730",
+        "daily:20260729",
+        "daily:20260728",
+        "daily:20260727",
+    ]
+    assert universe.open_dates == (
+        date(2026, 7, 27),
+        date(2026, 7, 28),
+        date(2026, 7, 29),
+        date(2026, 7, 30),
+        date(2026, 7, 31),
+    )
+
+
+def test_fast_daily_bootstrap_skips_weekends_and_empty_weekday_holidays() -> None:
+    provider = _BatchedBootstrapProvider()
+    provider.open_dates = (
+        date(2026, 7, 27),
+        date(2026, 7, 28),
+        date(2026, 7, 29),
+        date(2026, 7, 31),
+        date(2026, 8, 3),
+    )
+    monday_morning = NOW.replace(month=8, day=3)
+
+    universe = TushareBootstrapLoader(
+        cast(object, provider),  # type: ignore[arg-type]
+        clock=lambda: monday_morning,
+    ).load()
+
+    assert universe.trend_through_date == date(2026, 7, 31)
+    assert universe.open_dates == (
+        date(2026, 7, 27),
+        date(2026, 7, 28),
+        date(2026, 7, 29),
+        date(2026, 7, 31),
+        date(2026, 8, 3),
+    )
+    assert provider.calls == [
+        "stock_basic",
+        "daily:20260731",
+        "daily:20260730",
+        "daily:20260729",
+        "daily:20260728",
+        "daily:20260727",
+    ]
+
+
+def test_bootstrap_retry_keeps_successful_stock_batch_in_memory() -> None:
+    class OneRateLimit(_BatchedBootstrapProvider):
+        limited = False
+
+        def daily_bars(self, **params: object) -> TransportResult:
+            compact = str(params["trade_date"])
+            if compact == "20260730" and not self.limited:
+                self.limited = True
+                self.calls.append(f"daily:{compact}")
+                raise ProviderError(
+                    ProviderFailureReason.RATE_LIMITED,
+                    retry_after_seconds=60.0,
+                )
+            return super().daily_bars(**params)
+
+    provider = OneRateLimit()
+    loader = TushareBootstrapLoader(
+        cast(object, provider),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ProviderError) as captured:
+        loader.load()
+    assert captured.value.reason is ProviderFailureReason.RATE_LIMITED
+
+    universe = loader.load()
+
+    assert len(universe.profiles) == 120
+    assert provider.calls.count("stock_basic") == 1
+    assert provider.calls.count("daily:20260730") == 2
 
 
 def test_runtime_universe_cache_round_trip_and_failed_replace_keeps_old_file(
@@ -214,10 +425,68 @@ def test_scan_uses_verified_cache_and_never_calls_ordinary_pro(
 
     outcome = runtime.scan_once()
 
-    assert outcome.health is HealthState.WARMING
+    assert outcome.health is HealthState.HEALTHY
     assert outcome.coverage_ratio == 1.0
+    assert outcome.batch is not None
+    assert len(outcome.batch.candidates) == 3
+    assert outcome.batch.overall_weak
+    assert all(candidate.level == "近" for candidate in outcome.batch.candidates)
+    assert all(
+        candidate.data_completeness == pytest.approx(0.3333)
+        for candidate in outcome.batch.candidates
+    )
     assert loader.calls == 0
     assert realtime.calls == 1
+
+
+def test_stable_top3_cannot_retain_row_excluded_from_current_scan(
+    tmp_path: Path,
+) -> None:
+    universe = _universe()
+    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache.save(universe)
+    first_result = _realtime_result(universe)
+
+    class SequenceRealtime:
+        def __init__(self) -> None:
+            self.results = [first_result]
+
+        def execute(self, _request: object) -> TransportResult:
+            return self.results.pop(0)
+
+    realtime = SequenceRealtime()
+    runtime = TushareV1Runtime(
+        cast(TushareBootstrapLoader, _ForbiddenLoader()),
+        FullMarketScanCoordinator(realtime, clock=lambda: NOW),
+        universe_cache=cache,
+        clock=lambda: NOW,
+    )
+    first = runtime.scan_once()
+    assert first.batch is not None
+    stale_code = first.batch.candidates[-1].code
+    realtime.results.append(
+        replace(
+            first_result,
+            records=tuple(
+                (
+                    {**record, "data_quality": "STALE"}
+                    if record["ts_code"] == stale_code
+                    else record
+                )
+                for record in first_result.records
+            ),
+        )
+    )
+
+    second = runtime.scan_once()
+
+    assert second.health is HealthState.HEALTHY
+    assert second.batch is not None
+    assert stale_code not in {
+        candidate.code for candidate in second.batch.candidates
+    }
+    assert second.stale_excluded_count == 1
+    assert second.coverage_ratio == pytest.approx(119 / 120)
 
 
 def test_missing_cache_stops_safely_without_pro_or_realtime_call(

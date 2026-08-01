@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from statistics import median
 from typing import cast
@@ -102,7 +102,19 @@ class MarketSnapshotBuffer:
                     f"source timestamp moved backwards for {quote.security.code}"
                 )
             if quote.source_ts == previous.source_ts:
-                if quote == previous:
+                # A quiet or briefly halted security can legitimately keep the
+                # same supplier timestamp across full-market rounds.  Receipt
+                # time and scan id are local envelope metadata, not a changed
+                # market event, so do not let them turn an identical supplier
+                # observation into a false conflict.
+                if (
+                    replace(
+                        quote,
+                        received_ts=previous.received_ts,
+                        scan_id=previous.scan_id,
+                    )
+                    == previous
+                ):
                     return
                 raise SnapshotSequenceError(
                     f"conflicting duplicate timestamp for {quote.security.code}"
