@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMenuBar  # noqa:
 import stock_watcher.paths as paths_module  # noqa: E402
 import stock_watcher.security.credential_store as credential_module  # noqa: E402
 import stock_watcher.ui.app as app_module  # noqa: E402
+import stock_watcher.ui.main_window as main_window_module  # noqa: E402
 from stock_watcher.domain import HealthState, Security  # noqa: E402
 from stock_watcher.providers.tushare.models import TransportResult  # noqa: E402
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest  # noqa: E402
@@ -46,6 +47,7 @@ from stock_watcher.ui.macos import (  # noqa: E402
     NotificationCenterNotifier,
     SingleInstanceGuard,
 )
+from stock_watcher.ui.main_window import MainWindow, ReplaySession  # noqa: E402
 from stock_watcher.ui.tushare_v1_session import TushareV1Session  # noqa: E402
 
 
@@ -179,6 +181,108 @@ def test_single_instance_guard_recovers_after_interrupted_primary() -> None:
         QLocalServer.removeServer(name)
 
 
+def test_worker_exit_precedes_ui_refresh_and_queued_manual_fetch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Signal order avoids the Qt/GIL deadlock and preserves manual intent."""
+
+    class FakeSignal:
+        def __init__(self) -> None:
+            self.callbacks: list[Any] = []
+
+        def connect(self, callback: Any) -> None:
+            self.callbacks.append(callback)
+
+        def emit(self) -> None:
+            for callback in tuple(self.callbacks):
+                callback()
+
+    fake_threads: list[FakeThread] = []
+    fake_workers: list[FakeWorker] = []
+
+    class FakeThread:
+        def __init__(self, _parent: object) -> None:
+            self.started = FakeSignal()
+            self.finished = FakeSignal()
+            self.running = False
+            self.deleted = False
+            fake_threads.append(self)
+
+        def start(self) -> None:
+            self.running = True
+
+        def quit(self) -> None:
+            self.running = False
+
+        def isRunning(self) -> bool:
+            return self.running
+
+        def deleteLater(self) -> None:
+            self.deleted = True
+
+    class FakeWorker:
+        def __init__(self, _session: object, _operation: str) -> None:
+            self.finished = FakeSignal()
+            self.deleted = False
+            fake_workers.append(self)
+
+        def moveToThread(self, _thread: object) -> None:
+            return
+
+        def run(self) -> None:
+            return
+
+        def deleteLater(self) -> None:
+            self.deleted = True
+
+    application()
+    monkeypatch.setattr(main_window_module, "QThread", FakeThread)
+    monkeypatch.setattr(main_window_module, "_SessionOperationWorker", FakeWorker)
+    session = ReplaySession(tmp_path / "thread-order.sqlite3")
+    session.supports_manual_fetch = True
+    window = MainWindow(session)
+    session.is_replay = False
+
+    try:
+        window._start_tq_operation("check")
+        check_thread = fake_threads[-1]
+        check_worker = fake_workers[-1]
+
+        assert window._on_tq_operation_finished not in check_worker.finished.callbacks
+        assert check_thread.finished.callbacks[0] == window._on_tq_operation_finished
+
+        window._manual_fetch_tq()
+        assert window._queued_manual_fetch
+        assert window._manual_fetch_action.isEnabled()
+        assert "已排队" in window._manual_fetch_action.text()
+
+        check_worker.finished.emit()
+        assert window._active_operation == "check"
+        check_thread.finished.emit()
+
+        assert check_worker.deleted
+        assert check_thread.deleted
+        assert not window._queued_manual_fetch
+        assert window._active_operation == "fetch"
+
+        fetch_thread = fake_threads[-1]
+        fetch_worker = fake_workers[-1]
+        fetch_worker.finished.emit()
+        fetch_thread.finished.emit()
+
+        assert fetch_worker.deleted
+        assert fetch_thread.deleted
+        assert window._operation_thread is None
+        assert window._operation_worker is None
+        assert window._active_operation is None
+        assert not window._operation_progress_timer.isActive()
+        assert window._manual_fetch_action.isEnabled()
+    finally:
+        window.request_application_exit()
+        window.close()
+
+
 def test_macos_close_policy_hides_only_until_explicit_exit() -> None:
     policy = MacWindowClosePolicy()
     assert not policy.should_hide_on_close
@@ -253,7 +357,7 @@ class _LifecycleWindow:
         return
 
 
-def test_macos_lifecycle_warms_on_wake_and_network_recovery() -> None:
+def test_macos_lifecycle_ignores_focus_changes_but_warms_after_suspend() -> None:
     app = application()
     window = _LifecycleWindow()
     lifecycle = MacApplicationLifecycle(
@@ -265,14 +369,50 @@ def test_macos_lifecycle_warms_on_wake_and_network_recovery() -> None:
 
     lifecycle.handle_application_state(Qt.ApplicationState.ApplicationInactive)
     lifecycle.handle_application_state(Qt.ApplicationState.ApplicationActive)
+    assert window.recovery_reasons == []
+
+    lifecycle.handle_application_state(Qt.ApplicationState.ApplicationSuspended)
+    lifecycle.handle_application_state(Qt.ApplicationState.ApplicationActive)
     lifecycle.handle_reachability(QNetworkInformation.Reachability.Disconnected)
     lifecycle.handle_reachability(QNetworkInformation.Reachability.Online)
 
     assert window.background_close_enabled
     assert window.restore_calls >= 1
-    assert any("系统唤醒" in reason for reason in window.recovery_reasons)
-    assert window.network_reasons == ["网络连接已断开，已停止产生新候选。"]
+    assert any("挂起状态恢复" in reason for reason in window.recovery_reasons)
+    assert window.network_reasons[0] == (
+        "系统已暂停，已停止产生新候选，唤醒后将重新预热数据。"
+    )
+    assert window.network_reasons[1] == "网络连接已断开，已停止产生新候选。"
     assert any("网络已恢复" in reason for reason in window.recovery_reasons)
+    assert window.menu_bar.titles == ["StockWatcher"]
+
+
+def test_macos_lifecycle_detects_sleep_gap_without_focus_false_positive() -> None:
+    app = application()
+    window = _LifecycleWindow()
+    clock = [100.0]
+    lifecycle = MacApplicationLifecycle(
+        app,
+        cast(Any, window),
+        platform="darwin",
+        network_information=cast(QNetworkInformation, _FakeNetworkInformation()),
+        monotonic_clock=lambda: clock[0],
+        sleep_gap_seconds=20.0,
+    )
+
+    clock[0] = 105.0
+    lifecycle.check_for_sleep_gap()
+    lifecycle.handle_application_state(Qt.ApplicationState.ApplicationInactive)
+    lifecycle.handle_application_state(Qt.ApplicationState.ApplicationActive)
+    assert window.recovery_reasons == []
+
+    clock[0] = 130.0
+    lifecycle.check_for_sleep_gap()
+
+    assert window.recovery_reasons == [
+        "系统已从睡眠中唤醒，正在清理旧基线并重新预热数据。"
+    ]
+    assert window.network_reasons == []
     assert window.menu_bar.titles == ["StockWatcher"]
 
 

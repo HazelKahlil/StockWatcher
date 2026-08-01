@@ -14,10 +14,12 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 - 普通/历史数据使用内置 Tushare Pro 代理；主实时入口使用
   `tushare.realtime_quote(..., src="sina")`。两者共用系统安全存储中的一个 Token；Mac
   使用系统钥匙串，Windows 使用 Credential Manager。
-- 候选链路已经接入生产入口；交易时段 30 分钟、真实固定提醒、实机截图与安装包启动证据
-  仍是发布前严格验收门。
-- 2026-07-29 已使用当日真实收盘数据完成盘后回顾测试和总结视图；该证据只验证日线
-  回溯与呈现，不代替 Human Owner 后续安排的连续 30 分钟交易时段验收。
+- 2026-07-31 已在 Mac 交易时段通过原生实时 1/100/300/800、全市场七批、连续双次手动
+  Top3 与规则审计；14:45 固定触发及延迟兜底已证明，但新鲜固定时点 Top3 仍待下个交易日。
+- 2026-08-01 已构建、ad-hoc 签名并安装本机 arm64 `StockWatcher.app`；全新目录启动、
+  macOS 系统钥匙串、SQLite 历史、盘后报告/PDF、单实例唤起、关闭隐藏和显式退出均已实测。
+- 2026-07-31 的真实静态收盘回顾已盘后补生成；它只验证确定性收盘分析与 PDF 呈现，
+  明确标记为 `RETROSPECTIVE_ONLY`，不冒充 15:30 Live、盘中 Top3 或 Windows 验收。
 - TdxQuant 保留为可选诊断和未来资金字段探索，不再是应用正常启动或真实候选的必要前提。
 - 资金不可用时显示“资金未确认”且不阻塞候选；日级 moneyflow 不得冒充盘中增强。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
@@ -85,7 +87,22 @@ Token。
 
 交易日 09:45 和 14:45 会自动抓取并弹出三只观察股票；盘中任意需要查看的时刻可点击
 **立即获取最新3只**，成功后主界面与右下角三只弹窗同步更新。15:30 自动生成全市场
-A股盘后回顾，并可从 **设置 → 收盘总结** 查看。
+A股盘后回顾，并可从 **设置 → 盘后回顾与PDF** 查看或下载最近31个自然日的固定三页 PDF。
+
+## 构建 Mac 内部测试 App
+
+```bash
+uv run pyinstaller --noconfirm --clean \
+  --distpath dist/macos-v1 \
+  --workpath build/macos-v1 \
+  packaging/stockwatcher-macos.spec
+codesign --force --deep --sign - dist/macos-v1/StockWatcher.app
+codesign --verify --deep --strict dist/macos-v1/StockWatcher.app
+```
+
+该 spec 只生成本机架构内部测试包，排除 Windows PowerShell/VBS/Inno、TdxQuant 与 TQ
+诊断入口；Token、SQLite、行情缓存、报告和日志均不进入 `.app`。当前不要求 Developer ID
+或公证，不能把 ad-hoc 签名写成正式发行签名。
 
 ## Mac 数据接口
 

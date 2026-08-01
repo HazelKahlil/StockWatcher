@@ -5,9 +5,10 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from time import monotonic
 from typing import Protocol
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkInformation
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar
@@ -186,22 +187,31 @@ class MacApplicationLifecycle(QObject):
         platform: str = sys.platform,
         network_information: QNetworkInformation | None = None,
         notifier: NotificationCenterNotifier | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
+        sleep_gap_seconds: float = 20.0,
     ) -> None:
         super().__init__(app)
         self._app = app
         self._window = window
         self._enabled = platform == "darwin"
         self._quitting = False
-        self._was_inactive = False
+        self._was_suspended = False
         self._network_was_disconnected = False
         self.notifier = notifier or NotificationCenterNotifier(platform=platform)
         self._network_information = network_information
+        self._monotonic_clock = monotonic_clock or monotonic
+        self._sleep_gap_seconds = sleep_gap_seconds
+        self._last_heartbeat = self._monotonic_clock()
+        self._heartbeat = QTimer(self)
         if not self._enabled:
             return
         self._app.setQuitOnLastWindowClosed(False)
         self._window.enable_background_close()
         self._install_application_menu()
         self._app.applicationStateChanged.connect(self.handle_application_state)
+        self._heartbeat.setInterval(5_000)
+        self._heartbeat.timeout.connect(self.check_for_sleep_gap)
+        self._heartbeat.start()
         self._attach_network_information()
 
     def show_notification(self, title: str, subtitle: str) -> bool:
@@ -220,20 +230,33 @@ class MacApplicationLifecycle(QObject):
         if not self._enabled or self._quitting:
             return
         if state is Qt.ApplicationState.ApplicationActive:
-            if self._was_inactive:
-                self._window.begin_platform_recovery("系统唤醒或回到前台，正在重新预热数据。")
-            self._was_inactive = False
+            if self._was_suspended:
+                self._window.begin_platform_recovery(
+                    "系统已从挂起状态恢复，正在清理旧基线并重新预热数据。"
+                )
+            self._was_suspended = False
+            self._last_heartbeat = self._monotonic_clock()
             self._window.restore_main_window()
             return
-        if state in {
-            Qt.ApplicationState.ApplicationInactive,
-            Qt.ApplicationState.ApplicationSuspended,
-        }:
-            self._was_inactive = True
-            if state is Qt.ApplicationState.ApplicationSuspended:
-                self._window.mark_network_interrupted(
-                    "系统已暂停，已停止产生新候选，唤醒后将重新预热数据。"
-                )
+        if state is Qt.ApplicationState.ApplicationSuspended:
+            self._was_suspended = True
+            self._window.mark_network_interrupted(
+                "系统已暂停，已停止产生新候选，唤醒后将重新预热数据。"
+            )
+
+    @Slot()
+    def check_for_sleep_gap(self) -> None:
+        """Detect a real event-loop pause without treating app switching as sleep."""
+        if not self._enabled or self._quitting:
+            return
+        current = self._monotonic_clock()
+        elapsed = current - self._last_heartbeat
+        self._last_heartbeat = current
+        if elapsed < self._sleep_gap_seconds or self._was_suspended:
+            return
+        self._window.begin_platform_recovery(
+            "系统已从睡眠中唤醒，正在清理旧基线并重新预热数据。"
+        )
 
     @Slot(QNetworkInformation.Reachability)
     def handle_reachability(self, reachability: QNetworkInformation.Reachability) -> None:

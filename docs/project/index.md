@@ -39,7 +39,7 @@
 | 测试 | pytest + Replay/Synthetic；默认不需要 Token；真实 30 分钟使用独立脱敏脚本 |
 | 打包 | PyInstaller + Inno Setup；正常入口只使用 Tushare 单 Token，TdxQuant 为高级诊断 |
 | 部署 | 仅本机内部使用；不接交易账户，不自动下单，不执行发布或远端同步 |
-| 当前验证 | V1 主链路、算法、UI、SQLite、离线工程门与 2026-07-29 真实收盘回放已建立；真实 30 分钟、固定提醒和最终安装证据仍是严格门 |
+| 当前验证 | Mac原生实时全市场七批、连续双次手动Top3、14:45固定触发与延迟兜底、算法/UI/SQLite/离线门及最终arm64 `.app`安装已建立；新鲜固定时点Top3、15:30准点报告、真实恢复会话与Windows验收仍是严格门 |
 
 ## 计划模块表
 
@@ -54,8 +54,8 @@
 | tools | M0 探针、回放工具 | `tools/` | providers、domain | 开发与测试 |
 
 V1 已实现 `domain`、`providers`、`runtime`、`engine`、`storage` 和跨平台 PySide6 UI 主链路，
-并提供不冒充盘中证据的真实收盘回顾；Mac 真实交易时段和内部 `.app` 证据尚未完成，Windows
-真实验收仍未通过。
+并提供不冒充盘中证据的真实收盘回顾；Mac真实交易时段全市场与内部arm64 `.app`已有证据，
+但新鲜固定时点Top3、15:30准点报告和真实恢复会话仍未完成，Windows真实验收仍未通过。
 
 ## 相关文档
 

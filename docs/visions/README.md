@@ -34,7 +34,7 @@
 | [v0.3.1-windows-tushare-data-gate](v0.3.1-windows-tushare-data-gate/README.md) | 跨平台 Tushare 兼容 HTTP 数据闸门，Windows 优先 | 进行中 | |
 | [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | Windows 全市场真实 Top3、提醒、历史与总结闭环 | 进行中 | |
 | [v0.4.1-shared-connection-gate](v0.4.1-shared-connection-gate/README.md) | 从冻结 Windows V1 基线提取的跨平台连接门、能力检测与限流返修 | 本地完成，已由 Mac 分支消费 | |
-| [v0.4.2-macos-v1-port](v0.4.2-macos-v1-port/README.md) | 用共享 Tushare 核心完成 Mac 真机数据、平台行为与内部 `.app` | 进行中；真实 Token/Top3/固定提醒/打包待验收 | |
+| [v0.4.2-macos-v1-port](v0.4.2-macos-v1-port/README.md) | 用共享 Tushare 核心完成 Mac 真机数据、平台行为与内部 `.app` | 进行中；全市场/手动Top3/固定触发/打包已验收，新鲜固定时点与15:30准点仍待验收 | |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
 
 ## 候选方向（尚未登记为执行版本）
