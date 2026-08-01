@@ -30,6 +30,7 @@ from stock_watcher.engine import (
     MarketSnapshotBuffer,
     SectorEngine,
     SnapshotSequenceError,
+    StableTop3Config,
     StableTop3Selector,
     StrongMovementDetector,
     build_post_close_review,
@@ -302,6 +303,187 @@ def test_sector_engine_prefers_any_passing_membership_over_higher_nonpassing_one
     assert selected is not None
     assert selected.gate_passed
     assert selected.metrics.sector_type == "industry"
+
+
+def test_sector_engine_allows_concept_gate_when_industry_is_weak() -> None:
+    target = rolling("600001.SH", change=8.0, velocity=1.0)
+    weak_industry = (
+        rolling("600002.SH", change=-1.0, velocity=-0.2),
+        rolling("600003.SH", change=0.0, velocity=0.0),
+    )
+    strong_concept = tuple(
+        rolling(f"00000{index}.SZ", change=6.0 - index * 0.2, velocity=1.2)
+        for index in range(1, 6)
+    )
+    features = (target, *weak_industry, *strong_concept)
+    memberships = (
+        membership(target.code, "I001", "industry"),
+        *(membership(row.code, "I001", "industry") for row in weak_industry),
+        membership(target.code, "C001", "concept"),
+        *(membership(row.code, "C001", "concept") for row in strong_concept),
+    )
+    engine = SectorEngine()
+    metrics = engine.calculate(features, memberships)
+    selected = engine.select_for_security(target.code, memberships, metrics)
+    assert selected is not None
+    assert selected.gate_passed
+    assert selected.metrics.sector_type == "concept"
+
+
+def test_sector_engine_prefers_highest_passing_concept_and_keeps_industry_on_tie() -> None:
+    target = rolling("600001.SH", change=5.0, velocity=1.1)
+    peers = tuple(
+        rolling(f"00000{index}.SZ", change=5.0 - index * 0.1, velocity=1.0)
+        for index in range(1, 10)
+    )
+    features = (target, *peers)
+    memberships = (
+        membership(target.code, "C001", "concept"),
+        *(membership(row.code, "C001", "concept") for row in peers[:5]),
+        membership(target.code, "C002", "concept"),
+        *(membership(row.code, "C002", "concept") for row in peers[5:]),
+    )
+    engine = SectorEngine()
+    metrics = engine.calculate(features, memberships)
+    selected = engine.select_for_security(target.code, memberships, metrics)
+    assert selected is not None and selected.gate_passed
+    assert selected.metrics.sector_type == "concept"
+    assert selected.metrics.sector_code == "C001"
+
+
+def test_candidate_engine_uses_medium_threshold_instead_of_labeling_every_formal_row() -> None:
+    weak = replace(
+        candidate_input(
+            "600001.SH",
+            sector_code="I001",
+            sector_score=5,
+            change=0.5,
+            velocity=0.1,
+        ),
+        amount_ratio_1m=None,
+        volume_ratio_1m=None,
+        acceleration_pct=0.0,
+        data_completeness=0.9,
+    )
+    batch = CandidateEngine().calculate(
+        (weak,),
+        HealthState.HEALTHY,
+        CandidateConfig("v1", "0.4"),
+    )
+    assert batch is not None and len(batch.candidates) == 1
+    assert batch.candidates[0].is_formal
+    assert batch.candidates[0].core_score < 32
+    assert batch.candidates[0].level == "近"
+
+
+def test_anomaly_detector_uses_formal_candidate_pool_beyond_displayed_top3() -> None:
+    inputs = tuple(
+        candidate_input(
+            f"600{index:03d}.SH",
+            sector_code=f"I{index:03d}",
+            sector_score=24,
+            change=5,
+            velocity=1.0,
+        )
+        for index in range(1, 121)
+    )
+    engine = CandidateEngine()
+    config = CandidateConfig("v1", "0.4")
+    batch = engine.calculate(inputs, HealthState.HEALTHY, config)
+    assert batch is not None and len(batch.candidates) == 3
+    pool = engine.rank_formal_candidates(inputs, config)
+    assert len(pool) == 120
+    detector = StrongMovementDetector(candidate_pool_size=100)
+    assert detector.evaluate(batch, candidate_pool=pool) is None
+
+    outside_display = pool[49]
+    accelerated = replace(
+        outside_display,
+        velocity_pct=outside_display.velocity_pct + 0.5,
+        sector_score=outside_display.sector_score + 1.0,
+        source_ts=outside_display.source_ts + timedelta(seconds=10),
+    )
+    event = detector.evaluate(
+        replace(batch, source_ts=batch.source_ts + timedelta(seconds=10)),
+        candidate_pool=(*pool[:49], accelerated, *pool[50:]),
+    )
+    assert event is not None
+    assert outside_display.code in event.triggering_codes
+    assert outside_display.code not in {candidate.code for candidate in batch.candidates}
+
+
+def test_anomaly_detector_ignores_near_supplement_pool_rows() -> None:
+    inputs = tuple(
+        candidate_input(
+            f"60000{index}.SH",
+            sector_code=f"I{index}",
+            sector_score=24,
+            change=5,
+            velocity=1.0,
+        )
+        for index in range(1, 4)
+    )
+    engine = CandidateEngine()
+    config = CandidateConfig("v1", "0.4")
+    batch = engine.calculate(inputs, HealthState.HEALTHY, config)
+    assert batch is not None
+    near = replace(batch.candidates[0], is_formal=False, is_supplement=True, level="近")
+    detector = StrongMovementDetector()
+    assert detector.evaluate(batch, candidate_pool=(near,)) is None
+    assert detector.evaluate(
+        replace(batch, source_ts=batch.source_ts + timedelta(seconds=10)),
+        candidate_pool=(replace(near, velocity_pct=near.velocity_pct + 2),),
+    ) is None
+
+
+def test_stable_top3_respects_configured_minimum_seat_hold_when_clock_is_supplied() -> None:
+    inputs = tuple(
+        candidate_input(
+            f"60000{index}.SH",
+            sector_code=f"I{index}",
+            sector_score=25 - index,
+            change=6 - index * 0.2,
+            velocity=1.5,
+        )
+        for index in range(1, 5)
+    )
+    engine = CandidateEngine()
+    config = CandidateConfig("v1", "0.4")
+    baseline = engine.calculate(inputs[:3], HealthState.HEALTHY, config)
+    replacement = engine.calculate(
+        (inputs[0], inputs[1], inputs[3]),
+        HealthState.HEALTHY,
+        config,
+    )
+    assert baseline is not None and replacement is not None
+    selector = StableTop3Selector(
+        StableTop3Config(minimum_seat_hold_seconds=60, confirmation_cycles=3)
+    )
+    start = timestamp()
+    selector.update(baseline, now=start)
+    for seconds in (10, 20, 30):
+        held = selector.update(
+            replace(
+                replacement,
+                source_ts=start + timedelta(seconds=seconds),
+                generated_at=start + timedelta(seconds=seconds),
+            ),
+            now=start + timedelta(seconds=seconds),
+        )
+        assert tuple(row.code for row in held.candidates) == tuple(
+            row.code for row in baseline.candidates
+        )
+    switched = selector.update(
+        replace(
+            replacement,
+            source_ts=start + timedelta(seconds=61),
+            generated_at=start + timedelta(seconds=61),
+        ),
+        now=start + timedelta(seconds=61),
+    )
+    assert tuple(row.code for row in switched.candidates) == tuple(
+        row.code for row in replacement.candidates
+    )
 
 
 def candidate_input(
@@ -1071,6 +1253,54 @@ def test_summary_is_due_after_1530_for_late_app_start() -> None:
     assert not MarketSessionSchedule.summary_due(
         timestamp().replace(hour=15, minute=29)
     )
+
+
+def test_session_schedules_30_day_history_prune_once_per_day(tmp_path: Path) -> None:
+    now = timestamp().replace(hour=10, minute=15)
+    batch = CandidateEngine().calculate(
+        tuple(
+            candidate_input(
+                f"60000{index}.SH",
+                sector_code=f"I{index}",
+                sector_score=24,
+                change=5,
+                velocity=1,
+            )
+            for index in range(1, 4)
+        ),
+        HealthState.HEALTHY,
+        CandidateConfig("v1", "0.4"),
+    )
+    assert batch is not None
+    credentials = MemoryCredentialStore()
+    session = TushareV1Session(
+        tmp_path / "history-prune.sqlite3",
+        credential_store=credentials,
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    old = replace(
+        batch,
+        source_ts=now - timedelta(days=31),
+        generated_at=now - timedelta(days=31),
+    )
+    snapshot_id = session.store.record_batch(old)
+    session.store.record_alert_event(
+        snapshot_id,
+        (now - timedelta(days=31)).isoformat(),
+        "intraday",
+        "macos-desktop",
+        "intraday",
+    )
+
+    session._prune_history_if_due(now)
+    session._prune_history_if_due(now + timedelta(hours=1))
+
+    assert session._history_pruned_date == now.date()
+    assert session.store.list_alert_history(now=now, days=60) == []
 
 
 class FakeV1Runtime:

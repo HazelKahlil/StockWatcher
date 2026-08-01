@@ -162,6 +162,8 @@ class TushareV1Session:
         self._summary_date: str | None = None
         self._summary_retry_at: datetime | None = None
         self._summary_issue: str | None = None
+        self._history_pruned_date: date | None = None
+        self._history_prune_issue: str | None = None
         self.batch: CandidateBatch | None = None
         self.pending_alert: PendingUiAlert | None = None
         self.state = HealthState.WARMING
@@ -320,6 +322,7 @@ class TushareV1Session:
         manual_request: bool,
     ) -> ScanOutcome | None:
         now = _shanghai(self._clock())
+        self._prune_history_if_due(now)
         self.phase_label = _visible_phase(now)
         if self._is_network_interrupted():
             # Qt's reachability signal already placed the UI in STOPPED.  The
@@ -665,6 +668,24 @@ class TushareV1Session:
         self._summary_date = trade_date
         self._summary_retry_at = None
         self._summary_issue = None
+
+    def _prune_history_if_due(self, now: datetime) -> None:
+        """Run the bounded 30-day history cleanup at most once per day."""
+        if self._history_pruned_date == now.date():
+            return
+        try:
+            self.store.prune_history(before=now - timedelta(days=30))
+        except Exception:
+            # Historical cleanup is maintenance; it must never stop a healthy
+            # realtime scan.  Surface a short actionable status for the UI and
+            # retry on the next session tick.
+            self._history_prune_issue = "历史清理暂未完成，将在下次检查重试。"
+            self.status_issues = tuple(
+                dict.fromkeys((*self.status_issues, self._history_prune_issue))
+            )
+            return
+        self._history_pruned_date = now.date()
+        self._history_prune_issue = None
 
     def _set_summary_retry(self, now: datetime) -> None:
         self._summary_retry_at = now + timedelta(seconds=60)

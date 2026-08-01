@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from .candidates import Candidate, CandidateBatch
 
@@ -10,6 +11,12 @@ from .candidates import Candidate, CandidateBatch
 class StableTop3Config:
     immediate_score_margin: float = 8.0
     confirmation_cycles: int = 3
+    minimum_seat_hold_seconds: float = 45.0
+    required_lead_cycles: int | None = None
+
+    @property
+    def lead_cycles(self) -> int:
+        return max(1, self.required_lead_cycles or self.confirmation_cycles)
 
 
 class StableTop3Selector:
@@ -22,20 +29,27 @@ class StableTop3Selector:
         self.current: tuple[Candidate, ...] = ()
         self._pending_signature: tuple[str, ...] = ()
         self._pending_cycles = 0
+        self._current_since: datetime | None = None
 
     def reset(self) -> None:
         self.current = ()
         self._pending_signature = ()
         self._pending_cycles = 0
+        self._current_since = None
 
     def update(
         self,
         raw: CandidateBatch,
         *,
         current_candidates: Mapping[str, Candidate] | None = None,
+        now: datetime | None = None,
+        force: bool = False,
     ) -> CandidateBatch:
+        hold_enabled = now is not None
+        observed_at = now or raw.generated_at or raw.source_ts
         if not self.current:
             self.current = raw.candidates
+            self._current_since = observed_at
             return raw
         if current_candidates is not None:
             current_codes = tuple(candidate.code for candidate in self.current)
@@ -45,6 +59,7 @@ class StableTop3Selector:
                 # eligible full-market snapshot.
                 self.current = raw.candidates
                 self._clear_pending()
+                self._current_since = observed_at
                 return raw
             self.current = tuple(current_candidates[code] for code in current_codes)
         raw_signature = tuple(candidate.code for candidate in raw.candidates)
@@ -53,18 +68,23 @@ class StableTop3Selector:
             self.current = raw.candidates
             self._clear_pending()
             return raw
-        if self._requires_immediate_replacement(raw.candidates):
+        if force or self._requires_immediate_replacement(raw.candidates):
             self.current = raw.candidates
             self._clear_pending()
+            self._current_since = observed_at
             return raw
         if raw_signature == self._pending_signature:
             self._pending_cycles += 1
         else:
             self._pending_signature = raw_signature
             self._pending_cycles = 1
-        if self._pending_cycles >= self.config.confirmation_cycles:
+        if (
+            self._pending_cycles >= self.config.lead_cycles
+            and self._seat_hold_elapsed(observed_at, enabled=hold_enabled)
+        ):
             self.current = raw.candidates
             self._clear_pending()
+            self._current_since = observed_at
             return raw
         latest_by_code = dict(current_candidates or {})
         # Selected raw rows carry the final formal/supplement classification,
@@ -85,6 +105,13 @@ class StableTop3Selector:
             overall_weak=formal_count < 3,
             fund_module=raw.fund_module,
             formal_count=formal_count,
+        )
+
+    def _seat_hold_elapsed(self, observed_at: datetime, *, enabled: bool) -> bool:
+        if not enabled or self._current_since is None:
+            return True
+        return observed_at - self._current_since >= timedelta(
+            seconds=max(0.0, self.config.minimum_seat_hold_seconds)
         )
 
     def _requires_immediate_replacement(

@@ -203,24 +203,27 @@ class TushareBootstrapLoader:
             for code, highest in high_3d.items()
             if code in profile_codes
         }
-        memberships = _stock_basic_industry_memberships(
+        industry_memberships = _stock_basic_industry_memberships(
             profiles,
             stock_result,
             observed_at=now,
         )
-        if len({membership.security.code for membership in memberships}) < 100:
+        if len({membership.security.code for membership in industry_memberships}) < 100:
             raise RuntimeError("行业成分覆盖不足")
+        # Concept membership is an optional, separately cached capability.  A
+        # temporary 429 or an older provider that does not expose tdx_* must not
+        # discard the verified industry context, but a complete concept response
+        # is merged here so the realtime SectorEngine can apply the locked
+        # industry-or-concept gate without another per-round request.
+        concept_memberships = self._concept_memberships(profiles, now)
+        memberships = (*industry_memberships, *concept_memberships)
         return RuntimeUniverse(
             profiles=profiles,
             memberships=memberships,
             trends=trends,
             high_3d=high_3d,
             open_dates=open_dates,
-            # The locked gate accepts either industry or concept.  The
-            # full-market daily response supplies industry for every liquid
-            # security in one batched route, so a separately throttled concept
-            # endpoint cannot delay the user's immediate Top3.
-            concept_loaded=False,
+            concept_loaded=bool(concept_memberships),
             fund_capability=FundCapabilityResult(
                 FundCapability.UNAVAILABLE,
                 "资金未确认；不阻塞候选",
@@ -704,11 +707,20 @@ class TushareV1Runtime:
             current_codes,
             self.candidate_config,
         )
+        anomaly_pool = self.candidate_engine.rank_formal_candidates(
+            inputs,
+            self.candidate_config,
+        )
+        strong_event = self.movement_detector.evaluate(
+            raw,
+            candidate_pool=anomaly_pool,
+        )
         stable = self.stable_selector.update(
             raw,
             current_candidates=current_candidates,
+            now=scan.completed_at,
+            force=strong_event is not None,
         )
-        strong_event = self.movement_detector.evaluate(stable)
         excluded_count = (
             scan.stale_excluded_count + scan.unavailable_excluded_count
         )

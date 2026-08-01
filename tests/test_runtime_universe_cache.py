@@ -301,6 +301,45 @@ def test_batched_bootstrap_builds_universe_and_industry_without_sector_routes() 
     )
 
 
+def test_bootstrap_merges_complete_concept_memberships_for_realtime_selection() -> None:
+    class WithConcepts(_BatchedBootstrapProvider):
+        def concept_classification(self, **_params: object) -> TransportResult:
+            return _transport_result(
+                (
+                    {
+                        "ts_code": "C001",
+                        "name": "概念样本",
+                        "idx_count": 6,
+                    },
+                )
+            )
+
+        def concept_components(self, **_params: object) -> TransportResult:
+            return _transport_result(
+                tuple(
+                    {"ts_code": "C001", "con_code": f"{index:06d}.SZ"}
+                    for index in range(1, 7)
+                )
+            )
+
+    universe = TushareBootstrapLoader(
+        cast(object, WithConcepts()),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    ).load()
+
+    concepts = tuple(
+        membership
+        for membership in universe.memberships
+        if membership.sector_type == "concept"
+    )
+    assert universe.concept_loaded
+    assert len(concepts) == 6
+    assert {membership.sector_code for membership in concepts} == {"C001"}
+    assert {membership.security.code for membership in concepts} == {
+        f"{index:06d}.SZ" for index in range(1, 7)
+    }
+
+
 def test_fast_daily_bootstrap_skips_weekends_and_empty_weekday_holidays() -> None:
     provider = _BatchedBootstrapProvider()
     provider.open_dates = (

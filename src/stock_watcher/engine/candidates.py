@@ -61,6 +61,8 @@ class Candidate:
     trend_label: str = "一般"
     acceleration_pct: float | None = None
     velocity_available: bool = False
+    volume_ratio_1m: float | None = None
+    amount_ratio_1m: float | None = None
     sector_gate_passed: bool = False
     sector_up_ratio: float | None = None
     sector_strong_count: int | None = None
@@ -87,6 +89,30 @@ class CandidateBatch:
 
 class CandidateEngine:
     """Pure V1 scoring and fixed-three selection with an explicit supplement tier."""
+
+    def rank_formal_candidates(
+        self,
+        inputs: tuple[CandidateInput, ...],
+        config: CandidateConfig,
+    ) -> tuple[Candidate, ...]:
+        """Return the current formal candidate pool in deterministic score order.
+
+        The displayed batch is intentionally diversified and capped at three rows,
+        while anomaly detection needs to see the broader set of stocks that already
+        passed the individual and sector gates.  Keeping this ranking in the engine
+        makes both paths use the exact same scoring and exclusion rules.
+        """
+        eligible = [item for item in inputs if item.exclusion_reason is None]
+        evaluated = [self._evaluate(item, config) for item in eligible]
+        evaluated.sort(
+            key=lambda candidate: (
+                not candidate.is_formal,
+                -candidate.total_score,
+                -candidate.core_score,
+                candidate.code,
+            )
+        )
+        return tuple(candidate for candidate in evaluated if candidate.is_formal)
 
     def calculate(
         self,
@@ -273,8 +299,10 @@ class CandidateEngine:
             )
         ):
             level = "强"
-        else:
+        elif core_score >= config.medium_core_score:
             level = "中"
+        else:
+            level = "近"
 
         fund = item.fund_status
         return Candidate(
@@ -310,6 +338,8 @@ class CandidateEngine:
             trend_label=self._trend_label(item),
             acceleration_pct=item.acceleration_pct,
             velocity_available=item.velocity_1m_pct is not None,
+            volume_ratio_1m=item.volume_ratio_1m,
+            amount_ratio_1m=item.amount_ratio_1m,
             sector_gate_passed=sector_passed,
             sector_up_ratio=item.sector_up_ratio,
             sector_strong_count=item.sector_strong_count,
