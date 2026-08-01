@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Mainline
+
+- 2026-08-01：将 Mac V1 内部试用成果及其完整 Git 历史整合到唯一主目录的本地 `main`。
+  当前主线包含真实全市场扫描、行业/概念板块、稳定 Top3、候选池强异动、09:45/14:45
+  调度、30 天历史、15:30 盘后总结和 Mac arm64 App；`fix/macos-v1-internal-acceptance`、
+  `feat/macos-v1-port`、`fix/shared-v1-selection-completion` 与
+  `feat/windows-v1-real-candidates` 仅作为历史来源，不再是当前开发主线。
+- 当前状态为 Mac V1 内部试用主线，不是商业稳定发布版。新鲜 09:45/14:45、15:30 准点、
+  无旧缓存冷启动、睡眠/断网恢复和 Windows 独立验收继续在 `main` 推进。
+
 ### Security
 
 - 普通 UI 收敛为一个 Tushare Token；Pro 代理与原生实时共用系统安全存储中的 Primary

@@ -1,6 +1,6 @@
 # v0.4.2-macos-v1-port：Mac V1 真实数据与平台适配
 
-> 状态：进行中（Mac 原生实时 1/100/300/800、全市场七批和最终修复后的双次手动真实
+> 状态：Mac V1 内部试用主线（Mac 原生实时 1/100/300/800、全市场七批和最终修复后的双次手动真实
 > Top3 已通过；最终 arm64 `.app` 已构建、安装并完成 Keychain/SQLite/PDF/单实例/退出验收；
 > 7月31日真实静态收盘回顾已盘后补生成。Primary 普通 Pro 静态路线仍限流，新鲜09:45或
 > 14:45固定 Top3与交易日15:30准点生成仍待下一交易窗口）
@@ -18,7 +18,21 @@
 > 共享产品增量：`6309377187d26c46f1994ce201c16693a3caca75`
 > （盘中手动 Top3、自动固定提醒回归、15:30 全市场盘后回顾；可后续独立同步 Windows）
 >
-> 工作分支：`feat/macos-v1-port`
+> 日常开发分支：本地 `main`
+
+## 2026-08-01 主线收口
+
+- 唯一权威工作目录：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`。
+- 本地 `main` 已接收 Mac V1 内部试用成果及完整历史；`5aab3d0`、`8f8d574`、`ba24089`
+  和 Windows V1 基线均保留在其祖先链中。
+- 当前主线能力包括真实全市场扫描、行业/概念板块、板块硬门、同板块最多两只、强/中/近、
+  补位观察、候选池 Top 100 强异动、稳定 Top3、09:45/14:45 调度、30 天历史、15:30
+  盘后总结和 Mac arm64 App。
+- `fix/macos-v1-internal-acceptance`、`feat/macos-v1-port`、`fix/shared-v1-selection-completion`
+  与 `feat/windows-v1-real-candidates` 是历史来源，不再作为当前长期开发线；后续小任务默认在
+  唯一主目录的 `main` 推进。
+- 当前仍待真实验证：新鲜 09:45/14:45 Top3、15:30 准点报告、无旧缓存冷启动、睡眠/断网恢复
+  和 Windows 独立验收。当前状态不是商业稳定发布版。
 
 ## 决策与证据边界
 

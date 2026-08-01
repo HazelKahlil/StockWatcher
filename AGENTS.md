@@ -4,15 +4,15 @@
 
 ## 项目
 
-- 本地路径：由当前恢复工作区决定；冻结 Windows 源基线为
-  `5b20b707e83baa16b1486894f8e53f343830d67c`。
+- 唯一权威项目路径：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`；
+  冻结 Windows 源基线为 `5b20b707e83baa16b1486894f8e53f343830d67c`。
 - 当前开发电脑：Mac。真实行情、通知、安装和截图证据必须标明本机 macOS；不能外推为
   Windows 结果。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：共享连接门返修已作为 `74b4840d25766097a2c88e502983b375bc80c7d6`
-  独立提交；Mac 专属工作位于 `feat/macos-v1-port`。Windows 真实验收仍为 `FAIL`：
-  统一 Token 连接校验遇到 `rate_limited`，完整扫描轮次和真实 Top3 均为 0。本轮禁止
-  访问或修改远端。
+- 当前状态：本地 `main` 是唯一日常开发主线，基线为 StockWatcher Mac V1 内部试用主线，
+  不是商业稳定发布版。主线包含真实全市场实时扫描、行业/概念板块、板块硬门、稳定 Top3、
+  候选池强异动、历史/盘后总结和 Mac arm64 App；Windows 真实验收仍为 `FAIL`，不得由 Mac
+  结果覆盖。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
@@ -31,9 +31,10 @@
 
 ## 本地优先模式
 
-- 本地工作区是本轮权威事实源。2026-07-30 Mac-first 任务期间不得 fetch、pull、push、
-  merge、tag、release 或访问 GitHub，也不得用远端状态改变已核对基线。
-- 日常任务从本地 `main` 建短分支，完成验证和 diff review 后本地合并回 `main`。不自动 push，也不为每个小改动创建 PR。
+- 本地 `main` 与上述唯一项目目录是日常权威事实源；本次 Mac V1 收口已在本地完成历史整合，
+  不访问 GitHub，不用远端状态改变本地基线。
+- 后续日常任务默认直接在本地 `main` 推进；只有需要隔离和验证时才建短分支，完成验证和 diff
+  review 后合并回 `main`。不为每个小任务复制项目目录，不自动 push，也不为每个小改动创建 PR。
 - 每个 session 收尾必须形成可恢复的本地提交；只留未提交工作时，必须在 handoff 中逐项列出，不能让下一位 Agent 猜。
 - 版本封版、需要远端备份/跨设备交接或用户明确要求时，从本地 `main` 创建 `publish/<version>`，统一 push 并用一个 PR 同步 GitHub。
 - GitHub 尚未同步期间，不得声称远端已经包含本地版本；汇报必须同时写明本地 commit 和远端同步状态。
