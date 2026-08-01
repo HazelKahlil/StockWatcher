@@ -83,7 +83,7 @@ def _write_plist(path: Path) -> None:
 
 def _write_launcher(path: Path) -> None:
     path_value = (
-        "/Users/kahlilhazel/.local/bin:/opt/homebrew/bin:/usr/local/bin:"
+        f"{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:"
         "/usr/bin:/bin:/usr/sbin:/sbin"
     )
     app_command = (

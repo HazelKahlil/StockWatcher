@@ -5,7 +5,7 @@
 
 ## 基线与分支
 
-- 恢复目录：`/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher-Mac-V1-Internal-Trial-20260801.xCnN4s/StockWatcher`
+- 恢复目录：`<recovery-dir>/StockWatcher`
 - 当前分支：`fix/macos-v1-internal-acceptance`
 - HEAD：`8f8d574dee0a1b0f1393640cac832bf289e37dc9`
 - HEAD Parent：`ba2408999c47c237a5fa4abbde32cc14d2f67a62`
