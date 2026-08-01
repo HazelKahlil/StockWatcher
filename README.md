@@ -7,28 +7,42 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 ## 当前状态
 
 - 项目治理与 V2.0 交接基线已建立。
-- 当前开发电脑是 Mac，采用“本地优先、GitHub 版本节点同步”；v0.1/v0.2 的 Mac Mock/Replay 范围已本地完成。
-- 当前活跃目标是 `v0.3-windows-data-gate`：Windows + 官方 TdxQuant 单人只读测试。前置代码已通过 Mac 回归和独立真实 Windows 的无终端工程/打包验证；Human Owner 的真实 TdxQuant M0 仍未执行。Mac 不购买或接入 Tushare/iFinD。
-- Windows 真机 M0 前不得声称紫黄线、真实交易时段、Windows 通知或安装体验已经验证。
+- 当前活跃目标是 `v0.4.2-macos-v1-port`：在 macOS 上用共享的 Tushare 主路线持续选出
+  稳定三只真实 A 股，并完成固定时点与强异动提醒、详情、30 天历史和收盘总结的真实验证。
+- Windows 真实验收仍为 `FAIL`：冻结基线在统一 Token 连接校验阶段收到 `rate_limited`，
+  因而完整实时扫描轮次和真实 Top3 均为 0；Mac 结果不能替代 Windows 验收。
+- 普通/历史数据使用内置 Tushare Pro 代理；主实时入口使用
+  `tushare.realtime_quote(..., src="sina")`。两者共用系统安全存储中的一个 Token；Mac
+  使用系统钥匙串，Windows 使用 Credential Manager。
+- 2026-07-31 已在 Mac 交易时段通过原生实时 1/100/300/800、全市场七批、连续双次手动
+  Top3 与规则审计；14:45 固定触发及延迟兜底已证明，但新鲜固定时点 Top3 仍待下个交易日。
+- 2026-08-01 已构建、ad-hoc 签名并安装本机 arm64 `StockWatcher.app`；全新目录启动、
+  macOS 系统钥匙串、SQLite 历史、盘后报告/PDF、单实例唤起、关闭隐藏和显式退出均已实测。
+- 2026-07-31 的真实静态收盘回顾已盘后补生成；它只验证确定性收盘分析与 PDF 呈现，
+  明确标记为 `RETROSPECTIVE_ONLY`，不冒充 15:30 Live、盘中 Top3 或 Windows 验收。
+- TdxQuant 保留为可选诊断和未来资金字段探索，不再是应用正常启动或真实候选的必要前提。
+- 资金不可用时显示“资金未确认”且不阻塞候选；日级 moneyflow 不得冒充盘中增强。
 - GitHub 私有仓库保留为里程碑镜像、远端备份和交接入口，不承担日常迭代。
 
 ## 从这里开始
 
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
-3. 阅读 [锁定业务项](docs/reference/v2.0/requirements.lock.json) 和 [V2.0 规格](docs/reference/v2.0/SPEC_V2.0_AGENT.md)。
-4. 开始真实数据工作前，读取 [v0.3 Windows 数据闸门](docs/visions/v0.3-windows-data-gate/README.md) 和规则路由表。
+3. 阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
+   [共享连接门返修](docs/visions/v0.4.1-shared-connection-gate/README.md)；2026-07-30
+   Human Owner 的 Mac-first 交接包高于较早 Windows 排期中的冲突表述。
+4. 阅读 [数据规则](docs/process/rules/data.md) 和安全边界。
 
 ## 项目基线
 
 | 项 | 当前约定 |
 | --- | --- |
-| 当前开发环境 | Mac 本地，Asia/Shanghai |
-| 原规格目标环境 | Windows 桌面端 + 通达信；当前无可用 Windows 电脑，留到独立环境门验证 |
+| 当前开发环境 | macOS 本地，Asia/Shanghai |
+| 当前 V1 目标环境 | macOS 桌面端；不要求通达信；Windows 后续单独同步与验收 |
 | 计划技术栈 | Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest |
 | v0.1 数据口径 | Mock / Replay / Synthetic；不接真实交易账户，不把模拟数据冒充实时行情 |
-| 完整版主数据口径 | 通达信最新正式版或后续确认的合法兼容数据源；准确字段与授权以真实 M0 为准 |
-| 默认提醒 | 09:45、14:50；盘中特别强异动最多 3 批/日 |
+| V1 主数据口径 | 内置 Tushare Pro 代理 + SDK 原生实时 `src="sina"`；单 Token |
+| 默认提醒 | 09:45、14:45；盘中特别强异动最多 3 批/日 |
 | 输出 | 数据健康时每批固定三只，标记“强 / 中 / 近” |
 | 安全边界 | 不读取账户，不自动交易，不用旧数据伪装正常结果 |
 
@@ -60,24 +74,57 @@ git diff --check
 项目支持 Python 3.11/3.12；`uv.lock` 锁定当前开发环境的依赖解析。不得将上述结果表述为 Windows、通达信、紫黄线或真实行情验证。
 直接与开发依赖的用途、许可证与安全影响见 [依赖审计](docs/process/dependencies.md)；变更后必须额外执行 `uv sync --all-groups --frozen` 与 `uv lock --check`。
 
-## 启动 Mac Replay UI Alpha
+## 启动 Mac V1
 
 ```bash
 uv sync --all-groups --frozen
 uv run python -m stock_watcher.ui.app
 ```
 
-窗口使用固定 Synthetic 场景写入临时 SQLite，并以小型“Mac 测试版”标签标明本地回放范围。普通界面只展示三只候选、当前状态、详情和历史；“模拟数据中断”“恢复回放”和开发诊断保留在“开发”菜单，历史窗口只读，资金模块继续保持未就绪。
+默认入口使用真实 Tushare V1 会话。Mac 首次没有已保存 Token 时会显示简单的“数据接口”
+页；Token 只在用户确认后进入系统钥匙串。默认测试与开发可显式选择 Replay，不需要真实
+Token。
 
-## Windows TdxQuant 现场入口
+交易日 09:45 和 14:45 会自动抓取并弹出三只观察股票；盘中任意需要查看的时刻可点击
+**立即获取最新3只**，成功后主界面与右下角三只弹窗同步更新。15:30 自动生成全市场
+A股盘后回顾，并可从 **设置 → 盘后回顾与PDF** 查看或下载最近31个自然日的固定三页 PDF。
 
-当前单机内部自用优先使用 `StockWatcher-Internal-Portable.zip`：完整解压后双击
-**启动 StockWatcher.vbs**。入口复用目标机已允许的 python.org 官方签名 Python 3.12/Pythonw，
-不弹控制台、不要求管理员权限、不改 PATH，也不在首次启动联网安装依赖。ZIP 包含完整
-`stock_watcher` 应用树、PySide6 UI、原生 Preflight 和冻结 `app/uv.lock`；目标机须提前按该 lock 准备运行依赖，
-并可导入与官方终端匹配的 TdxQuant `tqcenter` 模块。只有原生报告整体 `PASS`、恰好一个
-`api_session=PASS` 且 `windows_live_verified=true` 时才启动
-真实 TdxQuant 诊断 UI，真实字段 M0 完成前候选仍保持关闭。详见包内《第一次使用》。
+## 构建 Mac 内部测试 App
+
+```bash
+uv run pyinstaller --noconfirm --clean \
+  --distpath dist/macos-v1 \
+  --workpath build/macos-v1 \
+  packaging/stockwatcher-macos.spec
+codesign --force --deep --sign - dist/macos-v1/StockWatcher.app
+codesign --verify --deep --strict dist/macos-v1/StockWatcher.app
+```
+
+该 spec 只生成本机架构内部测试包，排除 Windows PowerShell/VBS/Inno、TdxQuant 与 TQ
+诊断入口；Token、SQLite、行情缓存、报告和日志均不进入 `.app`。当前不要求 Developer ID
+或公证，不能把 ad-hoc 签名写成正式发行签名。
+
+## Mac 数据接口
+
+正常启动不要求通达信或 TQ。打开 **设置 → 数据接口**：
+
+- 在唯一的隐藏 Token 输入框填写 Tushare 数据接口凭据；
+- 输入框默认隐藏；测试失败不会替换旧凭据；
+- 测试成功并再次确认后才写入 macOS 系统钥匙串；
+- Key 更换不需要重装或重新打包；
+- 更换 Token 会重新建立实时基线，连续三周期新鲜数据后恢复。
+
+Tushare SDK 原生实时路线与 Pro 代理共用同一 Token，只允许通过受控 Provider 调用；
+最多 800 只一批且应用级请求起点间隔默认 1 秒（不得低于 0.6 秒）。核心行情或板块过期时不产生新候选，
+保留上次三只并标记数据延迟；资金缺失只降级资金状态。
+
+不要把凭据写入命令行、配置、日志、SQLite 或仓库。真实测试使用显式
+`pytest -m live_tushare`，默认测试不需要 Key 或外网。
+
+## Windows TdxQuant 可选诊断
+
+官方 TdxQuant 诊断仍保留严格签名发现、Preflight 和只读 UI。它只用于历史证据复核与未来
+资金字段探索；未通过独立诊断门时不会影响 Tushare 正常启动，也不会自动启动终端。
 
 开发、完整 Preflight、M0 探针和构建仍使用 PowerShell 工程入口：
 
@@ -89,4 +136,6 @@ powershell -NoProfile -File .\scripts\windows\stockwatcher.ps1
 
 ## 版本路线
 
-项目先在 Mac 完成可回放基础与本地 Alpha，再进入真实 Windows/通达信数据闸门，之后接入完整 V1 并稳定化。详见 [版本索引](docs/visions/README.md)；本地与 GitHub 同步规则见 [release.md](docs/process/release.md)。
+当前先完成 Mac V1 的真实交易时段、固定提醒、系统行为与内部 `.app` 验收；Windows
+继续保持未通过，后续只同步共享修复并在 Windows 单独复验。详见
+[版本索引](docs/visions/README.md)。

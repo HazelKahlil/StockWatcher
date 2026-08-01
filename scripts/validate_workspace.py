@@ -25,6 +25,8 @@ REQUIRED_PATHS = (
     ROOT / "docs" / "visions" / "v0.3-windows-data-gate" / "windows-handoff.md",
     ROOT / "docs" / "visions" / "v0.3-windows-data-gate" / "m0-report-template.md",
     ROOT / "docs" / "visions" / "v0.4-v1-feature-complete" / "README.md",
+    ROOT / "docs" / "visions" / "v0.4.1-shared-connection-gate" / "README.md",
+    ROOT / "docs" / "visions" / "v0.4.2-macos-v1-port" / "README.md",
     ROOT / "docs" / "visions" / "v0.5-stabilization" / "README.md",
     REFERENCE / "README.md",
     REFERENCE / "requirements.lock.json",

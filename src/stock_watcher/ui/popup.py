@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication, QMouseEvent
+from PySide6.QtCore import QPoint, QSettings, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QMouseEvent, QScreen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .presenter import CandidateRow, format_change
@@ -37,6 +37,9 @@ class AlertRow(QFrame):
         change = QLabel(format_change(row.change_pct))
         change.setObjectName("popupChange")
         layout.addWidget(change)
+        price = QLabel(f"¥{row.price:.2f}")
+        price.setObjectName("popupCode")
+        layout.addWidget(price)
         level = QLabel(row.level)
         level.setObjectName("levelBadge")
         level.setProperty("level", row.level)
@@ -58,26 +61,31 @@ class AlertPopup(QWidget):
     def __init__(
         self,
         rows: tuple[CandidateRow, ...],
+        title: str,
         subtitle: str,
         details_callback: Callable[[str], None],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("本轮观察提醒")
+        self.setWindowTitle(title)
         self.setWindowFlags(
             Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setObjectName("alertPopup")
         self.setFixedWidth(460)
-        self._build(rows, subtitle, details_callback)
+        self._title = title
+        self._settings = QSettings("StockWatcher", "StockWatcher")
+        self._build(rows, title, subtitle, details_callback)
 
     def _build(
         self,
         rows: tuple[CandidateRow, ...],
+        title_text: str,
         subtitle: str,
         details_callback: Callable[[str], None],
     ) -> None:
@@ -85,7 +93,7 @@ class AlertPopup(QWidget):
         root.setContentsMargins(22, 18, 22, 18)
         root.setSpacing(10)
         heading = QHBoxLayout()
-        title = QLabel("本轮观察提醒")
+        title = QLabel(title_text)
         title.setObjectName("popupTitle")
         heading.addWidget(title)
         heading.addStretch()
@@ -103,7 +111,7 @@ class AlertPopup(QWidget):
             root.addWidget(panel)
 
         bottom = QHBoxLayout()
-        hint = QLabel("本地测试中")
+        hint = QLabel("只读观察提醒")
         hint.setObjectName("popupHint")
         bottom.addWidget(hint)
         bottom.addStretch()
@@ -113,9 +121,24 @@ class AlertPopup(QWidget):
         bottom.addWidget(open_list)
         root.addLayout(bottom)
 
-    def show_at_bottom_right(self) -> None:
-        screen = self.screen() or QGuiApplication.primaryScreen()
+    def show_at_bottom_right(self, *, preferred_screen: QScreen | None = None) -> None:
+        stored = self._settings.value("alert/position")
+        if isinstance(stored, QPoint) and any(
+            screen.availableGeometry().contains(stored)
+            for screen in QGuiApplication.screens()
+        ):
+            self.move(stored)
+            self.show()
+            return
+        # A popup created as a Tool window does not reliably inherit its
+        # parent's display on macOS.  Prefer the main window's current screen
+        # so a multi-monitor user sees all three candidates beside the app.
+        screen = preferred_screen or self.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
             self.move(area.right() - self.width() - 18, area.bottom() - self.height() - 18)
         self.show()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._settings.setValue("alert/position", self.pos())
+        super().closeEvent(event)

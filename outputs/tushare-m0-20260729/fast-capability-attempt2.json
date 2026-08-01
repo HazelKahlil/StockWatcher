@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-07-29T12:53:25.761997+08:00",
+  "verdict": "PASS_WITH_LIMITS",
+  "observations": [
+    {
+      "capability": "trade_cal",
+      "provider_profile": "fast",
+      "http_status": 200,
+      "elapsed_ms": 1453.0,
+      "returned_records": 13162,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "cal_date",
+        "exchange",
+        "is_open"
+      ]
+    },
+    {
+      "capability": "daily",
+      "provider_profile": "fast",
+      "http_status": 200,
+      "elapsed_ms": 578.0,
+      "returned_records": 5,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "close",
+        "trade_date",
+        "ts_code"
+      ]
+    }
+  ],
+  "raw_payload_persisted": false,
+  "credential_persisted": false
+}

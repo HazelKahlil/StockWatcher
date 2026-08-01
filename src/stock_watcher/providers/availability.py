@@ -62,11 +62,33 @@ TDXQUANT_DESCRIPTOR = ProviderDescriptor(
     ),
 )
 
+TUSHARE_DESCRIPTOR = ProviderDescriptor(
+    name="tushare",
+    readiness=ProviderReadiness.PREFLIGHT_REQUIRED,
+    capabilities=frozenset(
+        {
+            "cross-platform-https",
+            "system-credential-store",
+            "stock-list",
+            "daily-bars",
+            "minute-bars",
+            "realtime-snapshot",
+            "sectors",
+            "trading-calendar",
+        }
+    ),
+    detail=(
+        "Tushare requires a stored credential and a successful data-gate M0. "
+        "Candidate output remains closed until freshness and recovery gates pass."
+    ),
+)
+
 
 def provider_descriptor(name: str) -> ProviderDescriptor:
     """Resolve a configured provider by declared capability, not host platform."""
     descriptors = {
-        descriptor.name: descriptor for descriptor in (REPLAY_DESCRIPTOR, TDXQUANT_DESCRIPTOR)
+        descriptor.name: descriptor
+        for descriptor in (REPLAY_DESCRIPTOR, TUSHARE_DESCRIPTOR, TDXQUANT_DESCRIPTOR)
     }
     try:
         return descriptors[name]

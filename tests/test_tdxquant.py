@@ -1121,4 +1121,4 @@ def test_windows_package_contract_is_offline_checkable() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "no Windows/TdxQuant claim" in completed.stdout
+    assert "no live Tushare/TdxQuant claim" in completed.stdout

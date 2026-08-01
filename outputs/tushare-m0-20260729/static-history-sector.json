@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "phase": "static_history_sector",
+  "verdict": "PASS",
+  "raw_payload_persisted": false,
+  "credential_persisted": false,
+  "observations": [
+    {
+      "capability": "stock_basic",
+      "status": "PASS",
+      "records": 5530,
+      "elapsed_ms": 3140.0,
+      "exchange_counts": {
+        "BJ": 327,
+        "SH": 2308,
+        "SZ": 2895
+      },
+      "market_counts": {
+        "主板": 3194,
+        "创业板": 1399,
+        "北交所": 327,
+        "科创板": 610
+      },
+      "st_name_count": 211,
+      "delist_date_present": 0
+    },
+    {
+      "capability": "daily_sample_1",
+      "status": "PASS",
+      "records": 4,
+      "elapsed_ms": 797.0,
+      "distinct_dates": 4,
+      "invalid_ohlc_or_negative_rows": 0
+    },
+    {
+      "capability": "daily_sample_2",
+      "status": "PASS",
+      "records": 4,
+      "elapsed_ms": 797.0,
+      "distinct_dates": 4,
+      "invalid_ohlc_or_negative_rows": 0
+    },
+    {
+      "capability": "daily_sample_3",
+      "status": "PASS",
+      "records": 3,
+      "elapsed_ms": 922.0,
+      "distinct_dates": 3,
+      "invalid_ohlc_or_negative_rows": 0
+    },
+    {
+      "capability": "trade_cal",
+      "status": "PASS",
+      "records": 6,
+      "open_days": 4,
+      "elapsed_ms": 6594.0
+    },
+    {
+      "capability": "industry_classify",
+      "status": "PASS",
+      "records": 31,
+      "elapsed_ms": 968.0
+    },
+    {
+      "capability": "industry_members",
+      "status": "PASS",
+      "records": 127,
+      "duplicate_members": 0,
+      "elapsed_ms": 672.0
+    },
+    {
+      "capability": "concept_classify",
+      "status": "PASS",
+      "records": 200,
+      "elapsed_ms": 813.0
+    },
+    {
+      "capability": "concept_members",
+      "status": "PASS",
+      "records": 319,
+      "duplicate_members": 0,
+      "elapsed_ms": 1593.0
+    }
+  ]
+}

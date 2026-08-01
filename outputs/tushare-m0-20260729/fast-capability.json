@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-07-29T12:46:02.248738+08:00",
+  "verdict": "FAIL",
+  "observations": [
+    {
+      "capability": "trade_cal",
+      "provider_profile": "fast",
+      "http_status": 200,
+      "elapsed_ms": 2625.0,
+      "returned_records": 13162,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "cal_date",
+        "exchange",
+        "is_open"
+      ]
+    },
+    {
+      "capability": "daily",
+      "provider_profile": "fast",
+      "http_status": 500,
+      "elapsed_ms": null,
+      "returned_records": null,
+      "source_timestamp_present": false,
+      "status": "FAIL",
+      "safe_reason": "server_error",
+      "field_names": []
+    }
+  ],
+  "raw_payload_persisted": false,
+  "credential_persisted": false
+}

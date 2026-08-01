@@ -5,12 +5,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from stock_watcher.config import DataSourceConfigRepository, DataSourceMode
 from stock_watcher.paths import runtime_paths
 
-from .main_window import MainWindow, ReplaySession
-from .tdx_session import TdxDiagnosticSession
+from .macos import MacApplicationLifecycle, SingleInstanceGuard
+from .main_window import MainWindow, ReplaySession, UiSession
+from .tushare_session import TushareDiagnosticSession
+from .tushare_v1_session import TushareV1Session
 
 STYLE_SHEET = """
 QWidget { font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #172231; }
@@ -20,18 +24,18 @@ QMenuBar::item:selected, QMenu::item:selected { background: #e8f1ff; color: #167
 QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #appBrand { font-size: 15px; font-weight: 700; color: #364456; }
 #testBadge { color: #1670df; background: #e7f1ff; border-radius: 9px; padding: 4px 9px; }
-#pageTitle { font-size: 30px; font-weight: 750; color: #142235; }
+#pageTitle { font-size: 28px; font-weight: 750; color: #142235; }
 #summaryCard, #candidateCard, #metricsCard, #reasonCard, #historyCard {
     background: #ffffff; border: 1px solid #e1e7ef; border-radius: 14px;
 }
-#summaryCard { padding: 4px; }
-#summaryLabel, #candidateMeta, #metricLabel { color: #748296; font-size: 13px; }
-#summaryValue { font-size: 18px; font-weight: 700; color: #1c2d42; }
+#summaryCard { padding: 0; }
+#summaryLabel, #candidateMeta, #metricLabel { color: #748296; font-size: 12px; }
+#summaryValue { font-size: 16px; font-weight: 700; color: #1c2d42; }
 #summaryValue[state="connected"] { color: #17814f; }
 #summaryValue[state="checking"] { color: #1670df; }
 #summaryValue[state="disconnected"] { color: #c63f3f; }
 #summaryValue[state="not_applicable"] { color: #667487; }
-#candidateCard { min-height: 72px; }
+#candidateCard { min-height: 96px; }
 #candidateCard:hover { background: #fbfdff; border-color: #b8d4f8; }
 #cardsScroll, #cardsScroll > QWidget > QWidget, #cardsHost {
     background: transparent; border: none;
@@ -52,23 +56,38 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #levelBadge[level="强"] { color: #d93636; background: #fff0f0; border: 1px solid #ffcaca; }
 #levelBadge[level="中"] { color: #b87700; background: #fff7df; border: 1px solid #ffe0a0; }
 #levelBadge[level="近"] { color: #6d7785; background: #f0f2f5; border: 1px solid #d8dee6; }
-#interruptCard { background: #fffaf0; border: 1px solid #f3dfac; border-radius: 14px; }
-#interruptTitle { color: #9a731d; font-size: 22px; font-weight: 750; }
-#interruptMessage { color: #39495d; font-size: 16px; }
-#issueList { color: #6e5b2d; font-size: 14px; }
-#interruptMeta { color: #7c8795; font-size: 14px; }
+#interruptCard { background: #fffaf0; border: 1px solid #f3dfac; border-radius: 12px; }
+#interruptTitle { color: #9a731d; font-size: 18px; font-weight: 750; }
+#interruptMessage { color: #39495d; font-size: 14px; }
+#issueList { color: #6e5b2d; font-size: 13px; }
+#interruptMeta { color: #7c8795; font-size: 12px; }
 #emptyState {
     color: #6c798a; background: #f8fafc; border: 1px dashed #ced7e2;
-    border-radius: 12px; padding: 24px; font-size: 15px;
+    border-radius: 12px; padding: 36px; font-size: 16px;
 }
-#sectionTitle { color: #405067; font-size: 17px; font-weight: 700; }
-#primaryButton, #secondaryButton { border-radius: 9px; padding: 11px 18px; font-size: 16px; }
+#sectionTitle { color: #405067; font-size: 20px; font-weight: 750; }
+#primaryButton, #secondaryButton, #dangerButton {
+    border-radius: 9px; padding: 11px 18px; font-size: 16px;
+}
 #primaryButton { background: #1679ed; border: 1px solid #1679ed; color: #ffffff; }
 #primaryButton:hover { background: #0b68d5; }
 #primaryButton:disabled { background: #9cbfe6; border-color: #9cbfe6; }
 #secondaryButton { background: #ffffff; border: 1px solid #d3dce8; color: #33445a; }
 #secondaryButton:hover { background: #eef5ff; border-color: #a8c7ee; }
 #secondaryButton:disabled { color: #a2acb9; background: #f5f7fa; }
+#dangerButton { background: #ffffff; border: 1px solid #e2b8b8; color: #b64242; }
+#dangerButton:hover { background: #fff2f2; border-color: #d77878; }
+#dangerButton:disabled { color: #b4a3a3; background: #f7f7f7; border-color: #e4e4e4; }
+#dataSourceEditor { background: #fbfcfe; border: 1px solid #e1e7ef; border-radius: 12px; }
+#dataSourceEditor::title { subcontrol-origin: margin; left: 14px; padding: 0 6px; }
+#tokenInput {
+    background: #ffffff; border: 1px solid #afbed0; border-radius: 9px;
+    color: #1c2d42; padding: 9px 12px;
+}
+#tokenInput:hover { border-color: #7ea8dc; }
+#tokenInput:focus { background: #ffffff; border: 2px solid #1679ed; }
+#tokenInputHint, #dataSourcePermission { color: #6f7e91; font-size: 13px; }
+#dataSourceValue, #dataSourceStatus { color: #34465d; }
 #footer { color: #7d8999; font-size: 13px; }
 #statusDot { font-size: 14px; padding-right: 3px; }
 #statusDot[state="healthy"] { color: #35b968; }
@@ -102,13 +121,26 @@ QPushButton { border-radius: 9px; padding: 9px 14px; }
 """
 
 
+def application_icon_path() -> Path:
+    assets = Path(__file__).with_name("assets")
+    if sys.platform == "darwin":
+        macos_icon = assets / "stockwatcher-macos.png"
+        if macos_icon.is_file():
+            return macos_icon
+    return assets / "stockwatcher.png"
+
+
 def run(
     *,
     preflight_verified: bool = False,
     terminal_path: Path | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="StockWatcher desktop application")
-    parser.add_argument("--provider", choices=("replay", "tdxquant"), default="replay")
+    parser.add_argument(
+        "--provider",
+        choices=("tushare", "replay", "tdxquant", "tushare-diagnostic"),
+        default="tushare",
+    )
     parser.add_argument("--endpoint", default="http://127.0.0.1:17709/")
     parser.add_argument(
         "--db",
@@ -119,22 +151,66 @@ def run(
     args = parser.parse_args()
     app = QApplication(sys.argv)
     app.setApplicationName("StockWatcher")
+    app.setOrganizationName("StockWatcher")
+    icon_path = application_icon_path()
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
     app.setStyleSheet(STYLE_SHEET)
+    instance_guard: SingleInstanceGuard | None = None
+    if sys.platform == "darwin":
+        instance_guard = SingleInstanceGuard(parent=app)
+        if not instance_guard.acquire():
+            return 0
     if args.provider == "tdxquant":
+        from .tdx_session import TdxDiagnosticSession
+
         paths = runtime_paths()
         paths.create()
-        session: ReplaySession | TdxDiagnosticSession = TdxDiagnosticSession(
+        session: UiSession = TdxDiagnosticSession(
             args.db or paths.database,
             args.endpoint,
             terminal_path=terminal_path,
             preflight_verified=preflight_verified,
         )
-    else:
+    elif args.provider == "replay":
         replay_db = args.db or (
             Path(tempfile.gettempdir()) / "stock-watcher-mac-replay-demo.sqlite3"
         )
         session = ReplaySession(replay_db)
+    elif args.provider == "tushare-diagnostic":
+        paths = runtime_paths()
+        paths.create()
+        session = TushareDiagnosticSession(args.db or paths.database)
+    else:
+        paths = runtime_paths()
+        paths.create()
+        settings = DataSourceConfigRepository(
+            paths.root / "config" / "data-sources.yaml"
+        ).load()
+        if settings.mode is DataSourceMode.REPLAY:
+            session = ReplaySession(args.db or paths.root / "replay-diagnostic.sqlite3")
+        elif settings.mode is DataSourceMode.ADVANCED_DIAGNOSTIC:
+            session = TushareDiagnosticSession(args.db or paths.database)
+        elif settings.mode is DataSourceMode.TDX_DIAGNOSTIC:
+            from .tdx_session import TdxDiagnosticSession
+
+            session = TdxDiagnosticSession(
+                args.db or paths.database,
+                args.endpoint,
+                terminal_path=terminal_path,
+                preflight_verified=preflight_verified,
+            )
+        else:
+            session = TushareV1Session(
+                args.db or paths.database,
+                settings=settings,
+            )
     window = MainWindow(session)
+    if instance_guard is not None:
+        lifecycle = MacApplicationLifecycle(app, window)
+        window.set_secondary_notification_sender(lifecycle.show_notification)
+        instance_guard.activation_requested.connect(window.restore_main_window)
+        app.aboutToQuit.connect(instance_guard.close)
     window.show()
     return app.exec()
 

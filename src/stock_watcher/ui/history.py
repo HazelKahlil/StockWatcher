@@ -6,8 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QDialog, QFrame, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
+from stock_watcher.domain import SHANGHAI
 from stock_watcher.storage import SQLiteStore
 
 
@@ -21,7 +30,10 @@ class HistoryWorker(QThread):
     def run(self) -> None:
         try:
             store = SQLiteStore(self._path, read_only=True)
-            rows = store.list_recent_snapshots()
+            rows = store.list_alert_history(
+                now=datetime.now(SHANGHAI),
+                days=30,
+            )
             self.loaded.emit(rows, "")
         except Exception as error:  # noqa: BLE001 - surfaced in the dialog, not swallowed
             self.loaded.emit([], f"历史暂不可读：{error}")
@@ -39,15 +51,21 @@ class HistoryDialog(QDialog):
         title = QLabel("历史记录")
         title.setObjectName("dialogTitle")
         root.addWidget(title)
-        description = QLabel("这里可以查看之前的提醒结果。")
+        description = QLabel("最近30天的09:45、14:45和盘中强异动提醒。")
         description.setObjectName("dialogDescription")
         root.addWidget(description)
         self._status = QLabel("正在读取历史记录…")
         self._status.setObjectName("historyStatus")
         root.addWidget(self._status)
-        self._records = QVBoxLayout()
+        records_host = QWidget()
+        self._records = QVBoxLayout(records_host)
+        self._records.setContentsMargins(0, 0, 0, 0)
         self._records.setSpacing(10)
-        root.addLayout(self._records, 1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(records_host)
+        root.addWidget(scroll, 1)
         note = QLabel("历史仅用于回看，不会影响当前结果。")
         note.setObjectName("historyNote")
         root.addWidget(note)
@@ -72,7 +90,7 @@ class HistoryDialog(QDialog):
                 continue
             payload = _json_dict(record.get("payload_json"))
             candidates = _candidate_names(payload.get("candidates", []))
-            timestamp = _display_time(record.get("source_ts"))
+            timestamp = _display_time(record.get("displayed_at"))
             overall = "偏弱" if record.get("overall_weak") else "整体正常"
             card = QFrame()
             card.setObjectName("historyCard")
@@ -81,7 +99,8 @@ class HistoryDialog(QDialog):
             heading = QFrame()
             heading_layout = QVBoxLayout(heading)
             heading_layout.setContentsMargins(0, 0, 0, 0)
-            time_label = QLabel(timestamp)
+            trigger = _trigger_label(record.get("trigger_type"))
+            time_label = QLabel(f"{timestamp} · {trigger}")
             time_label.setObjectName("historyTime")
             status_label = QLabel(overall)
             status_label.setObjectName("historyOverall")
@@ -124,3 +143,12 @@ def _display_time(value: object) -> str:
         return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
     except ValueError:
         return value
+
+
+def _trigger_label(value: object) -> str:
+    labels = {
+        "scheduled-09:45": "09:45 观察提醒",
+        "scheduled-14:45": "14:45 观察提醒",
+        "intraday": "盘中强异动",
+    }
+    return labels.get(str(value), "观察提醒")

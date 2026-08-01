@@ -30,9 +30,9 @@ def test_ui_snapshot_exposes_replay_fields_and_blocks_alerts_when_unhealthy() ->
     assert view.candidates[0].price > 0
     assert view.candidates[0].change_pct > 0
     assert view.candidates[0].reasons
-    assert view.fund_label == "资金模块：未就绪（M0 未通过）"
+    assert view.fund_label == "资金未确认"
     assert view.alert_allowed
-    assert view.overall_label == "整体偏弱"
+    assert view.overall_label == "本轮整体偏弱"
     assert view.previous_candidates == ()
 
     stopped = snapshot_from_batch(
@@ -57,10 +57,11 @@ def test_detail_copy_is_plain_language_and_keeps_internal_fields_hidden() -> Non
     row = snapshot_from_batch(batch, health=HealthState.HEALTHY).candidates[0]
     reasons = detail_reasons(row)
     assert [title for title, _ in reasons] == [
-        "涨幅明显",
-        "涨速较快",
-        "板块配合较好",
-        "三日走势较稳",
+        "当前表现",
+        "短线动能",
+        "板块表现",
+        "成交与趋势",
+        "资金情况",
     ]
     copy = " ".join(f"{title} {explanation}" for title, explanation in reasons)
     assert "Provider" not in copy

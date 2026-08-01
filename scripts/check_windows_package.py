@@ -45,8 +45,13 @@ def main() -> int:
         ROOT / "packaging" / "windows" / "portable" / "DEPENDENCIES.md",
         ROOT / "scripts" / "build_internal_portable.py",
         ROOT / "src" / "stock_watcher" / "__main__.py",
+        ROOT / "src" / "stock_watcher" / "ui" / "assets" / "stockwatcher.ico",
+        ROOT / "src" / "stock_watcher" / "ui" / "assets" / "stockwatcher.png",
         ROOT / "src" / "stock_watcher" / "providers" / "tdxquant_preflight.py",
+        ROOT / "src" / "stock_watcher" / "providers" / "tushare" / "unified_provider.py",
+        ROOT / "src" / "stock_watcher" / "runtime" / "tushare_runtime.py",
         ROOT / "src" / "stock_watcher" / "ui" / "app.py",
+        ROOT / "src" / "stock_watcher" / "ui" / "tushare_v1_session.py",
     )
     errors = [f"missing {path.relative_to(ROOT)}" for path in required if not path.is_file()]
     if errors:
@@ -66,6 +71,13 @@ def main() -> int:
         errors.append("PowerShell entry must fail closed on native command errors")
     if "subst.exe" not in powershell or "Assert-IsccPathBudget" not in powershell:
         errors.append("PowerShell build must enforce the short ISCC input path contract")
+    if "Resolve-Iscc" not in powershell or "Inno Setup 6\\ISCC.exe" not in powershell:
+        errors.append("PowerShell build must find Inno Setup without changing system PATH")
+    if (
+        "Ensure-PyInstaller" not in powershell
+        or '"sync", "--all-groups", "--project", $ProjectRoot' not in powershell
+    ):
+        errors.append("PowerShell build must use the locked uv build environment")
     if '".swb"' not in powershell or '"h449-$stageId"' not in powershell:
         errors.append("PowerShell build must use an issue-owned staging directory")
     if "Publish-BuildArtifactsTransaction" not in powershell:
@@ -80,6 +92,8 @@ def main() -> int:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
+    if "StockWatcher-0.4.0-alpha" not in powershell or "0.3.1-alpha" in powershell:
+        errors.append("PowerShell build must publish only the current 0.4.0-alpha artifacts")
     portable_entry = _read_ascii(required[4], errors)
     portable_runtime = required[5].read_text(encoding="utf-8")
     if "pythonw.exe" not in portable_entry or "Get-Command pyw.exe" not in portable_entry:
@@ -104,12 +118,9 @@ def main() -> int:
     )
     if any(marker in portable_entry.casefold() for marker in elevation_markers):
         errors.append("portable entry must not request elevation")
-    if (
-        "OFFICIAL_PUBLISHERS" not in portable_runtime
-        or "Get-AuthenticodeSignature" not in portable_runtime
-    ):
+    if "OFFICIAL_PUBLISHERS" not in portable_runtime:
         errors.append(
-            "portable runtime must verify the official terminal signature before preflight"
+            "portable runtime must retain official terminal verification for optional diagnostics"
         )
     if (
         "subprocess.Popen" in portable_runtime
@@ -117,7 +128,7 @@ def main() -> int:
     ):
         errors.append("portable runtime must not automatically start the official terminal")
     if "stock_watcher.providers.tdxquant_preflight" not in portable_runtime:
-        errors.append("portable runtime must execute the packaged native preflight")
+        errors.append("portable runtime must retain packaged native TdxQuant diagnostics")
     if (
         "windows_live_verified" not in portable_runtime
         or 'getattr(check, "name", None) == "api_session"' not in portable_runtime
@@ -125,6 +136,19 @@ def main() -> int:
         errors.append("portable runtime must enforce the strict native preflight success contract")
     if "stock_watcher.ui.app" not in portable_runtime:
         errors.append("portable success path must launch the packaged StockWatcher UI")
+    if (
+        'sys.argv = ["StockWatcher", "--provider", "tushare"]' not in portable_runtime
+        or "return launch_stockwatcher_ui(resolved_layout)" not in portable_runtime
+    ):
+        errors.append("portable normal launch must use Tushare without requiring TdxQuant")
+    if (
+        '"keyring": ("keyring"' not in portable_runtime
+        or '"requests": ("requests"' not in portable_runtime
+        or '"tushare": ("tushare"' not in portable_runtime
+    ):
+        errors.append(
+            "portable runtime must validate Tushare credential, HTTP and SDK dependencies"
+        )
     builder = required[8].read_text(encoding="utf-8")
     if (
         'ROOT / "src" / "stock_watcher"' not in builder
@@ -132,17 +156,39 @@ def main() -> int:
     ):
         errors.append("portable ZIP must contain the complete stock_watcher application tree")
     installer = required[3].read_text(encoding="utf-8")
+    spec = required[1].read_text(encoding="utf-8")
+    if "stockwatcher.ico" not in spec or "stockwatcher.png" not in spec:
+        errors.append("PyInstaller bundle must embed the application icon")
+    if (
+        '"tushare.stock.cons"' not in spec
+        or '"tushare.stock.rtq"' not in spec
+        or "stock_watcher.providers.tushare.native_realtime_transport" not in spec
+        or "stock_watcher.providers.tushare.pro_proxy_transport" not in spec
+        or "stock_watcher.providers.tushare.unified_provider" not in spec
+        or "stock_watcher.runtime.tushare_runtime" not in spec
+        or "stock_watcher.ui.tushare_v1_session" not in spec
+        or 'collect_submodules("tushare")' in spec
+    ):
+        errors.append(
+            "PyInstaller bundle must collect the approved V1 Pro and native realtime routes"
+        )
+    if "0.4.0-alpha" not in installer:
+        errors.append("installer must identify the V1 real-candidate build as 0.4.0-alpha")
+    if "SetupIconFile={#MyAppIcon}" not in installer:
+        errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:
         errors.append("installer must use per-user, non-admin installation")
     if "UninstallDelete" not in installer:
         errors.append("installer must declare uninstall behavior")
     if "StockWatcherBundleDir" not in installer or "StockWatcherOutputDir" not in installer:
         errors.append("installer must accept controlled short build paths")
+    if "--provider tdxquant" in installer:
+        errors.append("installer normal shortcuts must not require TdxQuant")
     if errors:
         print("Windows package contract failed:")
         print("\n".join(f"- {error}" for error in errors))
         return 1
-    print("Windows package contract passed (offline; no Windows/TdxQuant claim).")
+    print("Windows package contract passed (offline; no live Tushare/TdxQuant claim).")
     return 0
 
 

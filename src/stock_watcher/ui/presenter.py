@@ -22,6 +22,11 @@ class CandidateRow:
     provider_version: str
     config_version: str
     fund_module: str
+    fund_label: str
+    trend_label: str
+    is_formal: bool
+    is_supplement: bool
+    velocity_available: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +56,7 @@ def snapshot_from_batch(
     previous_candidates: tuple[CandidateRow, ...] = ()
     last_updated: datetime | None = None
     overall_label = "暂无候选"
-    fund_label = "资金模块：未就绪（M0 未通过）"
+    fund_label = "资金未确认"
     if batch is not None:
         rows = tuple(
             CandidateRow(
@@ -68,13 +73,18 @@ def snapshot_from_batch(
                 provider_version=item.provider_version,
                 config_version=item.config_version,
                 fund_module=batch.fund_module,
+                fund_label=item.fund_label,
+                trend_label=item.trend_label,
+                is_formal=item.is_formal,
+                is_supplement=item.is_supplement,
+                velocity_available=item.velocity_available,
             )
             for item in batch.candidates
         )
         last_updated = batch.generated_at
         if health is HealthState.HEALTHY:
             candidates = rows
-            overall_label = "整体偏弱" if batch.overall_weak else "整体正常"
+            overall_label = "本轮整体偏弱" if batch.overall_weak else "运行正常"
         else:
             previous_candidates = rows
     if health is HealthState.STOPPED:
@@ -105,11 +115,21 @@ def format_time(value: datetime | None) -> str:
 
 def detail_reasons(row: CandidateRow) -> tuple[tuple[str, str], ...]:
     """Translate deterministic engine signals into short trader-facing copy."""
-    sector_title = "板块配合较好" if row.sector != "弱板块" else "板块配合一般"
-    sector_copy = "板块走势提供配合。" if row.sector != "弱板块" else "板块走势偏弱，作为辅助观察。"
-    return (
-        ("涨幅明显", f"当前涨幅 {format_change(row.change_pct)}，高于本轮观察阈值。"),
-        ("涨速较快", f"当前涨速 {format_change(row.velocity_pct)}，短线动能较快。"),
-        (sector_title, f"所属板块为{row.sector}，{sector_copy}"),
-        ("三日走势较稳", "近三日走势保持稳定，观察条件更完整。"),
+    titles = ("当前表现", "短线动能", "板块表现", "成交与趋势", "资金情况")
+    reasons = list(row.reasons[:4])
+    if not reasons:
+        reasons = [
+            f"{row.sector}板块提供当前观察依据。",
+            (
+                f"当前涨幅 {format_change(row.change_pct)}，1分钟涨速"
+                f" {format_change(row.velocity_pct)}。"
+                if row.velocity_available
+                else f"当前涨幅 {format_change(row.change_pct)}，1分钟基线尚未形成。"
+            ),
+            f"最近三日趋势为{row.trend_label}。",
+        ]
+    reasons.append(row.fund_label)
+    return tuple(
+        (titles[index], reason)
+        for index, reason in enumerate(reasons[:5])
     )

@@ -28,6 +28,12 @@
 - 版本索引：[visions/README.md](visions/README.md)
 - 已完成（本地待同步）：[visions/v0.1-mac-replay-foundation/README.md](visions/v0.1-mac-replay-foundation/README.md)
 - 已完成（本地待同步）：[visions/v0.2-mac-local-alpha/README.md](visions/v0.2-mac-local-alpha/README.md)
-- 活跃版本（Windows TdxQuant 数据闸门）：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)
+- 当前共享返修：
+  [visions/v0.4.1-shared-connection-gate/README.md](visions/v0.4.1-shared-connection-gate/README.md)
+- 当前 Mac V1：
+  [visions/v0.4.2-macos-v1-port/README.md](visions/v0.4.2-macos-v1-port/README.md)
+- Windows V1 真实 Top3（真实验收仍未通过）：
+  [visions/v0.4-v1-feature-complete/README.md](visions/v0.4-v1-feature-complete/README.md)
+- 可选 TdxQuant 诊断历史：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)
 - Windows 一页交接：[visions/v0.3-windows-data-gate/windows-handoff.md](visions/v0.3-windows-data-gate/windows-handoff.md)
 - Windows Codex 直接交接：[visions/v0.3-windows-data-gate/session-handoff-windows-codex.md](visions/v0.3-windows-data-gate/session-handoff-windows-codex.md)

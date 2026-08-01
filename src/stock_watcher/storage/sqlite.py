@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -15,7 +16,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 2
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 3
 
     def connect(self) -> sqlite3.Connection:
         connection = (
@@ -38,7 +39,7 @@ class SQLiteStore:
                 self._assert_integrity(connection)
                 version = self._schema_version(connection)
                 if version < self.CURRENT_SCHEMA_VERSION:
-                    self._backup_before_migration()
+                    self._backup_before_migration(version)
                     self._migrate_to_current(connection, version)
                 self._assert_current_schema(connection)
         except (sqlite3.DatabaseError, RuntimeError):
@@ -52,22 +53,24 @@ class SQLiteStore:
         ).fetchone()
         return 0 if row is None else int(row[0])
 
-    def _backup_before_migration(self) -> None:
-        """Keep a durable v1 snapshot before changing an existing database."""
-        if not self.path.exists():
+    def _backup_before_migration(self, version: int) -> None:
+        """Keep a durable snapshot before changing an existing database."""
+        if not self.path.exists() or version == 0:
             return
-        backup = self.path.with_suffix(f"{self.path.suffix}.pre-v2.bak")
+        backup = self.path.with_suffix(f"{self.path.suffix}.pre-v{version + 1}.bak")
         with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
             if version == 0:
                 self._apply_v1_schema(connection)
-            self._apply_v2_migration(connection)
+            if version <= 1:
+                self._apply_v2_migration(connection)
+            self._apply_v3_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -113,6 +116,43 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _apply_v3_migration(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS candidate_items "
+            "(id INTEGER PRIMARY KEY, snapshot_id INTEGER NOT NULL, rank INTEGER NOT NULL, "
+            "code TEXT NOT NULL, name TEXT NOT NULL, level TEXT NOT NULL, "
+            "is_formal INTEGER NOT NULL, is_supplement INTEGER NOT NULL, "
+            "price REAL NOT NULL, change_pct REAL NOT NULL, sector_code TEXT NOT NULL, "
+            "sector_name TEXT NOT NULL, fund_label TEXT NOT NULL, explanation TEXT NOT NULL, "
+            "payload_json TEXT NOT NULL, "
+            "FOREIGN KEY(snapshot_id) REFERENCES candidate_snapshots(id) ON DELETE CASCADE)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_items_snapshot "
+            "ON candidate_items(snapshot_id, rank)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS daily_summaries "
+            "(trade_date TEXT PRIMARY KEY, generated_at TEXT NOT NULL, "
+            "alert_count INTEGER NOT NULL, top_sectors_json TEXT NOT NULL, "
+            "repeated_candidates_json TEXT NOT NULL, closing_performance_json TEXT NOT NULL, "
+            "fund_summary TEXT NOT NULL, health_summary TEXT NOT NULL, "
+            "summary_text TEXT NOT NULL, version TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS app_settings "
+            "(key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        alert_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(alert_events)")
+        }
+        if "trigger_type" not in alert_columns:
+            connection.execute(
+                "ALTER TABLE alert_events ADD COLUMN trigger_type TEXT NOT NULL "
+                "DEFAULT 'intraday'"
+            )
+    @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
         if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise RuntimeError("database integrity check failed")
@@ -123,7 +163,10 @@ class SQLiteStore:
             "notes",
             "config_versions",
             "candidate_snapshots",
+            "candidate_items",
             "alert_events",
+            "daily_summaries",
+            "app_settings",
             "health_metrics",
         }
         tables = {
@@ -170,7 +213,15 @@ class SQLiteStore:
         if missing := required - metadata.keys():
             raise ValueError(f"snapshot metadata missing: {sorted(missing)}")
         with self.connect() as connection:
-            cursor = connection.execute(
+            return self._insert_snapshot(connection, payload_json, metadata)
+
+    @staticmethod
+    def _insert_snapshot(
+        connection: sqlite3.Connection,
+        payload_json: str,
+        metadata: dict[str, str | int | bool],
+    ) -> int:
+        cursor = connection.execute(
                 "INSERT INTO candidate_snapshots "
                 "(source_ts, generated_at, health, overall_weak, provider_version, config_version, "
                 "app_version, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -184,31 +235,70 @@ class SQLiteStore:
                     str(metadata["app_version"]),
                     payload_json,
                 ),
-            )
-            if cursor.lastrowid is None:
-                raise RuntimeError("snapshot insert did not return an id")
-            return int(cursor.lastrowid)
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("snapshot insert did not return an id")
+        return int(cursor.lastrowid)
 
     def record_batch(self, batch: CandidateBatch) -> int:
         """Store the complete deterministic result, including reasons and sub-scores."""
         first = batch.candidates[0] if batch.candidates else None
         if first is None:
             raise ValueError("empty candidate batches are not persisted as new snapshots")
-        return self.record_snapshot(
-            batch.trace_payload(),
-            {
-                "source_ts": batch.source_ts.isoformat(),
-                "generated_at": batch.generated_at.isoformat(),
-                "health": batch.health.value,
-                "overall_weak": batch.overall_weak,
-                "provider_version": first.provider_version,
-                "config_version": first.config_version,
-                "app_version": first.app_version,
-            },
-        )
+        metadata: dict[str, str | int | bool] = {
+            "source_ts": batch.source_ts.isoformat(),
+            "generated_at": batch.generated_at.isoformat(),
+            "health": batch.health.value,
+            "overall_weak": batch.overall_weak,
+            "provider_version": first.provider_version,
+            "config_version": first.config_version,
+            "app_version": first.app_version,
+        }
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                snapshot_id = self._insert_snapshot(
+                    connection,
+                    batch.trace_payload(),
+                    metadata,
+                )
+                for rank, candidate in enumerate(batch.candidates, start=1):
+                    connection.execute(
+                        "INSERT INTO candidate_items "
+                        "(snapshot_id, rank, code, name, level, is_formal, is_supplement, "
+                        "price, change_pct, sector_code, sector_name, fund_label, explanation, "
+                        "payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            snapshot_id,
+                            rank,
+                            candidate.code,
+                            candidate.name,
+                            candidate.level,
+                            int(candidate.is_formal),
+                            int(candidate.is_supplement),
+                            candidate.price,
+                            candidate.change_pct,
+                            candidate.sector_code,
+                            candidate.sector,
+                            candidate.fund_label,
+                            "；".join(candidate.reasons[:5]),
+                            json.dumps(
+                                asdict(candidate),
+                                ensure_ascii=False,
+                                default=str,
+                                sort_keys=True,
+                            ),
+                        ),
+                    )
+                return snapshot_id
 
     def record_alert_event(
-        self, snapshot_id: int, displayed_at: str, decision: str, channel: str
+        self,
+        snapshot_id: int,
+        displayed_at: str,
+        decision: str,
+        channel: str,
+        trigger_type: str = "intraday",
     ) -> None:
         if any(word in channel.lower() for word in ("token", "secret", "password", "account")):
             raise ValueError("alert channel must not contain credentials or account information")
@@ -216,8 +306,9 @@ class SQLiteStore:
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO alert_events "
-                "(snapshot_id, displayed_at, decision, channel) VALUES (?, ?, ?, ?)",
-                (snapshot_id, displayed_at, decision, channel),
+                "(snapshot_id, displayed_at, decision, channel, trigger_type) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (snapshot_id, displayed_at, decision, channel, trigger_type),
             )
 
     def record_health_metric(self, metadata: dict[str, str]) -> None:
@@ -230,6 +321,18 @@ class SQLiteStore:
                 ":config_version, :detail)",
                 metadata,
             )
+
+    def count_health_interruptions(self, trade_date: str) -> int:
+        """Count persisted interruption onsets for one local trading date."""
+        self.initialize()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM health_metrics "
+                "WHERE substr(received_ts, 1, 10) = ? "
+                "AND state IN ('WARMING', 'STALE', 'STOPPED')",
+                (trade_date,),
+            ).fetchone()
+        return 0 if row is None else int(row[0])
 
     def apply_transaction(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
         self.initialize()
@@ -281,3 +384,164 @@ class SQLiteStore:
             "payload_json",
         )
         return [dict(zip(keys, row)) for row in rows]
+
+    def list_alert_history(
+        self,
+        *,
+        now: datetime,
+        days: int = 30,
+    ) -> list[dict[str, Any]]:
+        if days < 1:
+            raise ValueError("history days must be at least one")
+        cutoff = (now - timedelta(days=days)).isoformat()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT e.id, e.displayed_at, e.decision, e.channel, e.trigger_type, "
+                "s.id, s.source_ts, s.overall_weak, s.payload_json "
+                "FROM alert_events e JOIN candidate_snapshots s ON s.id = e.snapshot_id "
+                "WHERE e.displayed_at >= ? "
+                "ORDER BY e.displayed_at DESC, e.id DESC",
+                (cutoff,),
+            ).fetchall()
+        keys = (
+            "alert_id",
+            "displayed_at",
+            "decision",
+            "channel",
+            "trigger_type",
+            "snapshot_id",
+            "source_ts",
+            "overall_weak",
+            "payload_json",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def prune_history(self, *, before: datetime) -> int:
+        """Transactionally delete user-visible alerts and now-unreferenced snapshots."""
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                alert_ids = [
+                    int(row[0])
+                    for row in connection.execute(
+                        "SELECT id FROM alert_events WHERE displayed_at < ?",
+                        (before.isoformat(),),
+                    )
+                ]
+                if alert_ids:
+                    connection.executemany(
+                        "DELETE FROM alert_events WHERE id = ?",
+                        ((alert_id,) for alert_id in alert_ids),
+                    )
+                connection.execute(
+                    "DELETE FROM candidate_snapshots WHERE id NOT IN "
+                    "(SELECT DISTINCT snapshot_id FROM alert_events)"
+                )
+        return len(alert_ids)
+
+    def record_daily_summary(self, summary: dict[str, Any]) -> None:
+        required = {
+            "trade_date",
+            "generated_at",
+            "alert_count",
+            "top_sectors",
+            "repeated_candidates",
+            "closing_performance",
+            "fund_summary",
+            "health_summary",
+            "summary_text",
+            "version",
+        }
+        if missing := required - summary.keys():
+            raise ValueError(f"daily summary missing: {sorted(missing)}")
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO daily_summaries "
+                "(trade_date, generated_at, alert_count, top_sectors_json, "
+                "repeated_candidates_json, closing_performance_json, fund_summary, "
+                "health_summary, summary_text, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(summary["trade_date"]),
+                    str(summary["generated_at"]),
+                    int(summary["alert_count"]),
+                    json.dumps(summary["top_sectors"], ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        summary["repeated_candidates"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    json.dumps(
+                        summary["closing_performance"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    str(summary["fund_summary"]),
+                    str(summary["health_summary"]),
+                    str(summary["summary_text"]),
+                    str(summary["version"]),
+                ),
+            )
+
+    def get_daily_summary(self, trade_date: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT trade_date, generated_at, alert_count, top_sectors_json, "
+                "repeated_candidates_json, closing_performance_json, fund_summary, "
+                "health_summary, summary_text, version "
+                "FROM daily_summaries WHERE trade_date = ?",
+                (trade_date,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "trade_date": row[0],
+            "generated_at": row[1],
+            "alert_count": row[2],
+            "top_sectors": json.loads(row[3]),
+            "repeated_candidates": json.loads(row[4]),
+            "closing_performance": json.loads(row[5]),
+            "fund_summary": row[6],
+            "health_summary": row[7],
+            "summary_text": row[8],
+            "version": row[9],
+        }
+
+    def list_daily_summaries(self, *, since: date) -> list[dict[str, Any]]:
+        """Return recent daily summaries newest first without changing storage."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT trade_date, generated_at, alert_count, top_sectors_json, "
+                "repeated_candidates_json, closing_performance_json, fund_summary, "
+                "health_summary, summary_text, version "
+                "FROM daily_summaries WHERE trade_date >= ? "
+                "ORDER BY trade_date DESC",
+                (since.isoformat(),),
+            ).fetchall()
+        return [
+            {
+                "trade_date": row[0],
+                "generated_at": row[1],
+                "alert_count": row[2],
+                "top_sectors": json.loads(row[3]),
+                "repeated_candidates": json.loads(row[4]),
+                "closing_performance": json.loads(row[5]),
+                "fund_summary": row[6],
+                "health_summary": row[7],
+                "summary_text": row[8],
+                "version": row[9],
+            }
+            for row in rows
+        ]
+
+    def prune_daily_summaries(self, *, before: date) -> int:
+        """Delete summaries older than the Human Owner-approved 31-day window."""
+        if self.read_only:
+            raise RuntimeError("cannot prune daily summaries from a read-only store")
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM daily_summaries WHERE trade_date < ?",
+                (before.isoformat(),),
+            )
+        return max(cursor.rowcount, 0)
