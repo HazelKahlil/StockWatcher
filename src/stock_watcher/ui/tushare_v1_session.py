@@ -685,7 +685,7 @@ class TushareV1Session:
             )
             if existing is not None:
                 snapshot_id = existing.get("snapshot_id")
-                return int(snapshot_id) if snapshot_id is not None else None
+                return snapshot_id if isinstance(snapshot_id, int) else None
             decision = self._alert_policy.decide(self.batch, now, fixed)
             if decision.should_alert:
                 title = (

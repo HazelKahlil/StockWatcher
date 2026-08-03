@@ -25,7 +25,7 @@ from stock_watcher.runtime import (
     ScanOutcome,
     TushareV1Runtime,
 )
-from stock_watcher.security import CredentialStore, MemoryCredentialStore, PRIMARY_CREDENTIAL
+from stock_watcher.security import PRIMARY_CREDENTIAL, CredentialStore, MemoryCredentialStore
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
 

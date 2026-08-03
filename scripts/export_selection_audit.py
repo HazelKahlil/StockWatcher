@@ -7,7 +7,6 @@ from pathlib import Path
 
 from stock_watcher.storage import SQLiteStore
 
-
 AUDIT_FIELDS = (
     "scan_id",
     "completed_at",
