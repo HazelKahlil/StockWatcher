@@ -30,8 +30,8 @@
 
 ## 证据索引
 
-- 工程门、迁移、离线演练、冷启动和 Top3 审计：`/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/automation-repair-preapply-20260803-2203/engineering-gate/`；修复后最终工程门：`engineering-gate-after-a15e676/`。
-- App 构建归档：`app-build-a15e676-20260803-2240/dist/StockWatcher.app`；arm64、ad-hoc codesign PASS；嵌入 `SOURCE_COMMIT=a15e6766631d03e72de4dd9db31379b0b6fdb28d`；可执行文件 SHA-256 为 `39f40da51307d8c9a06e35152face597a94f548f693fac4586c56ee52fa7569b`。
+- 工程门、迁移、离线演练、冷启动和 Top3 审计：`/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/automation-repair-preapply-20260803-2203/engineering-gate/`；最终工程门见归档中的 `engineering-gate-final/`。
+- App 构建归档见 `app-build-final/dist/StockWatcher.app`；arm64、ad-hoc codesign PASS；`SOURCE_COMMIT`、seed 比对和可执行文件 SHA-256 见 `engineering-gate-final/app-build-final.txt`。
 - 真实 App 只读 UI：Token 状态显示“系统钥匙串已就绪”，未输出 Token；隔离 Replay App 的“开发信息”页显示相同 `SOURCE_COMMIT`。
 - 当前真实缓存的概念状态是 `concept_loaded=false`；这不是概念 Live 通过证据，下一交易日需单独验证。
 - 下一交易日 Mac Live 验收仍未完成；Mac 证据不得外推 Windows。
