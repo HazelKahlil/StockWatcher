@@ -1114,7 +1114,7 @@ def test_alert_history_daily_summary_and_v3_items_are_persisted(tmp_path: Path) 
     assert len(history) == 1
     with store.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM candidate_items").fetchone() == (3,)
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (3,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (4,)
 
     summary = DailySummaryEngine().generate(
         trade_date=now.date(),
@@ -1750,7 +1750,7 @@ def test_static_capability_429_does_not_block_cached_manual_realtime_scan(
     assert alert is not None and alert.title == "当前最新3只"
 
 
-def test_cached_session_waits_for_realtime_progression_before_full_scan(
+def test_cached_session_scans_while_realtime_probe_progresses(
     tmp_path: Path,
 ) -> None:
     now = timestamp().replace(hour=10, minute=15)
@@ -1818,12 +1818,12 @@ def test_cached_session_waits_for_realtime_progression_before_full_scan(
     session.manual_fetch()
 
     assert checks.starts == 1
-    assert fake.scan_calls == 0
-    assert session.data_gate_label == "实时批次检测中"
-    assert "realtime_quote" in session.health_detail
+    assert fake.scan_calls == 1
+    assert session.data_gate_label == "运行正常"
+    assert session.candidate_gate_label == "无新结果"
 
 
-def test_manual_fetch_stops_waiting_with_visible_60_second_result(
+def test_manual_fetch_does_not_wait_for_stalled_capability_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1901,7 +1901,7 @@ def test_manual_fetch_stops_waiting_with_visible_60_second_result(
 
     session.manual_fetch()
 
-    assert fake.scan_calls == 0
-    assert session.data_gate_label == "本次超过60秒"
-    assert session.candidate_gate_label == "尚无新结果"
-    assert session.last_fetch_detail == "本次超过60秒，未生成新Top3。"
+    assert fake.scan_calls == 1
+    assert session.data_gate_label == "运行正常"
+    assert session.candidate_gate_label == "无新结果"
+    assert session.last_fetch_detail == "不应执行扫描"

@@ -1,18 +1,45 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import subprocess
 from pathlib import Path
 
 project_root = Path(SPECPATH).parent
 assets_dir = project_root / "src" / "stock_watcher" / "ui" / "assets"
 macos_icon = assets_dir / "stockwatcher-macos.png"
 
+
+def _source_commit():
+    configured = os.environ.get("STOCKWATCHER_SOURCE_COMMIT", "").strip()
+    if configured:
+        return configured
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+provenance_dir = project_root / "build" / "provenance"
+provenance_dir.mkdir(parents=True, exist_ok=True)
+source_commit_file = provenance_dir / "SOURCE_COMMIT"
+source_commit_file.write_text(_source_commit() + "\n", encoding="utf-8")
+
+datas = [
+    (str(assets_dir / "stockwatcher-macos.png"), "stock_watcher/ui/assets"),
+    (str(assets_dir / "stockwatcher.png"), "stock_watcher/ui/assets"),
+    (str(source_commit_file), "stock_watcher"),
+]
+seed = os.environ.get("STOCKWATCHER_UNIVERSE_SEED_PATH", "").strip()
+if seed and Path(seed).is_file():
+    datas.append((str(Path(seed)), "stock_watcher/data/runtime-universe-seed.json"))
+
 analysis = Analysis(
     [str(project_root / "src" / "stock_watcher" / "__main__.py")],
     pathex=[str(project_root / "src")],
     binaries=[],
-    datas=[
-        (str(assets_dir / "stockwatcher-macos.png"), "stock_watcher/ui/assets"),
-        (str(assets_dir / "stockwatcher.png"), "stock_watcher/ui/assets"),
-    ],
+    datas=datas,
     hiddenimports=[
         "tushare",
         "tushare.stock",
@@ -25,6 +52,7 @@ analysis = Analysis(
         "stock_watcher.providers.tushare.super_transport",
         "stock_watcher.providers.tushare.unified_provider",
         "stock_watcher.runtime.data_health",
+        "stock_watcher.runtime.automation",
         "stock_watcher.runtime.market_session",
         "stock_watcher.runtime.post_close_pdf",
         "stock_watcher.runtime.post_close_review",

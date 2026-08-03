@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from threading import RLock
 from typing import Protocol
 
@@ -20,6 +21,7 @@ from stock_watcher.engine import (
     CandidateConfig,
     CandidateEngine,
     CandidatePipeline,
+    CandidateSelectionAudit,
     FundCapability,
     FundCapabilityResult,
     FundEngine,
@@ -49,6 +51,7 @@ from .universe_cache import (
     UniverseCacheError,
     UniverseCacheFailure,
     universe_is_current,
+    universe_is_usable,
 )
 
 
@@ -134,6 +137,7 @@ class ScanOutcome:
     failure_reason: str | None = None
     stale_excluded_count: int = 0
     unavailable_excluded_count: int = 0
+    selection_audit: CandidateSelectionAudit | None = None
 
 
 class TushareBootstrapLoader:
@@ -153,6 +157,7 @@ class TushareBootstrapLoader:
         self._stock_result: TransportResult | None = None
         self._daily_results: dict[date, TransportResult] = {}
         self._empty_daily_dates: set[date] = set()
+        self.last_concept_failure: str | None = None
 
     def load(self) -> RuntimeUniverse:
         now = _shanghai(self._clock())
@@ -416,10 +421,15 @@ class TushareBootstrapLoader:
         now: datetime,
     ) -> tuple[SectorMembership, ...]:
         """Best-effort same-provider concept load; absence never fakes a concept gate."""
+        self.last_concept_failure = None
         try:
             classification = self.provider.concept_classification(index_type="概念板块")
             bulk = self.provider.concept_components()
+        except ProviderError as error:
+            self.last_concept_failure = error.reason.value
+            return ()
         except Exception:
+            self.last_concept_failure = "concept-load-failed"
             return ()
         names: dict[str, str] = {}
         expected_counts: dict[str, int] = {}
@@ -474,6 +484,8 @@ class TushareBootstrapLoader:
                         result=bulk,
                     )
                 )
+        if not output:
+            self.last_concept_failure = "concept-incomplete"
         return tuple(output)
 
     def _corporate_action_codes(self, open_dates: tuple[date, ...]) -> set[str]:
@@ -547,6 +559,7 @@ class TushareV1Runtime:
         movement_detector: StrongMovementDetector | None = None,
         candidate_config: CandidateConfig | None = None,
         universe_cache: RuntimeUniverseCache | None = None,
+        universe_seed_path: Path | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.loader = loader
@@ -562,15 +575,32 @@ class TushareV1Runtime:
             app_version="0.4.0a1",
         )
         self.universe_cache = universe_cache
+        self.universe_seed_path = universe_seed_path
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._state_lock = RLock()
         self.universe: RuntimeUniverse | None = None
         self.universe_cache_failure: str | None = None
         if self.universe_cache is not None:
+            if self.universe_seed_path is not None:
+                try:
+                    self.universe_cache.install_seed(
+                        self.universe_seed_path,
+                        now=_shanghai(self._clock()),
+                    )
+                except UniverseCacheError as error:
+                    self.universe_cache_failure = f"seed:{error.reason.value}"
             try:
                 self.universe = self.universe_cache.load(now=_shanghai(self._clock()))
             except UniverseCacheError as error:
                 self.universe_cache_failure = error.reason.value
+                if error.reason is UniverseCacheFailure.STALE:
+                    try:
+                        self.universe = self.universe_cache.load(
+                            now=_shanghai(self._clock()),
+                            allow_stale=True,
+                        )
+                    except UniverseCacheError:
+                        self.universe = None
 
     def prepare(self) -> RuntimeUniverse:
         """Refresh static context outside the critical realtime scan path.
@@ -578,22 +608,25 @@ class TushareV1Runtime:
         The provider work happens before the state swap. A failed refresh therefore
         preserves the previous verified universe and its on-disk cache.
         """
-        cold_start = (
-            self.universe is None
-            and self.universe_cache_failure in {None, UniverseCacheFailure.MISSING.value}
-        )
+        cold_start = self.universe is None
         fresh = self.loader.load()
         if self.universe_cache is not None:
             self.universe_cache.save(fresh)
         with self._state_lock:
-            self.buffer.clear()
-            self.pipeline.reset()
-            self.stable_selector.reset()
-            self.movement_detector.reset()
             if cold_start:
+                self.buffer.clear()
+                self.pipeline.reset()
+                self.stable_selector.reset()
+                self.movement_detector.reset()
                 self.health.reset_for_initial()
             else:
-                self.health.reset_for_recovery()
+                # A routine static-context refresh must not erase the live
+                # minute buffer or the visible stable Top3.  That reset was the
+                # main reason one- or two-minute manual clicks returned wholly
+                # different warm-up supplements.  The next scan naturally
+                # applies the new industry/concept/trend context to the retained
+                # realtime series.
+                self.pipeline.reset()
             self.universe = fresh
             self.universe_cache_failure = None
         return fresh
@@ -602,6 +635,11 @@ class TushareV1Runtime:
         with self._state_lock:
             universe = self.universe
         return universe is not None and universe_is_current(universe, now=now)
+
+    def universe_is_usable(self, now: datetime) -> bool:
+        with self._state_lock:
+            universe = self.universe
+        return universe is not None and universe_is_usable(universe, now=now)
 
     def request_scan_cancellation(self) -> None:
         self.coordinator.cancel_current_scan()
@@ -684,6 +722,12 @@ class TushareV1Runtime:
             self.candidate_config,
         )
         if raw is None or len(raw.candidates) < 3:
+            audit = self.candidate_engine.build_selection_audit(
+                inputs,
+                raw,
+                None,
+                self.candidate_config,
+            )
             self.health.fail()
             return ScanOutcome(
                 HealthState.STOPPED,
@@ -698,6 +742,7 @@ class TushareV1Runtime:
                 failure_reason="candidates",
                 stale_excluded_count=scan.stale_excluded_count,
                 unavailable_excluded_count=scan.unavailable_excluded_count,
+                selection_audit=audit,
             )
         current_codes = tuple(
             candidate.code for candidate in self.stable_selector.current
@@ -720,6 +765,12 @@ class TushareV1Runtime:
             current_candidates=current_candidates,
             now=scan.completed_at,
             force=strong_event is not None,
+        )
+        audit = self.candidate_engine.build_selection_audit(
+            inputs,
+            raw,
+            stable,
+            self.candidate_config,
         )
         excluded_count = (
             scan.stale_excluded_count + scan.unavailable_excluded_count
@@ -746,6 +797,7 @@ class TushareV1Runtime:
             scan.source_span_seconds,
             stale_excluded_count=scan.stale_excluded_count,
             unavailable_excluded_count=scan.unavailable_excluded_count,
+            selection_audit=audit,
         )
 
 

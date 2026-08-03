@@ -33,6 +33,7 @@ class DailySummaryEngine:
         trade_date: date,
         generated_at: datetime,
         alert_history: list[dict[str, Any]],
+        observation_history: list[dict[str, Any]] | None = None,
         closing_prices: dict[str, float] | None = None,
         health_interruption_count: int = 0,
         version: str = "daily-summary-v1",
@@ -43,7 +44,8 @@ class DailySummaryEngine:
         appearances: Counter[str] = Counter()
         first_prices: dict[str, float] = {}
         fund_labels: Counter[str] = Counter()
-        for alert in alert_history:
+        source_history = alert_history or (observation_history or [])
+        for alert in source_history:
             for candidate in _candidates(alert.get("payload_json")):
                 code = str(candidate.get("code", ""))
                 if not code:
@@ -99,8 +101,13 @@ class DailySummaryEngine:
             if repeated
             else "无多次重复股票"
         )
+        observation_copy = (
+            f"今日共形成 {len(alert_history)} 次观察提醒"
+            if alert_history
+            else f"今日保留 {len(source_history)} 轮自动观察记录"
+        )
         summary_text = (
-            f"今日共形成 {len(alert_history)} 次观察提醒，重点板块为{sector_copy}；"
+            f"{observation_copy}，重点板块为{sector_copy}；"
             f"{repeated_copy}。{fund_summary}{health_summary}"
         )
         return DailySummary(

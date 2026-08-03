@@ -51,3 +51,15 @@ def report_directory_for_database(database: Path) -> Path:
 def universe_cache_path_for_database(database: Path) -> Path:
     """Keep static market context beside SQLite without putting it inside the DB."""
     return database.parent / "runtime-universe-v1.json"
+
+
+def packaged_universe_seed_path() -> Path | None:
+    """Return an optional build-time universe seed bundled with the internal App."""
+    candidates: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if isinstance(meipass, str):
+        candidates.append(Path(meipass) / "stock_watcher" / "data" / "runtime-universe-seed.json")
+    candidates.append(
+        Path(__file__).resolve().parent / "data" / "runtime-universe-seed.json"
+    )
+    return next((path for path in candidates if path.is_file()), None)

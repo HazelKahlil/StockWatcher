@@ -8,7 +8,14 @@ from .alerts import (
     StrongMovementDetector,
     StrongMovementEvent,
 )
-from .candidates import Candidate, CandidateBatch, CandidateConfig, CandidateEngine
+from .candidates import (
+    Candidate,
+    CandidateAuditRow,
+    CandidateBatch,
+    CandidateConfig,
+    CandidateEngine,
+    CandidateSelectionAudit,
+)
 from .daily_summary import DailySummary, DailySummaryEngine
 from .feature_engine import FeatureConfig, MarketSnapshotBuffer, SnapshotSequenceError
 from .fund_engine import FundCapability, FundCapabilityResult, FundEngine
@@ -32,9 +39,11 @@ __all__ = [
     "StrongMovementDetector",
     "StrongMovementEvent",
     "Candidate",
+    "CandidateAuditRow",
     "CandidateBatch",
     "CandidateConfig",
     "CandidateEngine",
+    "CandidateSelectionAudit",
     "DailySummary",
     "DailySummaryEngine",
     "FeatureConfig",

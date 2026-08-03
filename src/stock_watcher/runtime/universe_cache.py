@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -118,11 +119,17 @@ class RuntimeUniverseCache:
 
     minimum_profile_count = 100
     maximum_age = timedelta(days=8)
+    maximum_degraded_age = timedelta(days=30)
 
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def load(self, *, now: datetime) -> RuntimeUniverse:
+    def load(
+        self,
+        *,
+        now: datetime,
+        allow_stale: bool = False,
+    ) -> RuntimeUniverse:
         if not self.path.is_file():
             raise UniverseCacheError(UniverseCacheFailure.MISSING)
         try:
@@ -143,8 +150,38 @@ class RuntimeUniverseCache:
             raise UniverseCacheError(UniverseCacheFailure.STALE)
         universe = _to_universe(unsigned)
         _validate_structure(universe, minimum_profiles=self.minimum_profile_count)
-        _validate_freshness(universe, now=_shanghai(now), maximum_age=self.maximum_age)
+        _validate_freshness(
+            universe,
+            now=_shanghai(now),
+            maximum_age=(
+                self.maximum_degraded_age if allow_stale else self.maximum_age
+            ),
+            require_expected_trend=not allow_stale,
+        )
         return universe
+
+    def install_seed(self, seed_path: Path, *, now: datetime) -> bool:
+        """Install one validated non-secret seed only when the user cache is absent.
+
+        The seed is a build artifact, not a tracked repository file.  It lets a
+        newly installed internal App start realtime observation immediately,
+        while the ordinary Pro route refreshes stock/sector/trend context in the
+        background.  Existing user cache is never overwritten.
+        """
+        if self.path.exists() or not seed_path.is_file():
+            return False
+        seed = RuntimeUniverseCache(seed_path)
+        seed.load(now=_shanghai(now), allow_stale=True)
+        temporary = self.path.with_suffix(self.path.suffix + ".seed.tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(seed_path, temporary)
+            os.chmod(temporary, 0o600)
+            temporary.replace(self.path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise UniverseCacheError(UniverseCacheFailure.IO) from None
+        return True
 
     def save(self, universe: RuntimeUniverse) -> None:
         _validate_structure(universe, minimum_profiles=self.minimum_profile_count)
@@ -181,6 +218,25 @@ def universe_is_current(universe: RuntimeUniverse, *, now: datetime) -> bool:
             universe,
             now=_shanghai(now),
             maximum_age=RuntimeUniverseCache.maximum_age,
+            require_expected_trend=True,
+        )
+    except UniverseCacheError:
+        return False
+    return True
+
+
+def universe_is_usable(universe: RuntimeUniverse, *, now: datetime) -> bool:
+    """Whether verified static context is safe for degraded realtime use."""
+    try:
+        _validate_structure(
+            universe,
+            minimum_profiles=RuntimeUniverseCache.minimum_profile_count,
+        )
+        _validate_freshness(
+            universe,
+            now=_shanghai(now),
+            maximum_age=RuntimeUniverseCache.maximum_degraded_age,
+            require_expected_trend=False,
         )
     except UniverseCacheError:
         return False
@@ -349,6 +405,7 @@ def _validate_freshness(
     *,
     now: datetime,
     maximum_age: timedelta,
+    require_expected_trend: bool,
 ) -> None:
     generated_at = universe.generated_at
     trend_through = universe.trend_through_date
@@ -357,9 +414,10 @@ def _validate_freshness(
     age = now - generated_at
     if age < -timedelta(minutes=5) or age > maximum_age:
         raise UniverseCacheError(UniverseCacheFailure.STALE)
-    expected = _expected_trend_through(universe.open_dates, now)
-    if expected is None or trend_through != expected:
-        raise UniverseCacheError(UniverseCacheFailure.STALE)
+    if require_expected_trend:
+        expected = _expected_trend_through(universe.open_dates, now)
+        if expected is None or trend_through != expected:
+            raise UniverseCacheError(UniverseCacheFailure.STALE)
 
 
 def _expected_trend_through(

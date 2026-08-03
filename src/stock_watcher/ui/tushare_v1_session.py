@@ -18,9 +18,11 @@ from stock_watcher.engine import (
     AlertPolicy,
     AlertTrigger,
     CandidateBatch,
+    DailySummaryEngine,
     FundCapability,
 )
 from stock_watcher.paths import (
+    packaged_universe_seed_path,
     report_directory_for_database,
     universe_cache_path_for_database,
 )
@@ -43,6 +45,10 @@ from stock_watcher.providers.tushare.provider import TushareProvider
 from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
 from stock_watcher.providers.tushare.super_transport import SuperTransport
 from stock_watcher.runtime import (
+    AutomationPlanner,
+    AutomationTaskSpec,
+    AutomationTaskState,
+    AutomationTaskType,
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
@@ -155,6 +161,7 @@ class TushareV1Session:
         self._post_close_fallback_provider = post_close_fallback_provider
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._schedule = MarketSessionSchedule()
+        self._automation = AutomationPlanner()
         self._alert_policy = AlertPolicy()
         self._runtime: TushareV1Runtime | None = None
         self._provider: Tushare15000Provider | None = None
@@ -298,7 +305,9 @@ class TushareV1Session:
                     and self.batch is not None
                     and len(self.batch.candidates) == 3
                 ):
-                    return
+                    if self._manual_result_ready(outcome, deadline=deadline):
+                        self._publish_manual_result(outcome)
+                        return
                 if outcome is not None and outcome.health is HealthState.STOPPED:
                     return
                 if not self._manual_should_wait():
@@ -309,6 +318,51 @@ class TushareV1Session:
                 sleep_seconds(0.2)
         finally:
             self._manual_started_monotonic = None
+
+    def _manual_result_ready(
+        self,
+        outcome: ScanOutcome,
+        *,
+        deadline: float,
+    ) -> bool:
+        audit = outcome.selection_audit
+        if audit is not None and audit.display_velocity_ready:
+            return True
+        # A single click is allowed to perform several bounded scans.  This
+        # avoids returning a cold-start supplement as if it were the same
+        # confidence as a warmed ranking, while preserving the 60-second UI
+        # contract when a real minute baseline is not yet available.
+        if self._manual_scan_round >= self._manual_required_scan_cycles():
+            return True
+        return monotonic_time() >= deadline
+
+    def _publish_manual_result(self, outcome: ScanOutcome) -> None:
+        if self.batch is None or len(self.batch.candidates) != 3:
+            return
+        snapshot_id = self.store.record_batch(self.batch)
+        audit = outcome.selection_audit
+        confirmed = bool(audit is None or audit.display_velocity_ready)
+        if confirmed:
+            subtitle = (
+                "本轮整体偏弱"
+                if self.batch.overall_weak
+                else "正式确认Top3"
+            )
+        else:
+            subtitle = "即时预览｜涨速尚未完全确认"
+        if self.pending_alert is None:
+            self.pending_alert = PendingUiAlert(
+                title="当前最新3只",
+                subtitle=subtitle,
+                trigger_type="manual",
+            )
+        # Manual observations are deliberately retained even when no alert
+        # event references them.  The history pruning fix keeps this snapshot
+        # for the full 30-day audit window.
+        self.last_fetch_detail = (
+            f"本次已保存观察 #{snapshot_id}；"
+            + ("涨速窗口已就绪。" if confirmed else "稍后将由持续扫描自动确认。")
+        )
 
     def consume_pending_alert(self) -> PendingUiAlert | None:
         pending = self.pending_alert
@@ -324,10 +378,41 @@ class TushareV1Session:
         now = _shanghai(self._clock())
         self._prune_history_if_due(now)
         self.phase_label = _visible_phase(now)
+        due_tasks = self._prepare_automation_tasks(now)
+        summary_task = next(
+            (
+                spec
+                for spec in due_tasks
+                if spec.task_type is AutomationTaskType.SUMMARY_1530
+            ),
+            None,
+        )
+        fixed_task = next(
+            (
+                spec
+                for spec in due_tasks
+                if spec.task_type
+                in {AutomationTaskType.FIXED_0945, AutomationTaskType.FIXED_1445}
+            ),
+            None,
+        )
+        forced_fixed = _alert_trigger_for_task(fixed_task)
+        requested_trigger = (
+            fixed_task.task_type.value
+            if fixed_task is not None
+            else ("manual" if manual_request else "automatic")
+        )
         if self._is_network_interrupted():
             # Qt's reachability signal already placed the UI in STOPPED.  The
             # scheduled worker must not probe or scan again until a positive
             # recovery signal has cleared this external interruption.
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail="平台报告网络中断；未发起实时请求。",
+                health=HealthState.STOPPED,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
             return None
         self.last_connection_check = now
         if self.settings.mode is not DataSourceMode.TUSHARE_15000:
@@ -338,10 +423,28 @@ class TushareV1Session:
             self.candidate_gate_label = "保留上次结果" if self.batch else "暂停"
             self.health_detail = self.connection_detail
             self.status_issues = (self.connection_detail,)
+            self._fail_fixed_task(fixed_task, now, self.connection_detail)
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail=self.connection_detail,
+                health=HealthState.WARMING,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
             return None
         secret_present = self._primary_present()
         if not secret_present:
+            if summary_task is not None:
+                self._execute_summary_task(now, summary_task)
             self._set_missing_credential()
+            self._fail_fixed_task(fixed_task, now, self.connection_detail)
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail=self.connection_detail,
+                health=HealthState.WARMING,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
             return None
         self._apply_pending_platform_recovery()
         if self._runtime is None or self._provider is None:
@@ -355,34 +458,78 @@ class TushareV1Session:
             ):
                 self._prepared_date = now.date()
         assert self._runtime is not None
-        if self._schedule.summary_due(now) and self._is_open_date(now):
-            # At 15:30 today's completed daily bar makes the intraday universe
-            # intentionally stale. Generate the close report before starting
-            # that cache refresh, otherwise a Pro 429 can hide the report gate.
-            self._generate_summary(now)
+        if summary_task is not None:
+            self._execute_summary_task(now, summary_task)
         self._poll_universe_refresh(now)
+        if (
+            self._runtime.universe is not None
+            and not self._runtime.universe.concept_loaded
+            and (
+                self._universe_retry_at is None
+                or now >= self._universe_retry_at
+            )
+        ):
+            # Concept membership is optional for realtime continuity but is a
+            # real V1 selection capability. Retry it in the low-priority static
+            # lane while the last verified industry context keeps scans alive.
+            self._start_universe_refresh(now)
         if self.capability_checks is not None and self._runtime.universe is not None:
             self.capability_checks.seed_realtime_codes(
                 security.code for security in self._runtime.universe.securities
             )
-        if not _runtime_universe_is_current(self._runtime, now):
+        universe_current = _runtime_universe_is_current(self._runtime, now)
+        universe_usable = _runtime_universe_is_usable(self._runtime, now)
+        if not universe_current:
             self._start_universe_refresh(now)
-            self._set_universe_warming(now)
-            return None
+            if not universe_usable:
+                self._set_universe_warming(now)
+                self._fail_fixed_task(fixed_task, now, self.health_detail)
+                self._record_scan_skip(
+                    now,
+                    trigger_type=requested_trigger,
+                    detail=self.health_detail,
+                    health=HealthState.WARMING,
+                    task_key=fixed_task.task_key if fixed_task else None,
+                )
+                return None
+            self.status_issues = tuple(
+                dict.fromkeys(
+                    (
+                        *self.status_issues,
+                        "基础缓存正在后台刷新；本轮使用最近一次可用行业、概念和三日数据。",
+                    )
+                )
+            )
         if (
             self.capability_checks is not None
             and self._capability_checks_required
             and not _realtime_capabilities_ready(self.capability_checks.statuses())
         ):
+            # Capability probes are diagnostics, not a production data gate.
+            # The previous build refused to scan until 1/100/300/800 probe
+            # statuses were all green; one transient 429 could therefore erase
+            # the entire trading day, including 09:45 and 14:45.  Start the
+            # probes in the background and let the actual full-market scan be
+            # the authoritative capability check.
             self.capability_checks.start_realtime_background()
-            self._set_realtime_capability_warming()
-            return None
+            self.status_issues = tuple(
+                dict.fromkeys(
+                    (
+                        *self.status_issues,
+                        "实时能力后台检测中；本轮仍以真实全市场扫描作为权威验证。",
+                    )
+                )
+            )
         open_dates = (
             self._runtime.universe.open_dates
             if self._runtime.universe is not None
             else ()
         )
-        if not force and not self._schedule.is_trading(now, open_dates):
+        if (
+            fixed_task is None
+            and not force
+            and not _session_is_trading(self._schedule, now, open_dates)
+        ):
             if self.capability_checks is not None:
                 self.capability_checks.start_background()
             self.state = HealthState.WARMING
@@ -398,6 +545,8 @@ class TushareV1Session:
                 else ()
             )
             return None
+        if fixed_task is not None:
+            self._mark_task_running(fixed_task, now)
         self.last_fetch_at = now
         outcome = self._runtime.scan_once()
         if self._is_network_interrupted():
@@ -442,20 +591,24 @@ class TushareV1Session:
             )
         elif outcome.health is HealthState.HEALTHY:
             self.data_gate_label = "运行正常"
-            self.candidate_gate_label = "3只观察"
             self.phase_label = _phase(now)
-            fund_issue = "资金未确认，本轮只使用价格、板块和三日趋势。"
-            if (
-                self._runtime.universe is not None
-                and self._runtime.universe.fund_capability.capability
-                is FundCapability.DAILY_ONLY
-            ):
-                fund_issue = "资金接口仅有日级数据，不作为盘中增强依据。"
-            self.status_issues = (
-                (fund_issue,)
-                if outcome.batch and outcome.batch.fund_module == "unavailable"
-                else ()
-            )
+            if outcome.batch is None or len(outcome.batch.candidates) != 3:
+                self.candidate_gate_label = "无新结果"
+                self.status_issues = ("本轮实时扫描完成，但没有形成合规三只。",)
+            else:
+                self.candidate_gate_label = "3只观察"
+                fund_issue = "资金未确认，本轮只使用价格、板块和三日趋势。"
+                if (
+                    self._runtime.universe is not None
+                    and self._runtime.universe.fund_capability.capability
+                    is FundCapability.DAILY_ONLY
+                ):
+                    fund_issue = "资金接口仅有日级数据，不作为盘中增强依据。"
+                self.status_issues = (
+                    (fund_issue,)
+                    if outcome.batch.fund_module == "unavailable"
+                    else ()
+                )
         elif outcome.health is HealthState.WARMING:
             required_cycles = self._manual_required_scan_cycles()
             self.data_gate_label = "正在准备"
@@ -468,29 +621,47 @@ class TushareV1Session:
             self.candidate_gate_label = "保留上次结果" if self.batch else "无新结果"
             self.status_issues = ("本轮未生成新候选。",)
         completed_at = _shanghai(self._clock())
-        crossed = self._schedule.crossed_fixed_trigger(now, completed_at)
-        self._evaluate_alerts(
-            now if self._schedule.fixed_trigger(now) is not None else completed_at,
-            outcome.strong_event,
-            forced_fixed=crossed,
+        scan_trigger = (
+            fixed_task.task_type.value
+            if fixed_task is not None
+            else ("manual" if manual_request else "automatic")
         )
-        if (
-            manual_request
-            and outcome.health is HealthState.HEALTHY
-            and self.batch is not None
-            and len(self.batch.candidates) == 3
-            and self.pending_alert is None
-        ):
-            self.store.record_batch(self.batch)
-            self.pending_alert = PendingUiAlert(
-                title="当前最新3只",
-                subtitle=(
-                    "本轮整体偏弱"
-                    if self.batch.overall_weak
-                    else "本次手动获取已完成"
-                ),
-                trigger_type="manual",
-            )
+        self._record_scan_run(
+            outcome,
+            started_at=now,
+            completed_at=completed_at,
+            trigger_type=scan_trigger,
+            task_key=fixed_task.task_key if fixed_task is not None else None,
+        )
+        crossed = (
+            None
+            if fixed_task is not None
+            else self._schedule.crossed_fixed_trigger(now, completed_at)
+        )
+        snapshot_id = self._evaluate_alerts(
+            completed_at,
+            outcome.strong_event,
+            forced_fixed=forced_fixed or crossed,
+        )
+        completed_fixed_task = fixed_task or _automation_spec_for_trigger(
+            self._automation,
+            crossed,
+            completed_at.date(),
+        )
+        if completed_fixed_task is not None:
+            if snapshot_id is not None:
+                self._mark_task_succeeded(
+                    completed_fixed_task,
+                    completed_at,
+                    snapshot_id=snapshot_id,
+                )
+            else:
+                self._fail_fixed_task(
+                    completed_fixed_task,
+                    completed_at,
+                    outcome.detail,
+                    increment_attempt=False,
+                )
         return outcome
 
     def _evaluate_alerts(
@@ -499,16 +670,22 @@ class TushareV1Session:
         strong_event: object | None,
         *,
         forced_fixed: AlertTrigger | None = None,
-    ) -> None:
+    ) -> int | None:
         if self.batch is None or len(self.batch.candidates) != 3:
-            return
+            return None
         fixed = forced_fixed or self._schedule.fixed_trigger(now)
         if fixed is not None:
-            if any(
-                row.get("trigger_type") == fixed.value
-                for row in self._today_alerts(now)
-            ):
-                return
+            existing = next(
+                (
+                    row
+                    for row in self._today_alerts(now)
+                    if row.get("trigger_type") == fixed.value
+                ),
+                None,
+            )
+            if existing is not None:
+                snapshot_id = existing.get("snapshot_id")
+                return int(snapshot_id) if snapshot_id is not None else None
             decision = self._alert_policy.decide(self.batch, now, fixed)
             if decision.should_alert:
                 title = (
@@ -521,19 +698,25 @@ class TushareV1Session:
                     if self.state is not HealthState.HEALTHY
                     else ("本轮整体偏弱" if self.batch.overall_weak else "当前最新3只")
                 )
-                self._record_alert(now, fixed, decision.reason, title, subtitle)
-            return
+                return self._record_alert(
+                    now,
+                    fixed,
+                    decision.reason,
+                    title,
+                    subtitle,
+                )
+            return None
         from stock_watcher.engine import StrongMovementEvent
 
         if not isinstance(strong_event, StrongMovementEvent):
-            return
+            return None
         today_intraday = [
             row
             for row in self._today_alerts(now)
             if row.get("trigger_type") == AlertTrigger.INTRADAY.value
         ]
         if len(today_intraday) >= self._alert_policy.config.daily_limit:
-            return
+            return None
         cooldown_cutoff = now - self._alert_policy.config.cooldown
         for row in today_intraday:
             displayed = _parsed_datetime(row.get("displayed_at"))
@@ -542,7 +725,7 @@ class TushareV1Session:
             if set(strong_event.triggering_codes) & _payload_codes(
                 row.get("payload_json")
             ):
-                return
+                return None
         decision = self._alert_policy.decide(
             self.batch,
             now,
@@ -557,13 +740,14 @@ class TushareV1Session:
                 if strong_event.funds_unconfirmed
                 else "个股、板块与资金同步增强"
             )
-            self._record_alert(
+            return self._record_alert(
                 now,
                 AlertTrigger.INTRADAY,
                 decision.reason,
                 "盘中强异动",
                 subtitle,
             )
+        return None
 
     def _today_alerts(self, now: datetime) -> list[dict[str, object]]:
         return [
@@ -572,6 +756,179 @@ class TushareV1Session:
             if str(row.get("displayed_at", "")).startswith(now.date().isoformat())
         ]
 
+    def _prepare_automation_tasks(
+        self,
+        now: datetime,
+    ) -> tuple[AutomationTaskSpec, ...]:
+        """Persist daily obligations and return those currently executable."""
+        if now.date().weekday() >= 5:
+            return ()
+        for spec in self._automation.for_date(now.date()):
+            self.store.ensure_automation_task(
+                {
+                    "task_key": spec.task_key,
+                    "task_type": spec.task_type.value,
+                    "trade_date": spec.trade_date.isoformat(),
+                    "target_at": spec.target_at.isoformat(),
+                    "deadline_at": spec.deadline_at.isoformat(),
+                    "state": AutomationTaskState.PLANNED.value,
+                    "updated_at": now.isoformat(),
+                    "detail": "等待目标时间。",
+                }
+            )
+        self._expire_automation_tasks(now)
+        due: list[AutomationTaskSpec] = []
+        for spec in self._automation.due(now):
+            saved = self.store.get_automation_task(spec.task_key)
+            if saved is None:
+                continue
+            if saved["state"] == AutomationTaskState.SUCCEEDED.value:
+                continue
+            due.append(spec)
+        return tuple(due)
+
+    def _expire_automation_tasks(self, now: datetime) -> None:
+        for task in self.store.list_automation_tasks(now.date().isoformat()):
+            if task["state"] == AutomationTaskState.SUCCEEDED.value:
+                continue
+            deadline = _parsed_datetime(task.get("deadline_at"))
+            if deadline is None or now <= deadline:
+                continue
+            self.store.update_automation_task(
+                str(task["task_key"]),
+                state=AutomationTaskState.FAILED.value,
+                updated_at=now.isoformat(),
+                detail="超过产品截止时间仍未成功；保留失败证据。",
+            )
+
+    def _mark_task_running(self, spec: AutomationTaskSpec, now: datetime) -> None:
+        self.store.update_automation_task(
+            spec.task_key,
+            state=AutomationTaskState.RUNNING.value,
+            updated_at=now.isoformat(),
+            detail="高优先级任务已开始。",
+            increment_attempt=True,
+        )
+
+    def _mark_task_succeeded(
+        self,
+        spec: AutomationTaskSpec,
+        now: datetime,
+        *,
+        snapshot_id: int | None = None,
+        detail: str = "任务已完成。",
+    ) -> None:
+        self.store.update_automation_task(
+            spec.task_key,
+            state=AutomationTaskState.SUCCEEDED.value,
+            updated_at=now.isoformat(),
+            detail=detail,
+            snapshot_id=snapshot_id,
+        )
+
+    def _fail_fixed_task(
+        self,
+        spec: AutomationTaskSpec | None,
+        now: datetime,
+        detail: str,
+        *,
+        increment_attempt: bool = True,
+    ) -> None:
+        if spec is None:
+            return
+        # A failed attempt remains auditable and can retry while the deadline
+        # is still open.  The planner will promote it back to RUNNING on the
+        # next session tick rather than silently losing the fixed obligation.
+        self.store.update_automation_task(
+            spec.task_key,
+            state=AutomationTaskState.FAILED.value,
+            updated_at=now.isoformat(),
+            detail=detail,
+            increment_attempt=increment_attempt,
+        )
+
+    def _record_scan_run(
+        self,
+        outcome: ScanOutcome,
+        *,
+        started_at: datetime,
+        completed_at: datetime,
+        trigger_type: str,
+        task_key: str | None,
+    ) -> int:
+        batch = outcome.batch
+        raw = outcome.raw_batch
+        source_ts = (
+            batch.source_ts.isoformat()
+            if batch is not None
+            else (raw.source_ts.isoformat() if raw is not None else None)
+        )
+        audit = outcome.selection_audit
+        return self.store.record_scan_run(
+            {
+                "started_at": started_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
+                "trigger_type": trigger_type,
+                "task_key": task_key,
+                "health": outcome.health.value,
+                "source_ts": source_ts,
+                "coverage_ratio": outcome.coverage_ratio,
+                "elapsed_seconds": outcome.elapsed_seconds,
+                "source_age_seconds": outcome.source_age_seconds,
+                "detail": outcome.detail,
+                "raw_batch_json": raw.trace_payload() if raw is not None else None,
+                "stable_batch_json": batch.trace_payload() if batch is not None else None,
+                "audit_json": audit.trace_payload() if audit is not None else "{}",
+            }
+        )
+
+    def _record_scan_skip(
+        self,
+        now: datetime,
+        *,
+        trigger_type: str,
+        detail: str,
+        health: HealthState,
+        task_key: str | None,
+    ) -> int:
+        return self.store.record_scan_run(
+            {
+                "started_at": now.isoformat(),
+                "completed_at": now.isoformat(),
+                "trigger_type": trigger_type,
+                "task_key": task_key,
+                "health": health.value,
+                "detail": detail,
+                "audit_json": json.dumps(
+                    {"skip_reason": detail},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            }
+        )
+
+    def _execute_summary_task(
+        self,
+        now: datetime,
+        spec: AutomationTaskSpec,
+    ) -> None:
+        if self._summary_retry_at is not None and now < self._summary_retry_at:
+            return
+        self._mark_task_running(spec, now)
+        if self._generate_summary(now):
+            self._mark_task_succeeded(
+                spec,
+                now,
+                detail="15:30本地总结已生成；外部增强可降级。",
+            )
+            return
+        self.store.update_automation_task(
+            spec.task_key,
+            state=AutomationTaskState.FAILED.value,
+            updated_at=now.isoformat(),
+            detail=self._summary_issue or "盘后总结生成失败。",
+        )
+
     def _record_alert(
         self,
         now: datetime,
@@ -579,7 +936,7 @@ class TushareV1Session:
         decision: str,
         title: str,
         subtitle: str,
-    ) -> None:
+    ) -> int:
         assert self.batch is not None
         snapshot_id = self.store.record_batch(self.batch)
         self.store.record_alert_event(
@@ -594,80 +951,147 @@ class TushareV1Session:
             subtitle=subtitle,
             trigger_type=trigger.value,
         )
+        return snapshot_id
 
-    def _generate_summary(self, now: datetime) -> None:
+    def _generate_summary(self, now: datetime) -> bool:
+        """Generate the 15:30 summary with a local-first fallback.
+
+        External daily/sector enrichment is useful but it must never erase the
+        product obligation.  Any day with real scan or alert activity receives
+        a deterministic local summary even when Pro endpoints, calendars or
+        optional reports are unavailable.
+        """
         trade_date = now.date().isoformat()
-        if self._summary_date == trade_date:
-            return
+        if self._summary_date == trade_date or self.store.get_daily_summary(trade_date):
+            self._summary_date = trade_date
+            return True
         if self._summary_retry_at is not None and now < self._summary_retry_at:
-            return
-        if self._provider is None:
-            return
+            return False
         history = [
             row
             for row in self.store.list_alert_history(now=now, days=1)
             if str(row.get("displayed_at", "")).startswith(trade_date)
         ]
         interruption_count = self.store.count_health_interruptions(trade_date)
-        try:
-            collection = collect_post_close_review(
-                self._provider,
-                trade_date=now.date(),
-                generated_at=now,
-            )
-        except Exception:
-            fallback = (
-                self._post_close_fallback_provider
-                or self._build_super_post_close_provider()
-            )
-            if fallback is None:
-                self._set_summary_retry(now)
-                return
+
+        # Prefer the richer static post-close report when it is available.
+        collection = None
+        if self._provider is not None:
             try:
                 collection = collect_post_close_review(
-                    fallback,
+                    self._provider,
                     trade_date=now.date(),
                     generated_at=now,
                 )
             except Exception:
-                self._set_summary_retry(now)
-                return
-            collection = replace(
-                collection,
-                optional_failures=tuple(
-                    dict.fromkeys(
-                        (
-                            *collection.optional_failures,
-                            "primary_ordinary_pro_rate_limited",
-                            "super_static_advanced_diagnostic_fallback",
+                fallback = (
+                    self._post_close_fallback_provider
+                    or self._build_super_post_close_provider()
+                )
+                if fallback is not None:
+                    try:
+                        collection = collect_post_close_review(
+                            fallback,
+                            trade_date=now.date(),
+                            generated_at=now,
                         )
-                    )
-                ),
-                retrospective_only=True,
-            )
-        try:
-            summary = application_summary_record(
-                collection,
-                alert_count=len(history),
+                    except Exception:
+                        collection = None
+                    else:
+                        collection = replace(
+                            collection,
+                            optional_failures=tuple(
+                                dict.fromkeys(
+                                    (
+                                        *collection.optional_failures,
+                                        "primary_ordinary_pro_unavailable",
+                                        "super_static_advanced_diagnostic_fallback",
+                                    )
+                                )
+                            ),
+                            retrospective_only=True,
+                        )
+        if collection is not None:
+            try:
+                summary = application_summary_record(
+                    collection,
+                    alert_count=len(history),
+                    health_interruption_count=interruption_count,
+                )
+                self.store.record_daily_summary(summary)
+                write_post_close_report(
+                    collection,
+                    reports_dir=report_directory_for_database(self.store.path),
+                    alert_count=len(history),
+                    health_interruption_count=interruption_count,
+                    alert_timeline=alert_timeline_records(history),
+                )
+            except Exception:
+                collection = None
+
+        if collection is None:
+            observations = self._local_summary_observations(trade_date)
+            if not history and not observations:
+                self._set_summary_retry(now)
+                return False
+            summary = DailySummaryEngine().generate(
+                trade_date=now.date(),
+                generated_at=now,
+                alert_history=history,
+                observation_history=observations,
                 health_interruption_count=interruption_count,
-            )
-            self.store.record_daily_summary(summary)
-            write_post_close_report(
-                collection,
-                reports_dir=report_directory_for_database(self.store.path),
-                alert_count=len(history),
-                health_interruption_count=interruption_count,
-                alert_timeline=alert_timeline_records(history),
-            )
-            self.store.prune_daily_summaries(
-                before=now.date() - timedelta(days=30)
-            )
-        except Exception:
-            self._set_summary_retry(now)
-            return
+                version="daily-summary-local-fallback-v1",
+            ).as_record()
+            try:
+                self.store.record_daily_summary(summary)
+                self._write_local_summary_report(summary)
+            except Exception:
+                self._set_summary_retry(now)
+                return False
+
+        self.store.prune_daily_summaries(before=now.date() - timedelta(days=30))
         self._summary_date = trade_date
         self._summary_retry_at = None
         self._summary_issue = None
+        return True
+
+    def _local_summary_observations(self, trade_date: str) -> list[dict[str, object]]:
+        rows = [
+            row
+            for row in self.store.list_scan_runs(trade_date)
+            if row.get("health") == HealthState.HEALTHY.value
+            and row.get("stable_batch_json")
+        ]
+        # Keep the report bounded while still representing the day.  Scan runs
+        # remain fully available in SQLite for detailed audit.
+        return [
+            {"payload_json": str(row["stable_batch_json"])}
+            for row in rows[-30:]
+        ]
+
+    def _write_local_summary_report(self, summary: dict[str, object]) -> None:
+        reports_dir = report_directory_for_database(self.store.path)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        trade_date = str(summary["trade_date"])
+        json_path = reports_dir / f"{trade_date}-local-summary.json"
+        md_path = reports_dir / f"{trade_date}-local-summary.md"
+        json_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        md_path.write_text(
+            "\n".join(
+                (
+                    f"# {trade_date} 盘后总结",
+                    "",
+                    str(summary["summary_text"]),
+                    "",
+                    "本总结只整理当天本地真实扫描与提醒，不修改选股规则。",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     def _prune_history_if_due(self, now: datetime) -> None:
         """Run the bounded 30-day history cleanup at most once per day."""
@@ -717,10 +1141,17 @@ class TushareV1Session:
         )
 
     def _is_open_date(self, now: datetime) -> bool:
+        trade_date = now.date().isoformat()
+        # Real activity is stronger evidence than a stale calendar cache.  The
+        # 2026-08-03 acceptance had healthy scans but the cached open_dates
+        # ended earlier, which silently suppressed the 15:30 obligation.
+        if self.store.has_scan_activity(trade_date) or self._today_alerts(now):
+            return True
         if self._runtime is not None and self._runtime.universe is not None:
-            return now.date() in self._runtime.universe.open_dates
+            if now.date() in self._runtime.universe.open_dates:
+                return True
         if self._provider is None:
-            return False
+            return now.date().weekday() < 5
         try:
             compact = now.date().strftime("%Y%m%d")
             result = self._provider.trading_dates(
@@ -798,8 +1229,11 @@ class TushareV1Session:
         if self._universe_retry_at is not None and now < self._universe_retry_at:
             return False
         runtime = self._runtime
+        prepare = getattr(runtime, "prepare", None)
+        if not callable(prepare):
+            return False
         self._universe_future_runtime = runtime
-        self._universe_future = self._universe_executor.submit(runtime.prepare)
+        self._universe_future = self._universe_executor.submit(prepare)
         self._universe_refresh_issue = None
         return True
 
@@ -834,8 +1268,16 @@ class TushareV1Session:
         if runtime is not self._runtime:
             return
         self._prepared_date = now.date() if now.date() in prepared.open_dates else None
-        self._universe_retry_at = None
-        self._universe_refresh_issue = None
+        if prepared.concept_loaded:
+            self._universe_retry_at = None
+            self._universe_refresh_issue = None
+        else:
+            self._universe_retry_at = now + timedelta(minutes=5)
+            reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
+            self._universe_refresh_issue = (
+                "概念板块暂未加载；行业筛选继续运行，5分钟后后台重试"
+                + (f"（{reason}）" if reason else "。")
+            )
 
     def _set_universe_warming(self, now: datetime) -> None:
         self.state = HealthState.WARMING
@@ -965,26 +1407,19 @@ class TushareV1Session:
     def _manual_scan_is_ready(self) -> bool:
         if self._runtime is None:
             return False
-        now = datetime.now(SHANGHAI)
-        if not _runtime_universe_is_current(self._runtime, now):
-            return False
-        if self.capability_checks is None or not self._capability_checks_required:
-            return True
-        return _realtime_capabilities_ready(self.capability_checks.statuses())
+        return _runtime_universe_is_usable(
+            self._runtime,
+            datetime.now(SHANGHAI),
+        )
 
     def _manual_should_wait(self) -> bool:
         if self._universe_future is not None:
             return True
-        if self._runtime is not None and _runtime_universe_is_current(
+        if self._runtime is not None and _runtime_universe_is_usable(
             self._runtime,
             datetime.now(SHANGHAI),
         ):
-            if self.capability_checks is None or not self._capability_checks_required:
-                return self.state is HealthState.WARMING
-            if _realtime_capabilities_ready(self.capability_checks.statuses()):
-                return self.state is HealthState.WARMING
-            if bool(getattr(self.capability_checks, "in_flight", False)):
-                return True
+            return self.state is HealthState.WARMING
         return False
 
     def _set_manual_scan_progress(
@@ -1184,6 +1619,7 @@ def _runtime_factory(
                 if universe_cache_path is not None
                 else None
             ),
+            universe_seed_path=packaged_universe_seed_path(),
         ),
         provider,
     )
@@ -1284,6 +1720,64 @@ def _runtime_universe_is_current(
     if callable(checker):
         return bool(checker(now))
     return runtime.universe is not None
+
+
+def _runtime_universe_is_usable(
+    runtime: TushareV1Runtime,
+    now: datetime,
+) -> bool:
+    checker = getattr(runtime, "universe_is_usable", None)
+    if callable(checker):
+        return bool(checker(now))
+    return runtime.universe is not None
+
+
+def _session_is_trading(
+    schedule: MarketSessionSchedule,
+    now: datetime,
+    open_dates: tuple[date, ...],
+) -> bool:
+    if schedule.is_trading(now, open_dates):
+        return True
+    # A stale calendar cache must not prevent the realtime route from proving
+    # whether the market is open.  Weekdays are admitted provisionally; quote
+    # freshness and coverage remain the fail-closed authority on holidays.
+    if now.date().weekday() >= 5:
+        return False
+    current = now.timetz().replace(tzinfo=None)
+    return time(9, 30) <= current <= time(11, 30) or time(13, 0) <= current <= time(15, 0)
+
+
+def _alert_trigger_for_task(spec: AutomationTaskSpec | None) -> AlertTrigger | None:
+    if spec is None:
+        return None
+    if spec.task_type is AutomationTaskType.FIXED_0945:
+        return AlertTrigger.SCHEDULED_0945
+    if spec.task_type is AutomationTaskType.FIXED_1445:
+        return AlertTrigger.SCHEDULED_1445
+    return None
+
+
+def _automation_spec_for_trigger(
+    planner: AutomationPlanner,
+    trigger: AlertTrigger | None,
+    trade_date: date,
+) -> AutomationTaskSpec | None:
+    if trigger is None:
+        return None
+    expected = (
+        AutomationTaskType.FIXED_0945
+        if trigger is AlertTrigger.SCHEDULED_0945
+        else AutomationTaskType.FIXED_1445
+        if trigger is AlertTrigger.SCHEDULED_1445
+        else None
+    )
+    if expected is None:
+        return None
+    return next(
+        (spec for spec in planner.for_date(trade_date) if spec.task_type is expected),
+        None,
+    )
 
 
 def _payload_codes(value: object) -> set[str]:

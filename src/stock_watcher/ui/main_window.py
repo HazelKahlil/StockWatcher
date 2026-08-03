@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceMode
 from stock_watcher.domain import HealthState
 from stock_watcher.engine.candidates import CandidateBatch
@@ -299,6 +300,7 @@ class DeveloperInfoDialog(QDialog):
         form = QFormLayout()
         first = session.batch.candidates[0] if session.batch and session.batch.candidates else None
         fields = (
+            ("SOURCE_COMMIT", source_commit()),
             ("状态", session.state.value),
             (f"{session.connection_name}连接", session.connection_state.value),
             ("连接说明", session.connection_detail),

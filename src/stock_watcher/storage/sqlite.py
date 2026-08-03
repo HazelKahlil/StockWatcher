@@ -16,7 +16,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 3
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 4
 
     def connect(self) -> sqlite3.Connection:
         connection = (
@@ -62,7 +62,7 @@ class SQLiteStore:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, 3):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -70,7 +70,9 @@ class SQLiteStore:
                 self._apply_v1_schema(connection)
             if version <= 1:
                 self._apply_v2_migration(connection)
-            self._apply_v3_migration(connection)
+            if version <= 2:
+                self._apply_v3_migration(connection)
+            self._apply_v4_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -152,6 +154,34 @@ class SQLiteStore:
                 "ALTER TABLE alert_events ADD COLUMN trigger_type TEXT NOT NULL "
                 "DEFAULT 'intraday'"
             )
+
+    @staticmethod
+    def _apply_v4_migration(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS automation_tasks "
+            "(task_key TEXT PRIMARY KEY, task_type TEXT NOT NULL, trade_date TEXT NOT NULL, "
+            "target_at TEXT NOT NULL, deadline_at TEXT NOT NULL, state TEXT NOT NULL, "
+            "attempts INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, "
+            "detail TEXT NOT NULL, snapshot_id INTEGER, "
+            "FOREIGN KEY(snapshot_id) REFERENCES candidate_snapshots(id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_automation_tasks_trade_date "
+            "ON automation_tasks(trade_date, task_type)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS scan_runs "
+            "(id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, completed_at TEXT NOT NULL, "
+            "trigger_type TEXT NOT NULL, task_key TEXT, health TEXT NOT NULL, source_ts TEXT, "
+            "coverage_ratio REAL, elapsed_seconds REAL, source_age_seconds REAL, "
+            "detail TEXT NOT NULL, raw_batch_json TEXT, stable_batch_json TEXT, "
+            "audit_json TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_runs_completed "
+            "ON scan_runs(completed_at, trigger_type)"
+        )
+
     @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
         if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
@@ -168,6 +198,8 @@ class SQLiteStore:
             "daily_summaries",
             "app_settings",
             "health_metrics",
+            "automation_tasks",
+            "scan_runs",
         }
         tables = {
             str(row[0])
@@ -177,7 +209,7 @@ class SQLiteStore:
             self._schema_version(connection) != self.CURRENT_SCHEMA_VERSION
             or not required_tables <= tables
         ):
-            raise RuntimeError("schema migration did not reach v2")
+            raise RuntimeError("schema migration did not reach current version")
         self._assert_integrity(connection)
 
     def put_note(self, key: str, value: str) -> None:
@@ -334,6 +366,186 @@ class SQLiteStore:
             ).fetchone()
         return 0 if row is None else int(row[0])
 
+    def ensure_automation_task(self, task: dict[str, str]) -> dict[str, Any]:
+        """Create one durable daily obligation without resetting an existing state."""
+        required = {
+            "task_key",
+            "task_type",
+            "trade_date",
+            "target_at",
+            "deadline_at",
+            "state",
+            "updated_at",
+            "detail",
+        }
+        if missing := required - task.keys():
+            raise ValueError(f"automation task missing: {sorted(missing)}")
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO automation_tasks "
+                "(task_key, task_type, trade_date, target_at, deadline_at, state, "
+                "attempts, updated_at, detail, snapshot_id) "
+                "VALUES (:task_key, :task_type, :trade_date, :target_at, :deadline_at, "
+                ":state, 0, :updated_at, :detail, NULL)",
+                task,
+            )
+        saved = self.get_automation_task(str(task["task_key"]))
+        if saved is None:
+            raise RuntimeError("automation task insert was not readable")
+        return saved
+
+    def update_automation_task(
+        self,
+        task_key: str,
+        *,
+        state: str,
+        updated_at: str,
+        detail: str,
+        snapshot_id: int | None = None,
+        increment_attempt: bool = False,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE automation_tasks SET state = ?, updated_at = ?, detail = ?, "
+                "snapshot_id = COALESCE(?, snapshot_id), "
+                "attempts = attempts + ? WHERE task_key = ?",
+                (
+                    state,
+                    updated_at,
+                    detail,
+                    snapshot_id,
+                    int(increment_attempt),
+                    task_key,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(task_key)
+
+    def get_automation_task(self, task_key: str) -> dict[str, Any] | None:
+        self.initialize()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT task_key, task_type, trade_date, target_at, deadline_at, state, "
+                "attempts, updated_at, detail, snapshot_id "
+                "FROM automation_tasks WHERE task_key = ?",
+                (task_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "task_key",
+            "task_type",
+            "trade_date",
+            "target_at",
+            "deadline_at",
+            "state",
+            "attempts",
+            "updated_at",
+            "detail",
+            "snapshot_id",
+        )
+        return dict(zip(keys, row))
+
+    def list_automation_tasks(self, trade_date: str) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT task_key, task_type, trade_date, target_at, deadline_at, state, "
+                "attempts, updated_at, detail, snapshot_id "
+                "FROM automation_tasks WHERE trade_date = ? ORDER BY target_at",
+                (trade_date,),
+            ).fetchall()
+        keys = (
+            "task_key",
+            "task_type",
+            "trade_date",
+            "target_at",
+            "deadline_at",
+            "state",
+            "attempts",
+            "updated_at",
+            "detail",
+            "snapshot_id",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def record_scan_run(self, record: dict[str, Any]) -> int:
+        required = {
+            "started_at",
+            "completed_at",
+            "trigger_type",
+            "health",
+            "detail",
+            "audit_json",
+        }
+        if missing := required - record.keys():
+            raise ValueError(f"scan run missing: {sorted(missing)}")
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO scan_runs "
+                "(started_at, completed_at, trigger_type, task_key, health, source_ts, "
+                "coverage_ratio, elapsed_seconds, source_age_seconds, detail, "
+                "raw_batch_json, stable_batch_json, audit_json) "
+                "VALUES (:started_at, :completed_at, :trigger_type, :task_key, :health, "
+                ":source_ts, :coverage_ratio, :elapsed_seconds, :source_age_seconds, "
+                ":detail, :raw_batch_json, :stable_batch_json, :audit_json)",
+                {
+                    "task_key": None,
+                    "source_ts": None,
+                    "coverage_ratio": None,
+                    "elapsed_seconds": None,
+                    "source_age_seconds": None,
+                    "raw_batch_json": None,
+                    "stable_batch_json": None,
+                    **record,
+                },
+            )
+        if cursor.lastrowid is None:
+            raise RuntimeError("scan run insert did not return an id")
+        return int(cursor.lastrowid)
+
+    def list_scan_runs(self, trade_date: str) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id, started_at, completed_at, trigger_type, task_key, health, "
+                "source_ts, coverage_ratio, elapsed_seconds, source_age_seconds, detail, "
+                "raw_batch_json, stable_batch_json, audit_json "
+                "FROM scan_runs WHERE substr(completed_at, 1, 10) = ? "
+                "ORDER BY completed_at, id",
+                (trade_date,),
+            ).fetchall()
+        keys = (
+            "id",
+            "started_at",
+            "completed_at",
+            "trigger_type",
+            "task_key",
+            "health",
+            "source_ts",
+            "coverage_ratio",
+            "elapsed_seconds",
+            "source_age_seconds",
+            "detail",
+            "raw_batch_json",
+            "stable_batch_json",
+            "audit_json",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def has_scan_activity(self, trade_date: str) -> bool:
+        self.initialize()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM scan_runs WHERE substr(completed_at, 1, 10) = ? "
+                "AND health = 'HEALTHY' LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        return row is not None
+
     def apply_transaction(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
         self.initialize()
         with self.connect() as connection:
@@ -417,15 +629,23 @@ class SQLiteStore:
         return [dict(zip(keys, row)) for row in rows]
 
     def prune_history(self, *, before: datetime) -> int:
-        """Transactionally delete user-visible alerts and now-unreferenced snapshots."""
+        """Delete only data outside the approved retention window.
+
+        Older builds removed *every* snapshot that was not referenced by an
+        alert.  That accidentally erased same-day manual/automatic observations
+        (and the audit evidence needed to explain why Top3 changed).  The
+        retention boundary now applies to snapshots themselves: recent
+        observations are kept even when they never produced a popup.
+        """
         self.initialize()
+        cutoff = before.isoformat()
         with self.connect() as connection:
             with connection:
                 alert_ids = [
                     int(row[0])
                     for row in connection.execute(
                         "SELECT id FROM alert_events WHERE displayed_at < ?",
-                        (before.isoformat(),),
+                        (cutoff,),
                     )
                 ]
                 if alert_ids:
@@ -434,8 +654,19 @@ class SQLiteStore:
                         ((alert_id,) for alert_id in alert_ids),
                     )
                 connection.execute(
-                    "DELETE FROM candidate_snapshots WHERE id NOT IN "
-                    "(SELECT DISTINCT snapshot_id FROM alert_events)"
+                    "DELETE FROM candidate_snapshots "
+                    "WHERE source_ts < ? AND id NOT IN "
+                    "(SELECT DISTINCT snapshot_id FROM alert_events)",
+                    (cutoff,),
+                )
+                connection.execute(
+                    "DELETE FROM scan_runs WHERE completed_at < ?",
+                    (cutoff,),
+                )
+                connection.execute(
+                    "DELETE FROM automation_tasks WHERE deadline_at < ? "
+                    "AND state IN ('succeeded', 'failed')",
+                    (cutoff,),
                 )
         return len(alert_ids)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 
@@ -87,6 +88,47 @@ class CandidateBatch:
         return json.dumps(asdict(self), default=str, sort_keys=True, separators=(",", ":"))
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateAuditRow:
+    raw_rank: int
+    code: str
+    name: str
+    sector: str
+    sector_code: str
+    sector_type: str
+    total_score: float
+    core_score: float
+    level: str
+    is_formal: bool
+    velocity_available: bool
+    selected_raw: bool
+    selected_stable: bool
+    decision: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateSelectionAudit:
+    warmup_state: str
+    input_count: int
+    eligible_count: int
+    formal_count: int
+    velocity_1m_ready_count: int
+    velocity_3m_ready_count: int
+    velocity_5m_ready_count: int
+    raw_codes: tuple[str, ...]
+    stable_codes: tuple[str, ...]
+    excluded_counts: dict[str, int]
+    rows: tuple[CandidateAuditRow, ...]
+
+    @property
+    def display_velocity_ready(self) -> bool:
+        displayed = [row for row in self.rows if row.selected_stable]
+        return bool(displayed) and all(row.velocity_available for row in displayed)
+
+    def trace_payload(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 class CandidateEngine:
     """Pure V1 scoring and fixed-three selection with an explicit supplement tier."""
 
@@ -102,6 +144,15 @@ class CandidateEngine:
         passed the individual and sector gates.  Keeping this ranking in the engine
         makes both paths use the exact same scoring and exclusion rules.
         """
+        evaluated = list(self.rank_all_candidates(inputs, config))
+        return tuple(candidate for candidate in evaluated if candidate.is_formal)
+
+    def rank_all_candidates(
+        self,
+        inputs: tuple[CandidateInput, ...],
+        config: CandidateConfig,
+    ) -> tuple[Candidate, ...]:
+        """Return every eligible stock in the same order used by Top3 selection."""
         eligible = [item for item in inputs if item.exclusion_reason is None]
         evaluated = [self._evaluate(item, config) for item in eligible]
         evaluated.sort(
@@ -112,7 +163,99 @@ class CandidateEngine:
                 candidate.code,
             )
         )
-        return tuple(candidate for candidate in evaluated if candidate.is_formal)
+        return tuple(evaluated)
+
+    def build_selection_audit(
+        self,
+        inputs: tuple[CandidateInput, ...],
+        raw: CandidateBatch | None,
+        stable: CandidateBatch | None,
+        config: CandidateConfig,
+        *,
+        limit: int = 20,
+    ) -> CandidateSelectionAudit:
+        """Explain why the visible Top3 differs from the current score order.
+
+        This deliberately records the pre-stability ranking as well as the
+        visible list.  It is the evidence needed to distinguish real market
+        movement from warm-up, sector diversification and debounce holds.
+        """
+        evaluated = self.rank_all_candidates(inputs, config)
+        raw_codes = tuple(candidate.code for candidate in raw.candidates) if raw else ()
+        stable_codes = (
+            tuple(candidate.code for candidate in stable.candidates) if stable else ()
+        )
+        selection_stage = self._selection_stage(evaluated, config)
+        ranks = {candidate.code: rank for rank, candidate in enumerate(evaluated, start=1)}
+        audit_candidates = list(evaluated[:limit])
+        included_codes = {candidate.code for candidate in audit_candidates}
+        for code in (*raw_codes, *stable_codes):
+            if code in included_codes:
+                continue
+            retained = next(
+                (candidate for candidate in evaluated if candidate.code == code),
+                None,
+            )
+            if retained is not None:
+                audit_candidates.append(retained)
+                included_codes.add(code)
+        rows: list[CandidateAuditRow] = []
+        for candidate in audit_candidates:
+            rank = ranks[candidate.code]
+            if candidate.code in stable_codes and candidate.code in raw_codes:
+                decision = "displayed"
+            elif candidate.code in stable_codes:
+                decision = "retained_by_stability"
+            elif candidate.code in raw_codes:
+                decision = "raw_top3_blocked_by_stability"
+            else:
+                decision = selection_stage.get(candidate.code, "below_cutoff")
+            rows.append(
+                CandidateAuditRow(
+                    raw_rank=rank,
+                    code=candidate.code,
+                    name=candidate.name,
+                    sector=candidate.sector,
+                    sector_code=candidate.sector_code,
+                    sector_type=candidate.sector_type,
+                    total_score=candidate.total_score,
+                    core_score=candidate.core_score,
+                    level=candidate.level,
+                    is_formal=candidate.is_formal,
+                    velocity_available=candidate.velocity_available,
+                    selected_raw=candidate.code in raw_codes,
+                    selected_stable=candidate.code in stable_codes,
+                    decision=decision,
+                )
+            )
+        eligible_inputs = tuple(item for item in inputs if item.exclusion_reason is None)
+        ready_1m = sum(item.velocity_1m_pct is not None for item in eligible_inputs)
+        ready_3m = sum(item.velocity_3m_pct is not None for item in eligible_inputs)
+        ready_5m = sum(item.velocity_5m_pct is not None for item in eligible_inputs)
+        if not eligible_inputs or ready_1m == 0:
+            warmup_state = "cold"
+        elif ready_1m / len(eligible_inputs) < 0.8:
+            warmup_state = "warming"
+        else:
+            warmup_state = "ready"
+        exclusions = Counter(
+            reason
+            for item in inputs
+            if (reason := item.exclusion_reason) is not None
+        )
+        return CandidateSelectionAudit(
+            warmup_state=warmup_state,
+            input_count=len(inputs),
+            eligible_count=len(eligible_inputs),
+            formal_count=sum(candidate.is_formal for candidate in evaluated),
+            velocity_1m_ready_count=ready_1m,
+            velocity_3m_ready_count=ready_3m,
+            velocity_5m_ready_count=ready_5m,
+            raw_codes=raw_codes,
+            stable_codes=stable_codes,
+            excluded_counts=dict(sorted(exclusions.items())),
+            rows=tuple(rows),
+        )
 
     def calculate(
         self,
@@ -230,6 +373,53 @@ class CandidateEngine:
             if len(selected) == config.display_count:
                 return selected
         return selected
+
+    @staticmethod
+    def _selection_stage(
+        evaluated: tuple[Candidate, ...],
+        config: CandidateConfig,
+    ) -> dict[str, str]:
+        """Reproduce the raw selection stage and label the first exclusion reason."""
+        decisions: dict[str, str] = {}
+        selected: list[Candidate] = []
+        sector_counts: dict[str, int] = {}
+        enforce_sector_limit = any(candidate.sector_code for candidate in evaluated)
+        for candidate in evaluated:
+            if not candidate.is_formal:
+                continue
+            sector_key = candidate.sector_code or candidate.sector
+            if (
+                enforce_sector_limit
+                and sector_counts.get(sector_key, 0) >= config.maximum_same_sector
+            ):
+                decisions[candidate.code] = "same_sector_limit"
+                continue
+            if len(selected) >= config.display_count:
+                decisions[candidate.code] = "below_formal_top3"
+                continue
+            selected.append(candidate)
+            sector_counts[sector_key] = sector_counts.get(sector_key, 0) + 1
+            decisions[candidate.code] = "raw_selected"
+        for candidate in evaluated:
+            if candidate in selected:
+                continue
+            if len(selected) >= config.display_count:
+                decisions.setdefault(
+                    candidate.code,
+                    "supplement_below_cutoff" if not candidate.is_formal else "below_formal_top3",
+                )
+                continue
+            sector_key = candidate.sector_code or candidate.sector
+            if (
+                enforce_sector_limit
+                and sector_counts.get(sector_key, 0) >= config.maximum_same_sector
+            ):
+                decisions.setdefault(candidate.code, "same_sector_limit")
+                continue
+            selected.append(candidate)
+            sector_counts[sector_key] = sector_counts.get(sector_key, 0) + 1
+            decisions[candidate.code] = "raw_selected"
+        return decisions
 
     @staticmethod
     def _enforce_sector_limit(

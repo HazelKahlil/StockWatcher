@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import subprocess
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
@@ -20,6 +22,32 @@ runtime_icon_path = (
     / "stockwatcher.png"
 )
 
+
+def _source_commit():
+    configured = os.environ.get("STOCKWATCHER_SOURCE_COMMIT", "").strip()
+    if configured:
+        return configured
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+provenance_dir = project_root / "build" / "provenance"
+provenance_dir.mkdir(parents=True, exist_ok=True)
+source_commit_file = provenance_dir / "SOURCE_COMMIT"
+source_commit_file.write_text(_source_commit() + "\n", encoding="utf-8")
+datas = [
+    (str(runtime_icon_path), "stock_watcher/ui/assets"),
+    (str(source_commit_file), "stock_watcher"),
+]
+seed = os.environ.get("STOCKWATCHER_UNIVERSE_SEED_PATH", "").strip()
+if seed and Path(seed).is_file():
+    datas.append((str(Path(seed)), "stock_watcher/data/runtime-universe-seed.json"))
+
 analysis = Analysis(
     [
         str(
@@ -32,12 +60,7 @@ analysis = Analysis(
     ],
     pathex=[str(project_root / "src")],
     binaries=[],
-    datas=[
-        (
-            str(runtime_icon_path),
-            "stock_watcher/ui/assets",
-        )
-    ],
+    datas=datas,
     hiddenimports=[
         *collect_submodules("keyring.backends"),
         "tushare",
@@ -55,6 +78,7 @@ analysis = Analysis(
         "stock_watcher.providers.tdxquant_preflight",
         "stock_watcher.providers.tdxquant_m0",
         "stock_watcher.runtime.data_health",
+        "stock_watcher.runtime.automation",
         "stock_watcher.runtime.market_session",
         "stock_watcher.runtime.scan_coordinator",
         "stock_watcher.runtime.tushare_runtime",

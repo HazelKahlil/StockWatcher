@@ -1,3 +1,10 @@
+from .automation import (
+    AutomationPlanner,
+    AutomationScheduleConfig,
+    AutomationTaskSpec,
+    AutomationTaskState,
+    AutomationTaskType,
+)
 from .data_health import DataHealthConfig, DataHealthTracker
 from .market_session import MarketSessionSchedule
 from .post_close_review import (
@@ -30,6 +37,11 @@ from .universe_cache import (
 )
 
 __all__ = [
+    "AutomationPlanner",
+    "AutomationScheduleConfig",
+    "AutomationTaskSpec",
+    "AutomationTaskState",
+    "AutomationTaskType",
     "DataHealthConfig",
     "DataHealthTracker",
     "FullMarketScanCoordinator",
