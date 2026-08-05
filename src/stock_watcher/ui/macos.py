@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from time import monotonic
-from typing import Protocol
+from typing import Any, Protocol, cast
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QEventLoop, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkInformation
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar
@@ -49,37 +51,71 @@ class MacWindowClosePolicy:
 
 
 class SingleInstanceGuard(QObject):
-    """Mac-local Qt socket guard that wakes, rather than duplicates, the app."""
+    """Mac-local guard with an acknowledged, metadata-carrying activation protocol."""
 
     activation_requested = Signal()
 
-    def __init__(self, name: str | None = None, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        name: str | None = None,
+        parent: QObject | None = None,
+        *,
+        app_path: str | None = None,
+        source_commit: str | None = None,
+        activation_handler: Callable[[dict[str, object]], Mapping[str, object]] | None = None,
+        ack_timeout_ms: int = 1_500,
+    ) -> None:
         super().__init__(parent)
         self.name = name or _default_instance_name()
+        self.app_path = app_path or _current_application_path()
+        self.source_commit = source_commit or "unknown"
+        self.ack_timeout_ms = max(100, ack_timeout_ms)
+        self._activation_handler = activation_handler
         self._server = QLocalServer(self)
         self._connections: list[QLocalSocket] = []
+        self._buffers: dict[int, bytes] = {}
         self._primary = False
+        self._last_socket_error: QLocalSocket.LocalSocketError | None = None
+        self.last_role = "unstarted"
+        self.last_activation_status = "not-attempted"
+        self.last_activation_ack: dict[str, object] = {}
 
     @property
     def is_primary(self) -> bool:
         return self._primary
 
+    @property
+    def is_secondary(self) -> bool:
+        return self.last_role == "secondary"
+
+    def set_activation_handler(
+        self,
+        handler: Callable[[dict[str, object]], Mapping[str, object]],
+    ) -> None:
+        self._activation_handler = handler
+
     def acquire(self) -> bool:
         """Become primary, or request activation from an already-running app."""
+        self.last_role = "checking"
         if self._server.listen(self.name):
-            self._primary = True
-            self._server.newConnection.connect(self._accept_connections)
+            self._become_primary()
             return True
         if self._request_activation():
+            self.last_role = "secondary"
+            return False
+        self.last_role = "secondary"
+        # A connected endpoint that did not acknowledge activation is not stale.
+        # Never remove it just because a hidden primary failed to answer quickly.
+        if self.last_activation_status in {"no-ack", "version-conflict", "activation-failed"}:
             return False
         # Only clear a socket path when no server exists.  A live primary must
         # never be removed merely because it was temporarily busy.
         if self._socket_error_allows_stale_recovery():
             QLocalServer.removeServer(self.name)
             if self._server.listen(self.name):
-                self._primary = True
-                self._server.newConnection.connect(self._accept_connections)
+                self._become_primary()
                 return True
+        self.last_activation_status = "single-instance-failed"
         raise RuntimeError("无法建立 StockWatcher 单实例通信通道")
 
     def close(self) -> None:
@@ -89,31 +125,58 @@ class SingleInstanceGuard(QObject):
         QLocalServer.removeServer(self.name)
         self._primary = False
 
+    def _become_primary(self) -> None:
+        self._primary = True
+        self.last_role = "primary"
+        self.last_activation_status = "primary"
+        self._server.newConnection.connect(self._accept_connections)
+
     def _request_activation(self) -> bool:
         socket = QLocalSocket(self)
         socket.connectToServer(self.name)
         if not socket.waitForConnected(500):
             self._last_socket_error = socket.error()
+            self.last_activation_status = "connection-failed"
             socket.deleteLater()
             return False
-        socket.write(b"activate\n")
+        request = {
+            "command": "activate",
+            "secondary_pid": os.getpid(),
+            "secondary_app_path": self.app_path,
+            "secondary_source_commit": self.source_commit,
+            "timestamp": _timestamp(),
+        }
+        socket.write(_json_line(request))
         socket.flush()
         socket.waitForBytesWritten(500)
+        deadline = monotonic() + (self.ack_timeout_ms / 1000.0)
+        response_bytes = b""
+        while monotonic() < deadline:
+            if socket.bytesAvailable() > 0:
+                response_bytes = bytes(cast(Any, socket.readAll()))
+                break
+            loop = QEventLoop()
+            QTimer.singleShot(20, loop.quit)
+            loop.exec()
+            if socket.bytesAvailable() > 0:
+                response_bytes = bytes(cast(Any, socket.readAll()))
+                break
+        if not response_bytes:
+            self.last_activation_status = "no-ack"
+            socket.disconnectFromServer()
+            socket.deleteLater()
+            return False
+        response = _decode_line(response_bytes)
+        self.last_activation_ack = response
+        result = str(response.get("result", ""))
+        self.last_activation_status = result or "activation-failed"
         socket.disconnectFromServer()
         socket.deleteLater()
-        return True
+        return result == "success"
 
     def _socket_error_allows_stale_recovery(self) -> bool:
-        """Allow recovery only when the local endpoint is demonstrably dead.
-
-        A normal explicit quit removes the socket, but an interrupted Python
-        process can leave its Unix-domain socket pathname behind.  Connecting
-        to that pathname yields ``ConnectionRefusedError`` rather than
-        ``ServerNotFoundError``.  A live primary accepts the activation above,
-        so clearing either of these two errors cannot replace an active app.
-        """
-        error = getattr(self, "_last_socket_error", None)
-        return error in {
+        """Allow recovery only when the local endpoint is demonstrably dead."""
+        return self._last_socket_error in {
             QLocalSocket.LocalSocketError.ServerNotFoundError,
             QLocalSocket.LocalSocketError.ConnectionRefusedError,
         }
@@ -130,16 +193,111 @@ class SingleInstanceGuard(QObject):
             self._read_activation(socket)
 
     def _read_activation(self, socket: QLocalSocket) -> None:
-        if socket.readAll().isEmpty():
+        key = id(socket)
+        self._buffers[key] = self._buffers.get(key, b"") + bytes(cast(Any, socket.readAll()))
+        if b"\n" not in self._buffers[key]:
+            return
+        raw, _separator, remainder = self._buffers.pop(key).partition(b"\n")
+        if not raw:
+            return
+        request = _decode_line(raw)
+        if request.get("command") != "activate":
+            self._send_ack(socket, {"result": "invalid-command"})
             return
         self.activation_requested.emit()
+        conflict = _metadata_conflicts(request, self.app_path, self.source_commit)
+        response: dict[str, object] = {
+            "result": "success",
+            "window_visible": True,
+        }
+        if conflict:
+            # Restore the known primary so the user can choose to keep using it,
+            # but never report a different build as a successful activation.
+            if self._activation_handler is not None:
+                try:
+                    response.update(dict(self._activation_handler(request)))
+                except Exception as error:
+                    response = {
+                        "result": "version-conflict",
+                        "window_visible": False,
+                        "error": type(error).__name__,
+                    }
+            response["result"] = "version-conflict"
+        elif self._activation_handler is not None:
+            try:
+                response.update(dict(self._activation_handler(request)))
+            except Exception as error:
+                response = {
+                    "result": "activation-failed",
+                    "window_visible": False,
+                    "error": type(error).__name__,
+                }
+        response.update(
+            {
+                "primary_pid": os.getpid(),
+                "primary_app_path": self.app_path,
+                "primary_source_commit": self.source_commit,
+                "timestamp": _timestamp(),
+            }
+        )
+        self._send_ack(socket, response)
+        if remainder:
+            self._buffers[key] = remainder
+
+    def _send_ack(self, socket: QLocalSocket, response: Mapping[str, object]) -> None:
+        socket.write(_json_line(dict(response)))
+        socket.flush()
+        socket.waitForBytesWritten(500)
         socket.disconnectFromServer()
 
     def _discard_connection(self, socket: QLocalSocket) -> None:
+        self._buffers.pop(id(socket), None)
         if socket in self._connections:
             self._connections.remove(socket)
         socket.deleteLater()
 
+
+def _json_line(value: Mapping[str, object]) -> bytes:
+    return (json.dumps(dict(value), ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _decode_line(value: bytes) -> dict[str, object]:
+    try:
+        parsed = json.loads(value.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"command": "activate"} if value.strip() == b"activate" else {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _metadata_conflicts(
+    request: Mapping[str, object],
+    primary_path: str,
+    primary_commit: str,
+) -> bool:
+    requested_path = str(request.get("secondary_app_path", ""))
+    requested_commit = str(request.get("secondary_source_commit", ""))
+    return bool(
+        requested_path
+        and primary_path
+        and requested_path != primary_path
+        or requested_commit
+        and primary_commit
+        and requested_commit != primary_commit
+    )
+
+
+def _current_application_path() -> str:
+    executable = Path(sys.executable).resolve()
+    for parent in (executable, *executable.parents):
+        if parent.suffix == ".app":
+            return str(parent)
+    return str(Path(sys.argv[0]).resolve())
+
+
+def _timestamp() -> str:
+    from datetime import datetime
+
+    return datetime.now().astimezone().isoformat()
 
 class NotificationCenterNotifier:
     """Best-effort macOS Notification Center delivery secondary to Qt popups."""
@@ -208,6 +366,7 @@ class MacApplicationLifecycle(QObject):
         self._app.setQuitOnLastWindowClosed(False)
         self._window.enable_background_close()
         self._install_application_menu()
+        self._app.installEventFilter(self)
         self._app.applicationStateChanged.connect(self.handle_application_state)
         self._heartbeat.setInterval(5_000)
         self._heartbeat.timeout.connect(self.check_for_sleep_gap)
@@ -224,6 +383,15 @@ class MacApplicationLifecycle(QObject):
         if isinstance(window, QMainWindow):
             window.close()
         self._app.quit()
+
+    def eventFilter(self, _watched: QObject, event: QEvent) -> bool:
+        """Restore the main window for macOS reopen/activate events."""
+        if self._enabled and not self._quitting and event.type() in {
+            QEvent.Type.ApplicationActivate,
+            QEvent.Type.FileOpen,
+        }:
+            QTimer.singleShot(0, self._window.restore_main_window)
+        return False
 
     @Slot(Qt.ApplicationState)
     def handle_application_state(self, state: Qt.ApplicationState) -> None:

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceConfigRepository, DataSourceMode
 from stock_watcher.paths import runtime_paths
+from stock_watcher.startup import StartupRecorder
 
 from .macos import MacApplicationLifecycle, SingleInstanceGuard
 from .main_window import MainWindow, ReplaySession, UiSession
@@ -130,89 +134,168 @@ def application_icon_path() -> Path:
     return assets / "stockwatcher.png"
 
 
+def _restore_window(
+    window: MainWindow,
+    _request: dict[str, object] | None = None,
+) -> dict[str, object]:
+    window.restore_main_window()
+    QTimer.singleShot(0, window.restore_main_window)
+    minimized = bool(window.windowState() & Qt.WindowState.WindowMinimized)
+    visible = window.isVisible() and not minimized
+    return {"window_visible": visible, "result": "success" if visible else "activation-failed"}
+
+
 def run(
     *,
     preflight_verified: bool = False,
     terminal_path: Path | None = None,
 ) -> int:
-    parser = argparse.ArgumentParser(description="StockWatcher desktop application")
-    parser.add_argument(
-        "--provider",
-        choices=("tushare", "replay", "tdxquant", "tushare-diagnostic"),
-        default="tushare",
-    )
-    parser.add_argument("--endpoint", default="http://127.0.0.1:17709/")
-    parser.add_argument(
-        "--db",
-        type=Path,
-        default=None,
-        help="SQLite path; defaults to temporary Replay storage or platform app-data",
-    )
-    args = parser.parse_args()
-    app = QApplication(sys.argv)
-    app.setApplicationName("StockWatcher")
-    app.setOrganizationName("StockWatcher")
-    icon_path = application_icon_path()
-    if icon_path.is_file():
-        app.setWindowIcon(QIcon(str(icon_path)))
-    app.setStyleSheet(STYLE_SHEET)
-    instance_guard: SingleInstanceGuard | None = None
-    if sys.platform == "darwin":
-        instance_guard = SingleInstanceGuard(parent=app)
-        if not instance_guard.acquire():
-            return 0
-    if args.provider == "tdxquant":
-        from .tdx_session import TdxDiagnosticSession
-
-        paths = runtime_paths()
-        paths.create()
-        session: UiSession = TdxDiagnosticSession(
-            args.db or paths.database,
-            args.endpoint,
-            terminal_path=terminal_path,
-            preflight_verified=preflight_verified,
+    recorder = StartupRecorder()
+    try:
+        parser = argparse.ArgumentParser(description="StockWatcher desktop application")
+        parser.add_argument(
+            "--provider",
+            choices=("tushare", "replay", "tdxquant", "tushare-diagnostic"),
+            default="tushare",
         )
-    elif args.provider == "replay":
-        replay_db = args.db or (
-            Path(tempfile.gettempdir()) / "stock-watcher-mac-replay-demo.sqlite3"
+        parser.add_argument("--endpoint", default="http://127.0.0.1:17709/")
+        parser.add_argument(
+            "--db",
+            type=Path,
+            default=None,
+            help="SQLite path; defaults to temporary Replay storage or platform app-data",
         )
-        session = ReplaySession(replay_db)
-    elif args.provider == "tushare-diagnostic":
+        args = parser.parse_args()
+        app = QApplication(sys.argv)
+        app.setApplicationName("StockWatcher")
+        app.setOrganizationName("StockWatcher")
+        icon_path = application_icon_path()
+        if icon_path.is_file():
+            app.setWindowIcon(QIcon(str(icon_path)))
+        app.setStyleSheet(STYLE_SHEET)
+        recorder.stage("qapplication-created")
+        instance_guard: SingleInstanceGuard | None = None
+        if sys.platform == "darwin":
+            recorder.stage("single-instance-check")
+            instance_guard = SingleInstanceGuard(
+                parent=app,
+                app_path=recorder.data.get("app_path", ""),
+                source_commit=source_commit(),
+            )
+            if not instance_guard.acquire():
+                recorder.stage(
+                    "single-instance-secondary",
+                    activation_status=instance_guard.last_activation_status,
+                    ack=instance_guard.last_activation_ack,
+                )
+                if instance_guard.last_activation_status != "success":
+                    _show_secondary_failure(instance_guard)
+                    recorder.finish(1, "secondary-activation-failed")
+                    return 1
+                recorder.finish(0, "secondary-activation")
+                return 0
+            recorder.stage("single-instance-primary")
         paths = runtime_paths()
         paths.create()
-        session = TushareDiagnosticSession(args.db or paths.database)
-    else:
-        paths = runtime_paths()
-        paths.create()
-        settings = DataSourceConfigRepository(
-            paths.root / "config" / "data-sources.yaml"
-        ).load()
-        if settings.mode is DataSourceMode.REPLAY:
-            session = ReplaySession(args.db or paths.root / "replay-diagnostic.sqlite3")
-        elif settings.mode is DataSourceMode.ADVANCED_DIAGNOSTIC:
-            session = TushareDiagnosticSession(args.db or paths.database)
-        elif settings.mode is DataSourceMode.TDX_DIAGNOSTIC:
+        recorder.set_paths(paths)
+        recorder.stage("settings-loaded")
+        if args.provider == "tdxquant":
             from .tdx_session import TdxDiagnosticSession
 
-            session = TdxDiagnosticSession(
+            session: UiSession = TdxDiagnosticSession(
                 args.db or paths.database,
                 args.endpoint,
                 terminal_path=terminal_path,
                 preflight_verified=preflight_verified,
             )
-        else:
-            session = TushareV1Session(
-                args.db or paths.database,
-                settings=settings,
+        elif args.provider == "replay":
+            replay_db = args.db or (
+                Path(tempfile.gettempdir()) / "stock-watcher-mac-replay-demo.sqlite3"
             )
-    window = MainWindow(session)
-    if instance_guard is not None:
-        lifecycle = MacApplicationLifecycle(app, window)
-        window.set_secondary_notification_sender(lifecycle.show_notification)
-        instance_guard.activation_requested.connect(window.restore_main_window)
-        app.aboutToQuit.connect(instance_guard.close)
-    window.show()
-    return app.exec()
+            session = ReplaySession(replay_db)
+        elif args.provider == "tushare-diagnostic":
+            session = TushareDiagnosticSession(args.db or paths.database)
+        else:
+            settings = DataSourceConfigRepository(
+                paths.root / "config" / "data-sources.yaml"
+            ).load()
+            if settings.mode is DataSourceMode.REPLAY:
+                session = ReplaySession(args.db or paths.root / "replay-diagnostic.sqlite3")
+            elif settings.mode is DataSourceMode.ADVANCED_DIAGNOSTIC:
+                session = TushareDiagnosticSession(args.db or paths.database)
+            elif settings.mode is DataSourceMode.TDX_DIAGNOSTIC:
+                from .tdx_session import TdxDiagnosticSession
+
+                session = TdxDiagnosticSession(
+                    args.db or paths.database,
+                    args.endpoint,
+                    terminal_path=terminal_path,
+                    preflight_verified=preflight_verified,
+                )
+            else:
+                session = TushareV1Session(args.db or paths.database, settings=settings)
+        recorder.stage("session-created")
+        window = MainWindow(session)
+        recorder.stage("window-created")
+        if instance_guard is not None:
+            lifecycle = MacApplicationLifecycle(app, window)
+            window.set_secondary_notification_sender(lifecycle.show_notification)
+
+            def handle_activation(request: dict[str, object]) -> dict[str, object]:
+                recorder.stage(
+                    "activation_received",
+                    secondary_pid=request.get("secondary_pid"),
+                    secondary_app_path=request.get("secondary_app_path"),
+                    secondary_source_commit=request.get("secondary_source_commit"),
+                )
+                result = _restore_window(window, request)
+                recorder.stage("window-restored", **result)
+                return result
+
+            instance_guard.set_activation_handler(handle_activation)
+            app.aboutToQuit.connect(instance_guard.close)
+        window.show()
+        recorder.stage("window-shown")
+        recorder.stage("event-loop-entered")
+        exit_code = app.exec()
+        recorder.finish(exit_code, "normal-exit")
+        return exit_code
+    except BaseException as error:
+        recorder.fatal(error, app_available=QApplication.instance() is not None)
+        recorder.finish(1, "fatal-startup-error")
+        return 1
+
+
+def _show_secondary_failure(instance_guard: SingleInstanceGuard) -> None:
+    status = instance_guard.last_activation_status
+    ack = instance_guard.last_activation_ack
+    if status == "version-conflict":
+        primary_path = str(ack.get("primary_app_path", "另一版本"))
+        primary_commit = str(ack.get("primary_source_commit", "unknown"))
+        message = (
+            "另一版本的 StockWatcher 正在运行。\n"
+            f"路径：{primary_path}\nCommit：{primary_commit}\n"
+            "请先显示旧窗口或退出旧版本后再启动。"
+        )
+    else:
+        message = "StockWatcher 后台实例无法恢复窗口。请查看启动日志后重试。"
+    if sys.platform == "darwin":
+        try:
+            subprocess.Popen(
+                [
+                    "/usr/bin/osascript",
+                    "-e",
+                    "on run argv\n"
+                    "display dialog item 1 of argv with title \"StockWatcher 启动提示\" "
+                    "buttons {\"好\"}\n"
+                    "end run",
+                    message,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

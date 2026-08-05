@@ -144,19 +144,78 @@ def test_macos_keyring_store_reports_native_keychain_and_ui_copy(
 def test_single_instance_guard_wakes_existing_window() -> None:
     app = application()
     name = f"stockwatcher-test-{uuid.uuid4().hex}"
-    primary = SingleInstanceGuard(name)
-    secondary = SingleInstanceGuard(name)
-    activated: list[bool] = []
-    primary.activation_requested.connect(lambda: activated.append(True))
+    primary = SingleInstanceGuard(
+        name,
+        app_path="/primary/StockWatcher.app",
+        source_commit="commit-a",
+    )
+    secondary = SingleInstanceGuard(
+        name,
+        app_path="/primary/StockWatcher.app",
+        source_commit="commit-a",
+    )
+    activated: list[dict[str, object]] = []
+    primary.activation_requested.connect(lambda: activated.append({"signal": True}))
+    primary.set_activation_handler(
+        lambda request: activated.append(request) or {"window_visible": True, "result": "success"}
+    )
 
     try:
         assert primary.acquire()
         assert not secondary.acquire()
         deadline = time.monotonic() + 1.0
-        while not activated and time.monotonic() < deadline:
+        while len(activated) < 2 and time.monotonic() < deadline:
             app.processEvents()
             time.sleep(0.01)
-        assert activated == [True]
+        assert activated[0] == {"signal": True}
+        request = activated[1]
+        assert request["command"] == "activate"
+        assert request["secondary_pid"] == os.getpid()
+        assert request["secondary_app_path"] == "/primary/StockWatcher.app"
+        assert request["secondary_source_commit"] == "commit-a"
+        assert secondary.last_activation_status == "success"
+        assert secondary.last_activation_ack["primary_app_path"] == "/primary/StockWatcher.app"
+        assert secondary.last_activation_ack["primary_source_commit"] == "commit-a"
+    finally:
+        secondary.close()
+        primary.close()
+
+
+def test_single_instance_guard_does_not_silently_exit_without_ack() -> None:
+    application()
+    name = f"stockwatcher-no-ack-{uuid.uuid4().hex}"
+    primary = SingleInstanceGuard(name, ack_timeout_ms=100)
+    secondary = SingleInstanceGuard(name, ack_timeout_ms=100)
+
+    try:
+        assert primary.acquire()
+        # The primary accepts a connection but intentionally never processes it.
+        primary._server.newConnection.disconnect(primary._accept_connections)
+        assert not secondary.acquire()
+        assert secondary.last_activation_status == "no-ack"
+        assert not secondary.is_primary
+    finally:
+        secondary.close()
+        primary.close()
+
+
+def test_single_instance_guard_reports_version_conflict_without_replacing_primary() -> None:
+    application()
+    name = f"stockwatcher-conflict-{uuid.uuid4().hex}"
+    primary = SingleInstanceGuard(name, app_path="/old/StockWatcher.app", source_commit="old")
+    secondary = SingleInstanceGuard(name, app_path="/new/StockWatcher.app", source_commit="new")
+    restored: list[dict[str, object]] = []
+    primary.set_activation_handler(
+        lambda request: restored.append(request) or {"window_visible": True}
+    )
+
+    try:
+        assert primary.acquire()
+        assert not secondary.acquire()
+        assert secondary.last_activation_status == "version-conflict"
+        assert secondary.last_activation_ack["primary_app_path"] == "/old/StockWatcher.app"
+        assert primary.is_primary
+        assert restored and restored[0]["command"] == "activate"
     finally:
         secondary.close()
         primary.close()
