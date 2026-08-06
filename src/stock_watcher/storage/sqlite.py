@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -18,6 +20,9 @@ class SQLiteStore:
 
     CURRENT_SCHEMA_VERSION: ClassVar[int] = 6
 
+    _SQLITE_MAGIC = b"SQLite format 3\x00"
+    last_recovery: dict[str, object] | None = None
+
     def connect(self) -> sqlite3.Connection:
         connection = (
             sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
@@ -30,6 +35,9 @@ class SQLiteStore:
         return connection
 
     def initialize(self) -> None:
+        self.last_recovery = None
+        if not self.read_only and self.path.exists() and not self._looks_like_sqlite():
+            self._restore_from_backup()
         try:
             with self.connect() as connection:
                 connection.execute(
@@ -46,6 +54,49 @@ class SQLiteStore:
             if self.path.exists():
                 self.read_only = True
             raise
+
+    def _looks_like_sqlite(self) -> bool:
+        try:
+            with self.path.open("rb") as handle:
+                return handle.read(16) == self._SQLITE_MAGIC
+        except OSError:
+            return False
+
+    def _restore_from_backup(self) -> None:
+        """Recover a damaged database file from the newest valid pre-migration backup.
+
+        The damaged file is preserved as <name>.corrupt for forensics instead of
+        being overwritten, and every recovery attempt is recorded on
+        ``self.last_recovery`` so callers can surface it in logs and the UI.
+        """
+        candidates = sorted(
+            self.path.parent.glob(f"{self.path.name}.pre-v*.bak"), reverse=True
+        )
+        for backup in candidates:
+            try:
+                with backup.open("rb") as handle:
+                    if handle.read(16) != self._SQLITE_MAGIC:
+                        continue
+            except OSError:
+                continue
+            corrupt = self.path.with_suffix(f"{self.path.suffix}.corrupt")
+            corrupt.unlink(missing_ok=True)
+            self.path.replace(corrupt)
+            shutil.copy2(backup, self.path)
+            match = re.search(r"pre-v(\d+)\.bak$", backup.name)
+            self.last_recovery = {
+                "restored_at": datetime.now().isoformat(),
+                "source_backup": backup.name,
+                "restored_schema_version": int(match.group(1)) if match else None,
+                "preserved_corrupt_file": corrupt.name,
+            }
+            return
+        self.read_only = True
+        self.last_recovery = {
+            "restored": False,
+            "reason": "database file is not SQLite and no valid backup exists",
+        }
+        raise sqlite3.DatabaseError(self.last_recovery["reason"])
 
     def _schema_version(self, connection: sqlite3.Connection) -> int:
         row = connection.execute(

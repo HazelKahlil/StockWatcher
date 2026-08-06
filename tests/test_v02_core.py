@@ -822,3 +822,38 @@ def test_export_selection_audit_generates_full_machine_readable_set(
     alert_csv = (output / "alert-events.csv").read_text(encoding="utf-8")
     assert "600001" in alert_csv
     assert (output / "stable-top3-timeline.csv").read_text(encoding="utf-8").count("600001") >= 1
+
+
+def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
+    """A non-SQLite database file is replaced by the newest valid backup."""
+    path = tmp_path / "watcher.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_version VALUES (5, '2026-08-06T09:45:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
+    store = SQLiteStore(path)
+    store.initialize()  # v5 -> v6, creates .pre-v6.bak
+    with store.connect() as connection:
+        connection.execute("INSERT INTO notes (key, value) VALUES ('probe', 'kept')")
+
+    with path.open("r+b") as handle:
+        handle.write(b"lxml._elementpath, lxml.etree, numpy (total: 69)")
+    assert path.read_bytes()[:16] != b"SQLite format 3\x00"
+
+    recovered = SQLiteStore(path)
+    recovered.initialize()
+    assert recovered.last_recovery is not None
+    assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'probe'"
+        ).fetchone() == ("kept",)
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert path.with_suffix(".sqlite3.corrupt").exists()

@@ -194,6 +194,11 @@ class TushareV1Session:
         self._runtime_session_active = False
         self._active_scan_attempt_id: str | None = None
         self._runtime_audit_issue: str | None = None
+        recovery = getattr(self.store, "last_recovery", None)
+        if recovery:
+            self._runtime_audit_issue = (
+                f"db-recovery:{recovery.get('source_backup', 'unknown')}"
+            )
         self.last_scan_succeeded_at: datetime | None = None
         self._recovery_round = 0
         self._stall_threshold_seconds = 90.0
