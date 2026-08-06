@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -45,6 +47,8 @@ SUMMARY = {
 @pytest.fixture()
 def live_fixture_db(tmp_path: Path) -> tuple[SQLiteStore, dict[str, object]]:
     live = Path.home() / "Library/Application Support/StockWatcher/data/stock-watcher.sqlite3"
+    if not live.is_file():
+        pytest.skip(f"8-06 live SQLite fixture is unavailable: {live}")
     db_path = tmp_path / "fixture.sqlite3"
     with sqlite3.connect(live) as source, sqlite3.connect(db_path) as target:
         source.backup(target)
@@ -78,9 +82,12 @@ def test_local_fallback_real_fixture_uses_1445_top3_and_successful_timeline(
 
     pdf = tmp_path / "reports/2026-08-06-A股盘后回顾.pdf"
     assert pdf.read_bytes().count(b"/Type /Page\n") == 2
-    text = __import__("subprocess").check_output(
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext is unavailable; semantic PDF text extraction is skipped")
+    text = subprocess.check_output(
         ["pdftotext", "-layout", str(pdf), "-"], text=True
     )
+
     assert "A股盘后本地运行总结（盘后增强数据未取得）" in text
     assert "09:45固定提醒" in text and "成功" in text
     assert "14:45固定提醒" in text and "成功" in text
@@ -124,11 +131,59 @@ def test_local_fallback_source_update_invalidates_manifest(
     )
 
 
+def test_manifest_renderer_version_change_invalidates_pdf(
+    live_fixture_db: tuple[SQLiteStore, dict[str, object]],
+    tmp_path: Path,
+) -> None:
+    store, summary = live_fixture_db
+    reports_dir = tmp_path / "reports"
+    write_local_fallback_artifacts(
+        store,
+        summary,
+        reports_dir=reports_dir,
+        now=datetime.fromisoformat(str(summary["generated_at"])),
+        source_commit_value="b84c0bd04a41eaed343ebf7e99ecaab4998a921e",
+    )
+    source = reports_dir / "2026-08-06-local-summary.json"
+    pdf = reports_dir / "2026-08-06-A股盘后回顾.pdf"
+    manifest = pdf.with_name(f"{pdf.name}.meta.json")
+    value = manifest.read_text(encoding="utf-8").replace(
+        '"renderer_version": "local-fallback-brief-v1"',
+        '"renderer_version": "old-renderer"',
+    )
+    manifest.write_text(value, encoding="utf-8")
+    assert not manifest_is_current(
+        pdf,
+        source_path=source,
+        report_mode="local_fallback",
+        source_version="daily-summary-local-fallback-v2",
+        source_generated_at=str(summary["generated_at"]),
+        source_commit_value="b84c0bd04a41eaed343ebf7e99ecaab4998a921e",
+    )
+
+
 def test_full_renderer_rejects_local_summary_and_never_uses_closing_performance(
     tmp_path: Path,
 ) -> None:
+    local_record = dict(SUMMARY)
+    local_record.update(
+        {
+            "report_mode": "local_fallback",
+            "market": {"securities": 1},
+            "market_segments": [],
+            "top_sectors": [],
+            "top3": [{"code": "x", "name": "x"}] * 3,
+            "source_coverage": {"local": True},
+            "data_limitations": [],
+        }
+    )
+    with pytest.raises(ValueError, match="cannot render local_fallback"):
+        render_post_close_pdf(local_record, tmp_path / "wrong.pdf")
+
+
+def test_incomplete_full_renderer_record_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="missing required fields"):
-        render_post_close_pdf(dict(SUMMARY), tmp_path / "wrong.pdf")
+        render_post_close_pdf(dict(SUMMARY), tmp_path / "wrong-incomplete.pdf")
 
 
 def test_local_model_round_trip_preserves_explicit_mode() -> None:

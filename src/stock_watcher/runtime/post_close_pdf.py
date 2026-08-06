@@ -27,11 +27,13 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from stock_watcher.runtime.post_close_report_model import FULL_MARKET_RENDERER_VERSION
+
 REPORT_RETENTION_DAYS = 31
 REPORT_STEM_SUFFIX = "-A股盘后回顾"
 # Human Owner accepted this visual contract on 2026-07-31. Any layout change
 # requires an explicit decision and a version bump; daily exports only replace data.
-POST_CLOSE_PDF_LAYOUT_VERSION = "research-brief-v1"
+POST_CLOSE_PDF_LAYOUT_VERSION = FULL_MARKET_RENDERER_VERSION
 _FONT = "StockWatcherSans"
 _FONT_MEDIUM = "StockWatcherSansMedium"
 _INK = colors.HexColor("#172236")
@@ -102,7 +104,9 @@ class _MarketBreadthBar(Flowable):  # type: ignore[misc]
 
 
 def validate_full_market_record(record: Mapping[str, Any]) -> None:
-    """Reject a local fallback record before it can reach the full renderer."""
+    """Reject local fallback records before they reach the full renderer."""
+    if record.get("report_mode") == "local_fallback":
+        raise ValueError("full_market PDF renderer cannot render local_fallback records")
     required = {
         "market",
         "market_segments",

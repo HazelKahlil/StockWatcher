@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 LOCAL_FALLBACK_SOURCE_VERSION = "daily-summary-local-fallback-v2"
 LOCAL_FALLBACK_RENDERER_VERSION = "local-fallback-brief-v1"
+FULL_MARKET_RENDERER_VERSION = "research-brief-v1"
 PDF_MANIFEST_VERSION = "pdf-manifest-v1"
 
 
@@ -288,7 +289,7 @@ def write_pdf_manifest(
         "renderer_version": (
             LOCAL_FALLBACK_RENDERER_VERSION
             if report_mode == "local_fallback"
-            else "research-brief-v1"
+            else FULL_MARKET_RENDERER_VERSION
         ),
         "report_mode": report_mode,
         "source_version": source_version,
@@ -321,8 +322,14 @@ def manifest_is_current(
         manifest = json.loads(manifest_path_for(pdf_path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
+    expected_renderer_version = (
+        LOCAL_FALLBACK_RENDERER_VERSION
+        if report_mode == "local_fallback"
+        else FULL_MARKET_RENDERER_VERSION
+    )
     expected = {
         "manifest_version": PDF_MANIFEST_VERSION,
+        "renderer_version": expected_renderer_version,
         "report_mode": report_mode,
         "source_version": source_version,
         "source_generated_at": source_generated_at,
