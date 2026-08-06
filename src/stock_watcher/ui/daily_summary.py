@@ -23,11 +23,18 @@ from PySide6.QtWidgets import (
 
 from stock_watcher.domain import SHANGHAI
 from stock_watcher.paths import report_directory_for_database
+from stock_watcher.runtime.local_summary_pdf import render_local_fallback_pdf
 from stock_watcher.runtime.post_close_pdf import (
     REPORT_RETENTION_DAYS,
     list_post_close_report_dates,
     prune_post_close_reports,
     render_post_close_pdf,
+)
+from stock_watcher.runtime.post_close_report_model import (
+    LocalFallbackReport,
+    manifest_is_current,
+    write_local_fallback_artifacts,
+    write_pdf_manifest,
 )
 from stock_watcher.storage import SQLiteStore
 
@@ -219,19 +226,72 @@ class DailySummaryDialog(QDialog):
     def _ensure_internal_pdf(self, trade_date: str) -> Path:
         stem = f"{trade_date}-A股盘后回顾"
         pdf_path = self._reports_dir / f"{stem}.pdf"
-        if pdf_path.is_file():
-            return pdf_path
-        record_path = self._reports_dir / f"{stem}.json"
-        if record_path.is_file():
-            record = json.loads(record_path.read_text(encoding="utf-8"))
+        full_record_path = self._reports_dir / f"{stem}.json"
+        local_record_path = self._reports_dir / f"{trade_date}-local-summary.json"
+        if full_record_path.is_file():
+            record = json.loads(full_record_path.read_text(encoding="utf-8"))
             if not isinstance(record, dict):
                 raise ValueError("报告JSON格式无效")
-        else:
-            summary = self._summaries.get(trade_date)
-            if summary is None:
-                raise ValueError("没有找到这一天的报告数据")
-            record = dict(summary)
-        return render_post_close_pdf(record, pdf_path)
+            source_version = str(record.get("version", "full-market-v1"))
+            source_generated_at = str(record.get("generated_at", ""))
+            if not manifest_is_current(
+                pdf_path,
+                source_path=full_record_path,
+                report_mode="full_market",
+                source_version=source_version,
+                source_generated_at=source_generated_at,
+            ):
+                temporary = pdf_path.with_name(f".{pdf_path.name}.tmp")
+                render_post_close_pdf(record, temporary)
+                temporary.replace(pdf_path)
+                write_pdf_manifest(
+                    pdf_path,
+                    source_path=full_record_path,
+                    report_mode="full_market",
+                    source_version=source_version,
+                    source_generated_at=source_generated_at,
+                )
+            return pdf_path
+        if local_record_path.is_file():
+            source = json.loads(local_record_path.read_text(encoding="utf-8"))
+            if not isinstance(source, dict):
+                raise ValueError("本地总结JSON格式无效")
+            report = LocalFallbackReport.from_record(source)
+            if not manifest_is_current(
+                pdf_path,
+                source_path=local_record_path,
+                report_mode="local_fallback",
+                source_version=report.source_version,
+                source_generated_at=report.source_generated_at,
+                source_commit_value=report.source_commit,
+            ):
+                temporary = pdf_path.with_name(f".{pdf_path.name}.tmp")
+                render_local_fallback_pdf(report, temporary)
+                temporary.replace(pdf_path)
+                write_pdf_manifest(
+                    pdf_path,
+                    source_path=local_record_path,
+                    report_mode="local_fallback",
+                    source_version=report.source_version,
+                    source_generated_at=report.source_generated_at,
+                    source_commit_value=report.source_commit,
+                )
+            return pdf_path
+        summary = self._summaries.get(trade_date)
+        if summary is None:
+            raise ValueError("没有找到这一天的报告数据")
+        source = SQLiteStore(self._path)
+        source.initialize()
+        generated_at = datetime.fromisoformat(
+            str(summary.get("generated_at", ""))
+        )
+        write_local_fallback_artifacts(
+            source,
+            summary,
+            reports_dir=self._reports_dir,
+            now=generated_at,
+        )
+        return pdf_path
 
     def _selected_trade_date(self) -> str | None:
         value = self.date_selector.currentData()

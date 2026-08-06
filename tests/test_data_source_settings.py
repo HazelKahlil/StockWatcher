@@ -342,7 +342,10 @@ def test_daily_summary_dialog_lists_only_recent_month_and_builds_pdf(
     assert store.get_daily_summary("2026-06-20") is None
     pdf = dialog._ensure_internal_pdf("2026-07-30")
     assert pdf.is_file()
-    assert pdf.read_bytes().count(b"/Type /Page\n") == 3
+    assert pdf.read_bytes().count(b"/Type /Page\n") == 2
+    manifest = pdf.with_name(f"{pdf.name}.meta.json")
+    assert manifest.is_file()
+    assert '"report_mode": "local_fallback"' in manifest.read_text(encoding="utf-8")
 
     dialog.close()
     app.processEvents()

@@ -11,6 +11,7 @@ from stock_watcher.engine import PostCloseReview, build_post_close_review
 from stock_watcher.providers.tushare.models import Record, TransportResult
 
 from .post_close_pdf import prune_post_close_reports, render_post_close_pdf
+from .post_close_report_model import write_pdf_manifest
 
 
 class PostCloseDataProvider(Protocol):
@@ -113,9 +114,7 @@ def collect_post_close_review(
         if day == trade_date:
             continue
         try:
-            daily_by_date[day] = provider.daily_bars(
-                trade_date=day.strftime("%Y%m%d")
-            ).records
+            daily_by_date[day] = provider.daily_bars(trade_date=day.strftime("%Y%m%d")).records
         except Exception:
             optional_failures.append(f"daily:{day.isoformat()}")
             break
@@ -133,9 +132,7 @@ def collect_post_close_review(
             previous_adjustments = provider.adjustment_factors(
                 trade_date=review_dates[-2].strftime("%Y%m%d")
             ).records
-            current_adjustments = provider.adjustment_factors(
-                trade_date=compact
-            ).records
+            current_adjustments = provider.adjustment_factors(trade_date=compact).records
         except Exception:
             optional_failures.append("adjustment_factor")
     else:
@@ -157,9 +154,7 @@ def collect_post_close_review(
     return PostCloseReviewCollection(
         review=review,
         stock_record_count=len(stocks.records),
-        daily_record_counts={
-            day.isoformat(): len(rows) for day, rows in daily_by_date.items()
-        },
+        daily_record_counts={day.isoformat(): len(rows) for day, rows in daily_by_date.items()},
         moneyflow_record_count=len(moneyflow_records),
         open_dates_checked=len(open_dates),
         mechanical_jump_exclusions=len(mechanical_codes),
@@ -193,13 +188,8 @@ def application_summary_record(
         "trade_date": review.trade_date,
         "generated_at": review.generated_at,
         "alert_count": alert_count,
-        "top_sectors": [
-            [sector.name, sector.strong_count]
-            for sector in review.top_sectors[:3]
-        ],
-        "repeated_candidates": [
-            [candidate.name, 1] for candidate in review.top3
-        ],
+        "top_sectors": [[sector.name, sector.strong_count] for sector in review.top_sectors[:3]],
+        "repeated_candidates": [[candidate.name, 1] for candidate in review.top3],
         "closing_performance": [
             {
                 "code": candidate.code,
@@ -263,6 +253,13 @@ def write_post_close_report(
         ),
     )
     _atomic_render_pdf(record, pdf_path)
+    write_pdf_manifest(
+        pdf_path,
+        source_path=json_path,
+        report_mode="full_market",
+        source_version=str(record.get("version", "full-market-v1")),
+        source_generated_at=str(record.get("generated_at", "")),
+    )
     prune_post_close_reports(
         reports_dir,
         reference_date=date.fromisoformat(str(trade_date)),
@@ -343,15 +340,9 @@ def render_post_close_markdown(
     for candidate in review.top3:
         lines.extend(
             [
-                (
-                    f"### {candidate.rank}. {candidate.name} "
-                    f"({candidate.code}) · {candidate.level}"
-                ),
+                (f"### {candidate.rank}. {candidate.name} ({candidate.code}) · {candidate.level}"),
                 "",
-                (
-                    f"- 收盘价 ¥{candidate.close:.2f}，"
-                    f"当日涨跌 {candidate.change_pct:+.2f}%"
-                ),
+                (f"- 收盘价 ¥{candidate.close:.2f}，当日涨跌 {candidate.change_pct:+.2f}%"),
                 f"- 行业：{candidate.sector}",
                 f"- 依据：{'；'.join(candidate.reasons)}",
                 "",
