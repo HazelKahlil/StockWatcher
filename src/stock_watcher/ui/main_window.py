@@ -421,6 +421,11 @@ class MainWindow(QMainWindow):
         self._heartbeat_timer.setInterval(30_000)
         self._heartbeat_timer.timeout.connect(self._heartbeat_tick)
         self._heartbeat_timer.start()
+        self._summary_check_timer = QTimer(self)
+        self._summary_check_timer.setInterval(60_000)
+        self._summary_check_timer.timeout.connect(self._summary_check_tick)
+        if not self.session.is_replay:
+            self._summary_check_timer.start()
         self._operation_progress_timer.setInterval(1000)
         self._operation_progress_timer.timeout.connect(self._refresh)
         if not self.session.is_replay:
@@ -1015,6 +1020,12 @@ class MainWindow(QMainWindow):
         if callable(heartbeat):
             heartbeat()
 
+    def _summary_check_tick(self) -> None:
+        """Decoupled 15:30 scheduler entry; never blocks on the scan loop."""
+        check = getattr(self.session, "check_automation_tasks", None)
+        if callable(check):
+            check()
+
     def _clear_initial_data_source_dialog(self, _result: int) -> None:
         self._initial_data_source_dialog = None
 
@@ -1034,6 +1045,7 @@ class MainWindow(QMainWindow):
         self._auto_check_timer.stop()
         self._operation_progress_timer.stop()
         self._heartbeat_timer.stop()
+        self._summary_check_timer.stop()
         self._queued_manual_fetch = False
         if self._operation_thread is not None and self._operation_thread.isRunning():
             self._operation_thread.quit()

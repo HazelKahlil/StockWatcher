@@ -532,3 +532,83 @@ def test_scan_stall_records_event_and_enters_recovery(tmp_path: Path) -> None:
         assert session.state is HealthState.WARMING
     finally:
         session.shutdown(exit_reason="menu_quit")
+
+
+def _seed_healthy_scan_run(
+    store: SQLiteStore,
+    trade_date: str,
+    times: list[str],
+) -> None:
+    for completed in times:
+        store.record_scan_run(
+            {
+                "started_at": completed,
+                "completed_at": completed,
+                "trigger_type": "automatic",
+                "task_key": None,
+                "health": HealthState.HEALTHY.value,
+                "detail": "正常",
+                "stable_batch_json": '{"candidates": []}',
+                "audit_json": "{}",
+            }
+        )
+
+
+def test_summary_scheduler_runs_decoupled_from_scan_loop(tmp_path: Path) -> None:
+    """check_automation_tasks reaches a terminal state without any scan."""
+    now = datetime(2026, 8, 6, 15, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "summary.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        _seed_healthy_scan_run(
+            session.store,
+            "2026-08-06",
+            ["2026-08-06T09:50:00+08:00", "2026-08-06T09:50:10+08:00"],
+        )
+        session.check_automation_tasks(now=now)
+        task = session.store.get_automation_task("2026-08-06:summary-15:30")
+        assert task is not None
+        assert task["state"] == "succeeded"
+        summary = session.store.get_daily_summary("2026-08-06")
+        assert summary is not None
+        assert summary["catch_up"] == 0
+        assert "最长无扫描间隔" in summary["health_summary"]
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_summary_catch_up_marks_catch_up_flag(tmp_path: Path) -> None:
+    """A 15:32 launch catches up and records catch_up=true."""
+    now = datetime(2026, 8, 6, 15, 32, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "catchup.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        _seed_healthy_scan_run(
+            session.store,
+            "2026-08-06",
+            ["2026-08-06T09:50:00+08:00"],
+        )
+        session.check_automation_tasks(now=now)
+        summary = session.store.get_daily_summary("2026-08-06")
+        assert summary is not None
+        assert summary["catch_up"] == 1
+        task = session.store.get_automation_task("2026-08-06:summary-15:30")
+        assert task is not None
+        assert task["state"] == "succeeded"
+        assert "catch_up=true" in str(task["detail"])
+    finally:
+        session.shutdown(exit_reason="menu_quit")

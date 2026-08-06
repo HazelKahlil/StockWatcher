@@ -243,6 +243,14 @@ class SQLiteStore:
             "CREATE INDEX IF NOT EXISTS idx_runtime_events_session_time "
             "ON runtime_events(session_id, occurred_at)"
         )
+        summary_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(daily_summaries)")
+        }
+        if "catch_up" not in summary_columns:
+            connection.execute(
+                "ALTER TABLE daily_summaries ADD COLUMN catch_up INTEGER NOT NULL DEFAULT 0"
+            )
 
 
     @staticmethod
@@ -1118,7 +1126,8 @@ class SQLiteStore:
                 "INSERT OR REPLACE INTO daily_summaries "
                 "(trade_date, generated_at, alert_count, top_sectors_json, "
                 "repeated_candidates_json, closing_performance_json, fund_summary, "
-                "health_summary, summary_text, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "health_summary, summary_text, version, catch_up) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(summary["trade_date"]),
                     str(summary["generated_at"]),
@@ -1138,6 +1147,7 @@ class SQLiteStore:
                     str(summary["health_summary"]),
                     str(summary["summary_text"]),
                     str(summary["version"]),
+                    int(summary.get("catch_up", 0)),
                 ),
             )
 
@@ -1146,7 +1156,7 @@ class SQLiteStore:
             row = connection.execute(
                 "SELECT trade_date, generated_at, alert_count, top_sectors_json, "
                 "repeated_candidates_json, closing_performance_json, fund_summary, "
-                "health_summary, summary_text, version "
+                "health_summary, summary_text, version, catch_up "
                 "FROM daily_summaries WHERE trade_date = ?",
                 (trade_date,),
             ).fetchone()
@@ -1163,6 +1173,7 @@ class SQLiteStore:
             "health_summary": row[7],
             "summary_text": row[8],
             "version": row[9],
+            "catch_up": row[10],
         }
 
     def list_daily_summaries(self, *, since: date) -> list[dict[str, Any]]:

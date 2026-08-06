@@ -905,6 +905,29 @@ class TushareV1Session:
             increment_attempt=increment_attempt,
         )
 
+    def check_automation_tasks(self, *, now: datetime | None = None) -> None:
+        """Independent 15:30 scheduling entry, decoupled from the scan loop.
+
+        The summary obligation must reach a terminal state even when the
+        realtime scan loop is stalled, sleeping or restarting.  A late launch
+        still catches up with catch_up=True.
+        """
+        current = _shanghai(now or self._clock())
+        if current.date().weekday() >= 5:
+            return
+        summary_task = next(
+            (
+                spec
+                for spec in self._prepare_automation_tasks(current)
+                if spec.task_type is AutomationTaskType.SUMMARY_1530
+            ),
+            None,
+        )
+        if summary_task is None:
+            return
+        catch_up = current > summary_task.target_at + timedelta(minutes=1)
+        self._execute_summary_task(current, summary_task, catch_up=catch_up)
+
     def _record_scan_run(
         self,
         outcome: ScanOutcome,
@@ -969,15 +992,21 @@ class TushareV1Session:
         self,
         now: datetime,
         spec: AutomationTaskSpec,
+        *,
+        catch_up: bool = False,
     ) -> None:
         if self._summary_retry_at is not None and now < self._summary_retry_at:
             return
         self._mark_task_running(spec, now)
-        if self._generate_summary(now):
+        if self._generate_summary(now, catch_up=catch_up):
             self._mark_task_succeeded(
                 spec,
                 now,
-                detail="15:30本地总结已生成；外部增强可降级。",
+                detail=(
+                    "15:30补生成总结（catch_up=true）。"
+                    if catch_up
+                    else "15:30本地总结已生成；外部增强可降级。"
+                ),
             )
             return
         self.store.update_automation_task(
@@ -1011,7 +1040,7 @@ class TushareV1Session:
         )
         return snapshot_id
 
-    def _generate_summary(self, now: datetime) -> bool:
+    def _generate_summary(self, now: datetime, *, catch_up: bool = False) -> bool:
         """Generate the 15:30 summary with a local-first fallback.
 
         External daily/sector enrichment is useful but it must never erase the
@@ -1075,7 +1104,9 @@ class TushareV1Session:
                     collection,
                     alert_count=len(history),
                     health_interruption_count=interruption_count,
+                    continuity_evidence=self._collect_continuity_evidence(trade_date),
                 )
+                summary["catch_up"] = 1 if catch_up else 0
                 self.store.record_daily_summary(summary)
                 write_post_close_report(
                     collection,
@@ -1098,6 +1129,8 @@ class TushareV1Session:
                 alert_history=history,
                 observation_history=observations,
                 health_interruption_count=interruption_count,
+                continuity_evidence=self._collect_continuity_evidence(trade_date),
+                catch_up=catch_up,
                 version="daily-summary-local-fallback-v1",
             ).as_record()
             try:
@@ -1112,6 +1145,87 @@ class TushareV1Session:
         self._summary_retry_at = None
         self._summary_issue = None
         return True
+
+    def _collect_continuity_evidence(self, trade_date: str) -> str:
+        """Report real continuity facts; never assume an uneventful day."""
+        runs = [
+            row
+            for row in self.store.list_scan_runs(trade_date)
+            if row.get("completed_at") and row.get("health") == HealthState.HEALTHY.value
+        ]
+        timestamps: list[datetime] = []
+        for row in runs:
+            parsed = _parsed_datetime(str(row["completed_at"]))
+            if parsed is not None:
+                timestamps.append(parsed)
+        timestamps.sort()
+        gaps: list[tuple[float, datetime, datetime]] = []
+        for previous, current in zip(timestamps, timestamps[1:]):
+            delta = (current - previous).total_seconds()
+            if delta > 0:
+                gaps.append((delta, previous, current))
+        parts: list[str] = []
+        if gaps:
+            longest, gap_start, gap_end = max(gaps)
+            trading = (
+                _trading_block(gap_start) == _trading_block(gap_end) > 0
+            )
+            parts.append(
+                f"最长无扫描间隔{_format_duration(longest)}（{gap_start:%H:%M}→{gap_end:%H:%M}"
+                f"{'，位于交易时段内' if trading else '，位于非交易时段'}）"
+            )
+        sessions = self.store.list_runtime_sessions(trade_date)
+        if len(sessions) > 1:
+            parts.append(f"进程重启{len(sessions) - 1}次")
+        event_counts: dict[str, int] = {}
+        for session in sessions:
+            for event in self.store.list_runtime_events(str(session["session_id"])):
+                occurred = str(event.get("occurred_at", ""))
+                if not occurred.startswith(trade_date):
+                    continue
+                event_type = str(event.get("event_type", ""))
+                event_counts[event_type] = event_counts.get(event_type, 0) + 1
+        if event_counts.get("sleep_detected"):
+            parts.append(f"睡眠{event_counts['sleep_detected']}次")
+        if event_counts.get("scan_stalled"):
+            parts.append(f"扫描器自恢复{event_counts['scan_stalled']}次")
+        for task in self.store.list_automation_tasks(trade_date):
+            key = str(task.get("task_key", ""))
+            state = str(task.get("state", ""))
+            if "09:45" in key:
+                parts.append(f"09:45提醒{state}")
+            elif "14:45" in key:
+                parts.append(f"14:45提醒{state}")
+            elif "15:30" in key:
+                parts.append(f"15:30总结{state}")
+        intraday_count = len(
+            [
+                row
+                for row in self.store.list_alert_history(
+                    now=datetime.combine(
+                        datetime.fromisoformat(trade_date).date(),
+                        time(15, 31),
+                        tzinfo=SHANGHAI,
+                    ),
+                    days=1,
+                )
+                if str(row.get("trigger_type", "")).startswith("intraday")
+            ]
+        )
+        if intraday_count:
+            parts.append(f"盘中强异动提醒{intraday_count}批")
+        universe = getattr(self._runtime, "universe", None)
+        concept_state = (
+            "已加载"
+            if universe is not None and universe.concept_loaded
+            else (
+                self._universe_refresh_issue
+                if self._universe_refresh_issue is not None
+                else "未加载（使用行业上下文）"
+            )
+        )
+        parts.append(f"概念缓存：{concept_state}")
+        return "；".join(parts) if parts else "未记录到扫描或连续性事件。"
 
     def _local_summary_observations(self, trade_date: str) -> list[dict[str, object]]:
         rows = [
@@ -2094,3 +2208,9 @@ def _trading_block(ts: datetime) -> int:
     if time(13, 0) <= current <= time(15, 0):
         return 2
     return 0
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds >= 60:
+        return f"{int(seconds // 60)}分{int(seconds % 60)}秒"
+    return f"{int(seconds)}秒"
