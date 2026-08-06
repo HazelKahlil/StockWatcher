@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from threading import Lock
+from threading import Lock, current_thread
 from time import monotonic as monotonic_time
 from time import sleep as sleep_seconds
 from typing import cast
 
+from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
 from stock_watcher.domain import SHANGHAI, HealthState
 from stock_watcher.engine import (
@@ -187,10 +190,15 @@ class TushareV1Session:
         self._platform_recovery_lock = Lock()
         self._platform_recovery_reason: str | None = None
         self._network_interrupted = False
+        self._runtime_session_id = uuid.uuid4().hex
+        self._runtime_session_active = False
+        self._active_scan_attempt_id: str | None = None
+        self._runtime_audit_issue: str | None = None
         self.app_badge = "Mac V1" if sys.platform == "darwin" else "Windows V1"
         self._alert_client_platform = (
             "macos-desktop" if sys.platform == "darwin" else "windows-desktop"
         )
+        self._start_runtime_session()
         self._refresh_credential_state()
 
     def provider_changed(self, mode: DataSourceMode) -> None:
@@ -1492,7 +1500,123 @@ class TushareV1Session:
             capability_checks=self.capability_checks,
         )
 
-    def shutdown(self) -> None:
+    def _start_runtime_session(self) -> None:
+        """Persist process provenance; audit failures never block the UI."""
+        try:
+            now = datetime.now(SHANGHAI).isoformat()
+            self.store.start_runtime_session(
+                session_id=self._runtime_session_id,
+                pid=os.getpid(),
+                ppid=os.getppid(),
+                app_path=_application_path(),
+                source_commit=source_commit(),
+                started_at=now,
+            )
+            self._runtime_session_active = True
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-session:{type(error).__name__}"
+
+    def heartbeat(self, *, now: datetime | None = None) -> None:
+        """Write a lightweight heartbeat every timer tick."""
+        if not self._runtime_session_active:
+            return
+        try:
+            heartbeat_at = _shanghai(now or self._clock()).isoformat()
+            self.store.heartbeat_runtime_session(
+                self._runtime_session_id,
+                heartbeat_at,
+                last_scan_at=self.last_fetch_at.isoformat()
+                if self.last_fetch_at is not None
+                else None,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-heartbeat:{type(error).__name__}"
+
+    def record_window_activation(self, *, now: datetime | None = None) -> None:
+        if not self._runtime_session_active:
+            return
+        try:
+            self.store.heartbeat_runtime_session(
+                self._runtime_session_id,
+                _shanghai(now or self._clock()).isoformat(),
+                last_window_activation_at=_shanghai(now or self._clock()).isoformat(),
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"window-activation:{type(error).__name__}"
+
+    def record_platform_event(
+        self,
+        event_type: str,
+        *,
+        now: datetime | None = None,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        if not self._runtime_session_active:
+            return
+        try:
+            self.store.record_runtime_event(
+                session_id=self._runtime_session_id,
+                occurred_at=_shanghai(now or self._clock()).isoformat(),
+                event_type=event_type,
+                detail=detail,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-event:{type(error).__name__}"
+
+    def _begin_scan_attempt(self, *, now: datetime, operation: str) -> str | None:
+        if not self._runtime_session_active:
+            return None
+        attempt_id = uuid.uuid4().hex
+        try:
+            self.store.start_scan_attempt(
+                attempt_id=attempt_id,
+                session_id=self._runtime_session_id,
+                started_at=now.isoformat(),
+                operation=operation,
+                thread_name=current_thread().name,
+                timer_active=True,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"scan-attempt-start:{type(error).__name__}"
+            return None
+        self._active_scan_attempt_id = attempt_id
+        return attempt_id
+
+    def _finish_scan_attempt(
+        self,
+        attempt_id: str | None,
+        *,
+        completed_at: datetime,
+        state: str,
+        detail: str,
+    ) -> None:
+        if attempt_id is None:
+            return
+        try:
+            self.store.finish_scan_attempt(
+                attempt_id,
+                completed_at.isoformat(),
+                state=state,
+                detail=detail,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"scan-attempt-finish:{type(error).__name__}"
+        finally:
+            if self._active_scan_attempt_id == attempt_id:
+                self._active_scan_attempt_id = None
+
+    def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+        if self._runtime_session_active:
+            try:
+                self.store.end_runtime_session(
+                    self._runtime_session_id,
+                    _shanghai(self._clock()).isoformat(),
+                    exit_reason=exit_reason,
+                    graceful_exit=True,
+                )
+            except Exception as error:
+                self._runtime_audit_issue = f"runtime-end:{type(error).__name__}"
+            self._runtime_session_active = False
         if self.capability_checks is not None:
             self.capability_checks.shutdown()
         self._universe_executor.shutdown(wait=False, cancel_futures=True)
@@ -1570,6 +1694,14 @@ class TushareV1Session:
             }
         )
         self._failure_active = True
+
+
+def _application_path() -> str:
+    executable = Path(sys.executable).resolve()
+    for parent in (executable, *executable.parents):
+        if parent.suffix == ".app":
+            return str(parent)
+    return str(Path(sys.argv[0]).resolve())
 
 
 def _runtime_factory(
