@@ -653,10 +653,13 @@ def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
 
     Qt maps kAEQuitApplication to closeAllWindows(); our window hides instead of
     closing, so a Dock Quit / logout / osascript quit is silently swallowed the
-    first time.  Registering a Carbon AEInstallEventHandler puts our handler at
-    the front of the AppleEvent dispatch chain; returning noErr lets us run the
-    graceful-exit path while Qt never sees the event.  The Carbon framework is a
-    system library loaded at runtime, so nothing extra is bundled.
+    first time.  AEInstallEventHandler queues our handler *behind* Qt's (which
+    was registered earlier), so we use AESetEventHandler to replace Qt's handler
+    for the quit event instead; returning noErr then runs our graceful-exit path
+    while Qt never sees the event.  The callback is marshalled to the Qt main
+    thread with QTimer.singleShot so AppleEvent dispatch never touches Qt or
+    database objects from a foreign thread.  The Carbon framework is a system
+    library loaded at runtime, so nothing extra is bundled.
     """
     global _AE_INSTALLED
     if _AE_INSTALLED:
@@ -676,24 +679,39 @@ def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
     def _on_quit_event(
         _event: int, _reply: int, _refcon: int
     ) -> int:
-        callback()
+        # Marshal to the Qt main thread: quit AppleEvents are dispatched on the
+        # AppleEvent manager's own thread, where touching Qt/DB objects is unsafe.
+        QTimer.singleShot(0, callback)
         return 0  # noErr: event consumed, do not fall through to Qt
 
-    carbon.AEInstallEventHandler.restype = ctypes.c_int32
-    carbon.AEInstallEventHandler.argtypes = [
+    function_pointer = ctypes.cast(_on_quit_event, ctypes.c_void_p)
+    carbon.AESetEventHandler.restype = ctypes.c_int32
+    carbon.AESetEventHandler.argtypes = [
         ctypes.c_uint32,
         ctypes.c_uint32,
         ctypes.c_void_p,
-        ctypes.c_int32,  # SRefCon is a 4-byte SInt32, not a pointer
-        ctypes.c_uint8,
+        ctypes.c_int32,
     ]
-    status = carbon.AEInstallEventHandler(
-        _AE_CARBON_CLASS,
-        _AE_QUIT_APPLICATION,
-        ctypes.cast(_on_quit_event, ctypes.c_void_p),
-        0,
-        0,
+    status = carbon.AESetEventHandler(
+        _AE_CARBON_CLASS, _AE_QUIT_APPLICATION, function_pointer, 0
     )
+    if status != 0:
+        # Fallback for systems where the setter is unavailable: queue behind Qt.
+        carbon.AEInstallEventHandler.restype = ctypes.c_int32
+        carbon.AEInstallEventHandler.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_int32,  # SRefCon is a 4-byte SInt32, not a pointer
+            ctypes.c_uint8,
+        ]
+        status = carbon.AEInstallEventHandler(
+            _AE_CARBON_CLASS,
+            _AE_QUIT_APPLICATION,
+            function_pointer,
+            0,
+            0,
+        )
     if status != 0:
         return False
     _AE_INSTALLED = True
