@@ -401,6 +401,10 @@ class MacApplicationLifecycle(QObject):
         self._window.enable_background_close()
         self._install_application_menu()
         self._app.installEventFilter(self)
+        # System-level quit (Cmd+Q, AppleEvent quit) bypasses the menu action and
+        # closeEvent; record it as a graceful exit so the next launch does not
+        # misreport the previous session as unclean.
+        self._app.aboutToQuit.connect(self._on_about_to_quit)
         self._app.applicationStateChanged.connect(self.handle_application_state)
         self._heartbeat.setInterval(5_000)
         self._heartbeat.timeout.connect(self.check_for_sleep_gap)
@@ -424,6 +428,24 @@ class MacApplicationLifecycle(QObject):
 
     def show_notification(self, title: str, subtitle: str) -> bool:
         return self.notifier.notify(title, subtitle)
+
+    def _on_about_to_quit(self) -> None:
+        """Record a graceful exit when quitting via the system (Cmd+Q, AppleEvent).
+
+        Idempotent: the menu path already ended the runtime session before this
+        signal fires, so a second call is a no-op.
+        """
+        if not self._enabled:
+            return
+        self._quitting = True
+        try:
+            self._keep_awake.shutdown()
+        except Exception:
+            pass
+        session = getattr(self._window, "session", None)
+        shutdown = getattr(session, "shutdown", None)
+        if callable(shutdown):
+            shutdown(exit_reason="app_quit_event")
 
     def request_quit(self) -> None:
         self._quitting = True

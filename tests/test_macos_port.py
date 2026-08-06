@@ -615,3 +615,24 @@ def test_cancelled_scan_response_cannot_form_a_market_snapshot() -> None:
 
     assert len(failure) == 1
     assert isinstance(failure[0], ScanCancelledError)
+
+
+def test_macos_lifecycle_records_graceful_quit_on_system_quit_event() -> None:
+    """Cmd+Q / AppleEvent quit must end the runtime session gracefully."""
+    app = application()
+    window = _LifecycleWindow()
+    calls: list[tuple[str, str]] = []
+
+    class _FakeSession:
+        def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+            calls.append(("shutdown", exit_reason))
+
+    window.session = _FakeSession()
+    lifecycle = MacApplicationLifecycle(
+        app,
+        cast(Any, window),
+        platform="darwin",
+        network_information=cast(QNetworkInformation, _FakeNetworkInformation()),
+    )
+    lifecycle._on_about_to_quit()
+    assert calls == [("shutdown", "app_quit_event")]
