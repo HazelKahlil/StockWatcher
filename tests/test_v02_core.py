@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 
 import pytest
@@ -22,6 +23,8 @@ from stock_watcher.runtime import TushareV1Runtime
 from stock_watcher.security import MemoryCredentialStore
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def stamp(minute: int = 45) -> datetime:
@@ -714,3 +717,108 @@ def test_strong_alert_fires_with_full_detail_when_ready(tmp_path: Path) -> None:
         assert detail["cooldown_decision"] == "strong-movement"
     finally:
         session.shutdown(exit_reason="menu_quit")
+
+
+def test_export_selection_audit_generates_full_machine_readable_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The export tool produces all nine required audit files."""
+    import importlib.util
+    import sys as sys_module
+
+    db = tmp_path / "audit.sqlite3"
+    store = SQLiteStore(db)
+    now = datetime(2026, 8, 6, 10, 5, 0, tzinfo=SHANGHAI)
+    base = batch(item("600001"), item("600002"), item("600003"))
+    assert base is not None
+    snapshot_id = store.record_batch(base)
+    store.record_alert_event(
+        snapshot_id,
+        now.isoformat(),
+        "strong-movement",
+        "macos-desktop",
+        trigger_type="intraday",
+        detail={"trigger_symbol": "600001", "feature_readiness": "ready"},
+    )
+    store.record_scan_run(
+        {
+            "started_at": now.isoformat(),
+            "completed_at": now.isoformat(),
+            "trigger_type": "automatic",
+            "task_key": None,
+            "health": HealthState.HEALTHY.value,
+            "detail": "正常",
+            "stable_batch_json": '{"candidates": []}',
+            "audit_json": (
+                '{"warmup_state": "ready", "raw_codes": ["600001", "600002", "600003"], '
+                '"stable_codes": ["600001", "600002", "600003"], '
+                '"rows": [{"raw_rank": 1, "code": "600001", "name": "样本600001", '
+                '"sector": "模拟板块", "sector_type": "industry", "total_score": 50.0, '
+                '"level": "强", "is_formal": true, "velocity_available": true, '
+                '"velocity_1m_pct": 1.2, "selected_raw": true, "selected_stable": true, '
+                '"decision": "displayed"}]}'
+            ),
+        }
+    )
+    store.start_runtime_session(
+        session_id="session-x",
+        pid=101,
+        ppid=1,
+        app_path="/Applications/StockWatcher.app",
+        source_commit="commit-a",
+        started_at=now.isoformat(),
+    )
+    store.record_runtime_event(
+        session_id="session-x",
+        occurred_at=now.isoformat(),
+        event_type="sleep_detected",
+        detail={"reason": "test"},
+    )
+    store.ensure_automation_task(
+        {
+            "task_key": "2026-08-06:summary-15:30",
+            "task_type": "summary-15:30",
+            "trade_date": "2026-08-06",
+            "target_at": "2026-08-06T15:30:00+08:00",
+            "deadline_at": "2026-08-06T17:30:00+08:00",
+            "state": "planned",
+            "updated_at": now.isoformat(),
+            "detail": "等待目标时间。",
+        }
+    )
+
+    script = ROOT / "scripts" / "export_selection_audit.py"
+    module_name = "stockwatcher_test_export_audit"
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys_module.modules[module_name] = module
+    assert isinstance(module, ModuleType)
+    spec.loader.exec_module(module)
+
+    output = tmp_path / "export"
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["export", str(db), "2026-08-06", str(output)],
+    )
+    assert module.main() == 0
+    expected = [
+        "scan-runs.json",
+        "scan-runs.csv",
+        "candidate-audit.csv",
+        "raw-top20.csv",
+        "stable-top3-timeline.csv",
+        "excluded-candidates.csv",
+        "automation-tasks.csv",
+        "runtime-sessions.csv",
+        "scheduler-events.csv",
+        "cache-status.csv",
+        "alert-events.csv",
+    ]
+    for name in expected:
+        assert (output / name).is_file(), name
+    alert_csv = (output / "alert-events.csv").read_text(encoding="utf-8")
+    assert "600001" in alert_csv
+    assert (output / "stable-top3-timeline.csv").read_text(encoding="utf-8").count("600001") >= 1
