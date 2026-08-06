@@ -16,7 +16,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 5
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 6
 
     def connect(self) -> sqlite3.Connection:
         connection = (
@@ -62,7 +62,7 @@ class SQLiteStore:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3, 4):
+        if version not in (0, 1, 2, 3, 4, 5):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -74,7 +74,10 @@ class SQLiteStore:
                 self._apply_v3_migration(connection)
             if version <= 3:
                 self._apply_v4_migration(connection)
-            self._apply_v5_migration(connection)
+            if version <= 4:
+                self._apply_v5_migration(connection)
+            if version <= 5:
+                self._apply_v6_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -213,6 +216,36 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _apply_v6_migration(connection: sqlite3.Connection) -> None:
+        """Add structured runtime lifecycle evidence without changing scan semantics."""
+        runtime_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(runtime_sessions)")
+        }
+        for column, definition in (
+            ("last_sleep_at", "TEXT"),
+            ("last_wake_at", "TEXT"),
+            ("previous_session_id", "TEXT"),
+            ("previous_unclean_exit", "INTEGER NOT NULL DEFAULT 0"),
+            ("watchdog_restart_count", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column not in runtime_columns:
+                connection.execute(
+                    f"ALTER TABLE runtime_sessions ADD COLUMN {column} {definition}"
+                )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_events "
+            "(event_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, occurred_at TEXT NOT NULL, "
+            "event_type TEXT NOT NULL, detail_json TEXT NOT NULL, "
+            "FOREIGN KEY(session_id) REFERENCES runtime_sessions(session_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_events_session_time "
+            "ON runtime_events(session_id, occurred_at)"
+        )
+
+
+    @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
         if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise RuntimeError("database integrity check failed")
@@ -232,6 +265,7 @@ class SQLiteStore:
             "scan_runs",
             "runtime_sessions",
             "scan_attempts",
+            "runtime_events",
         }
         tables = {
             str(row[0])
@@ -266,7 +300,7 @@ class SQLiteStore:
                 for previous_id, heartbeat, last_scan in previous:
                     connection.execute(
                         "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, "
-                        "graceful_exit = 0 WHERE session_id = ?",
+                        "graceful_exit = 0, previous_unclean_exit = 1 WHERE session_id = ?",
                         (started_at, "unclean_exit", previous_id),
                     )
                     connection.execute(
@@ -279,14 +313,111 @@ class SQLiteStore:
                             previous_id,
                         ),
                     )
+                    self._insert_runtime_event(
+                        connection,
+                        session_id=previous_id,
+                        occurred_at=started_at,
+                        event_type="unclean_exit",
+                        detail={
+                            "last_heartbeat_at": heartbeat,
+                            "last_scan_at": last_scan,
+                        },
+                    )
+                previous_id = (
+                    previous[0][0]
+                    if previous
+                    else None
+                )
                 connection.execute(
                     "INSERT OR REPLACE INTO runtime_sessions "
                     "(session_id, pid, ppid, app_path, source_commit, started_at, "
                     "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
-                    "last_window_activation_at) VALUES "
-                    "(?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, NULL, NULL)",
-                    (session_id, pid, ppid, app_path, source_commit, started_at, started_at),
+                    "last_window_activation_at, last_sleep_at, last_wake_at, "
+                    "previous_session_id, previous_unclean_exit, watchdog_restart_count) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, NULL, NULL, NULL, NULL, ?, ?, 0)",
+                    (
+                        session_id,
+                        pid,
+                        ppid,
+                        app_path,
+                        source_commit,
+                        started_at,
+                        started_at,
+                        previous_id,
+                        int(bool(previous)),
+                    ),
                 )
+
+    @staticmethod
+    def _insert_runtime_event(
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        occurred_at: str,
+        event_type: str,
+        detail: dict[str, Any],
+    ) -> None:
+        connection.execute(
+            "INSERT INTO runtime_events "
+            "(session_id, occurred_at, event_type, detail_json) VALUES (?, ?, ?, ?)",
+            (
+                session_id,
+                occurred_at,
+                event_type,
+                json.dumps(detail, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+
+    def record_runtime_event(
+        self,
+        *,
+        session_id: str,
+        occurred_at: str,
+        event_type: str,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                self._insert_runtime_event(
+                    connection,
+                    session_id=session_id,
+                    occurred_at=occurred_at,
+                    event_type=event_type,
+                    detail=detail or {},
+                )
+                if event_type == "sleep_detected":
+                    connection.execute(
+                        "UPDATE runtime_sessions SET last_sleep_at = ? WHERE session_id = ?",
+                        (occurred_at, session_id),
+                    )
+                elif event_type == "wake_detected":
+                    connection.execute(
+                        "UPDATE runtime_sessions SET last_wake_at = ? WHERE session_id = ?",
+                        (occurred_at, session_id),
+                    )
+
+    def list_runtime_events(
+        self,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT event_id, session_id, occurred_at, event_type, detail_json "
+                "FROM runtime_events WHERE session_id = ? ORDER BY occurred_at, event_id",
+                (session_id,),
+            ).fetchall()
+        return [
+            {
+                "event_id": row[0],
+                "session_id": row[1],
+                "occurred_at": row[2],
+                "event_type": row[3],
+                "detail": json.loads(row[4]),
+            }
+            for row in rows
+        ]
 
     def heartbeat_runtime_session(
         self,
@@ -332,7 +463,9 @@ class SQLiteStore:
             row = connection.execute(
                 "SELECT session_id, pid, ppid, app_path, source_commit, started_at, "
                 "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
-                "last_window_activation_at FROM runtime_sessions WHERE session_id = ?",
+                "last_window_activation_at, last_sleep_at, last_wake_at, "
+                "previous_session_id, previous_unclean_exit, watchdog_restart_count "
+                "FROM runtime_sessions WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         if row is None:
@@ -340,7 +473,8 @@ class SQLiteStore:
         keys = (
             "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
             "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
-            "last_scan_at", "last_window_activation_at",
+            "last_scan_at", "last_window_activation_at", "last_sleep_at", "last_wake_at",
+            "previous_session_id", "previous_unclean_exit", "watchdog_restart_count",
         )
         return dict(zip(keys, row))
 
@@ -361,7 +495,8 @@ class SQLiteStore:
         keys = (
             "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
             "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
-            "last_scan_at", "last_window_activation_at",
+            "last_scan_at", "last_window_activation_at", "last_sleep_at", "last_wake_at",
+            "previous_session_id", "previous_unclean_exit", "watchdog_restart_count",
         )
         return [dict(zip(keys, row)) for row in rows]
 
