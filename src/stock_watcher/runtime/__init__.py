@@ -6,7 +6,23 @@ from .automation import (
     AutomationTaskType,
 )
 from .data_health import DataHealthConfig, DataHealthTracker
+from .local_summary_pdf import render_local_fallback_pdf
 from .market_session import MarketSessionSchedule
+from .post_close_report_model import (
+    LOCAL_FALLBACK_RENDERER_VERSION,
+    LOCAL_FALLBACK_SOURCE_VERSION,
+    LocalFallbackCandidate,
+    LocalFallbackReport,
+    build_local_fallback_report,
+    manifest_is_current,
+    manifest_path_for,
+    render_local_fallback_markdown,
+    sha256_file,
+    validate_local_fallback_report,
+    without_summary_task_status,
+    write_local_fallback_artifacts,
+    write_pdf_manifest,
+)
 from .post_close_review import (
     PostCloseDataProvider,
     PostCloseReviewCollection,
@@ -62,7 +78,21 @@ __all__ = [
     "UniverseCacheFailure",
     "alert_timeline_records",
     "application_summary_record",
+    "build_local_fallback_report",
     "collect_post_close_review",
+    "LOCAL_FALLBACK_RENDERER_VERSION",
+    "LOCAL_FALLBACK_SOURCE_VERSION",
+    "LocalFallbackCandidate",
+    "LocalFallbackReport",
+    "manifest_is_current",
+    "manifest_path_for",
+    "render_local_fallback_markdown",
+    "render_local_fallback_pdf",
     "render_post_close_markdown",
+    "sha256_file",
+    "validate_local_fallback_report",
+    "without_summary_task_status",
+    "write_local_fallback_artifacts",
+    "write_pdf_manifest",
     "write_post_close_report",
 ]

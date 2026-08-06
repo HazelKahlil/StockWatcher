@@ -27,11 +27,13 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from stock_watcher.runtime.post_close_report_model import FULL_MARKET_RENDERER_VERSION
+
 REPORT_RETENTION_DAYS = 31
 REPORT_STEM_SUFFIX = "-A股盘后回顾"
 # Human Owner accepted this visual contract on 2026-07-31. Any layout change
 # requires an explicit decision and a version bump; daily exports only replace data.
-POST_CLOSE_PDF_LAYOUT_VERSION = "research-brief-v1"
+POST_CLOSE_PDF_LAYOUT_VERSION = FULL_MARKET_RENDERER_VERSION
 _FONT = "StockWatcherSans"
 _FONT_MEDIUM = "StockWatcherSansMedium"
 _INK = colors.HexColor("#172236")
@@ -101,8 +103,41 @@ class _MarketBreadthBar(Flowable):  # type: ignore[misc]
             )
 
 
+def validate_full_market_record(record: Mapping[str, Any]) -> None:
+    """Reject local fallback records before they reach the full renderer."""
+    if record.get("report_mode") == "local_fallback":
+        raise ValueError("full_market PDF renderer cannot render local_fallback records")
+    required = {
+        "market",
+        "market_segments",
+        "top_sectors",
+        "top3",
+        "source_coverage",
+        "data_limitations",
+    }
+    missing = sorted(key for key in required if key not in record)
+    if missing:
+        raise ValueError("full_market PDF record missing required fields: " + ", ".join(missing))
+    market = record.get("market")
+    top3 = record.get("top3")
+    coverage = record.get("source_coverage")
+    if not isinstance(market, Mapping) or not market.get("securities"):
+        raise ValueError("full_market PDF record requires non-empty market statistics")
+    if not isinstance(top3, Sequence) or isinstance(top3, (str, bytes)) or len(top3) != 3:
+        raise ValueError("full_market PDF record requires exactly three top3 candidates")
+    if not isinstance(coverage, Mapping) or not coverage:
+        raise ValueError("full_market PDF record requires source coverage")
+    if all(_is_placeholder(value) for value in market.values()):
+        raise ValueError("full_market PDF record contains only placeholder market values")
+
+
+def _is_placeholder(value: object) -> bool:
+    return value in (None, "", "-", "未记录", "未分类")
+
+
 def render_post_close_pdf(record: Mapping[str, Any], output_path: Path) -> Path:
-    """Render one credential-free post-close record as a fixed three-page A4 PDF."""
+    """Render one complete full-market post-close record as a fixed three-page PDF."""
+    validate_full_market_record(record)
     _register_fonts()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     normalized = _normalize_record(record)
@@ -179,16 +214,13 @@ def list_post_close_report_dates(
 def _normalize_record(record: Mapping[str, Any]) -> dict[str, Any]:
     market = _mapping(record.get("market"))
     top3 = _sequence_of_mappings(record.get("top3"))
-    if not top3:
-        top3 = _sequence_of_mappings(record.get("closing_performance"))
     sectors = _normalize_sectors(record.get("top_sectors"))
     trade_date = str(record.get("trade_date", ""))[:10]
     if not trade_date:
         raise ValueError("post-close record has no trade_date")
     generated_at = str(record.get("generated_at", ""))
-    retrospective = (
-        str(record.get("verdict", "")).casefold() == "retrospective_only"
-        or any(bool(candidate.get("retrospective_only")) for candidate in top3)
+    retrospective = str(record.get("verdict", "")).casefold() == "retrospective_only" or any(
+        bool(candidate.get("retrospective_only")) for candidate in top3
     )
     if market:
         tone = _market_tone(_float(market.get("up_ratio")), _float(market.get("median_change_pct")))
@@ -203,9 +235,7 @@ def _normalize_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "segments": _sequence_of_mappings(record.get("market_segments"))[:5],
         "sectors": sectors[:10],
         "top3": top3[:3],
-        "fund_summary": str(
-            record.get("fund_summary", "资金未确认，本次排序未使用资金项。")
-        ),
+        "fund_summary": str(record.get("fund_summary", "资金未确认，本次排序未使用资金项。")),
         "health_summary": str(record.get("health_summary", "")),
         "summary_text": str(record.get("summary_text", "")),
         "limitations": _string_sequence(record.get("data_limitations"))[:6],
@@ -265,9 +295,7 @@ def _page_two(data: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]) -> 
     for index, candidate in enumerate(top3, start=1):
         elements.append(_candidate_card(candidate, index, styles))
         elements.append(Spacer(1, 3.5 * mm))
-    allocation = "；".join(
-        f"{sector} {count}只" for sector, count in sector_counts.items()
-    )
+    allocation = "；".join(f"{sector} {count}只" for sector, count in sector_counts.items())
     elements.extend(
         [
             Spacer(1, 1 * mm),
@@ -358,7 +386,7 @@ def _page_heading(
                     Paragraph(escape(trade_date), styles["date"]),
                 ]
             ],
-                colWidths=[140 * mm, 38 * mm],
+            colWidths=[140 * mm, 38 * mm],
             style=TableStyle(
                 [
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -435,10 +463,13 @@ def _top3_summary(
     styles: Mapping[str, ParagraphStyle],
 ) -> Table:
     sectors = {str(item.get("sector", "未分类")) for item in top3}
-    same_sector_ok = max(
-        Counter(str(item.get("sector", "未分类")) for item in top3).values(),
-        default=0,
-    ) <= 2
+    same_sector_ok = (
+        max(
+            Counter(str(item.get("sector", "未分类")) for item in top3).values(),
+            default=0,
+        )
+        <= 2
+    )
     values = (
         ("收盘观察", f"{len(top3)} 只"),
         ("覆盖行业", f"{len(sectors)} 个"),
@@ -446,8 +477,7 @@ def _top3_summary(
     )
     cells = [
         Paragraph(
-            f"<font color='#667085'>{escape(label)}</font><br/>"
-            f"<b>{escape(value)}</b>",
+            f"<font color='#667085'>{escape(label)}</font><br/><b>{escape(value)}</b>",
             styles["summary_stat"],
         )
         for label, value in values
@@ -566,8 +596,7 @@ def _closing_summary(data: Mapping[str, Any]) -> str:
         return existing
     market = _mapping(data["market"])
     sector_names = [
-        str(item.get("name", "未分类"))
-        for item in _sequence_of_mappings(data["sectors"])[:3]
+        str(item.get("name", "未分类")) for item in _sequence_of_mappings(data["sectors"])[:3]
     ]
     sectors = "、".join(sector_names) if sector_names else "强势行业"
     return (
@@ -632,8 +661,7 @@ def _segments_table(
         )
     else:
         rows.append(
-            [Paragraph("暂无分段数据", styles["table"])]
-            + [Paragraph("-", styles["table"])] * 3
+            [Paragraph("暂无分段数据", styles["table"])] + [Paragraph("-", styles["table"])] * 3
         )
     return _standard_table(rows, [54 * mm, 38 * mm, 43 * mm, 43 * mm])
 
@@ -700,8 +728,7 @@ def _candidate_card(
         fact_rows.append(
             [
                 Paragraph(
-                    f"<font color='#667085'>{escape(label)}</font><br/>"
-                    f"<b>{escape(value)}</b>",
+                    f"<font color='#667085'>{escape(label)}</font><br/><b>{escape(value)}</b>",
                     styles["fact_pair"],
                 )
                 for label, value in facts[offset : offset + 4]
@@ -1173,11 +1200,7 @@ def _normalize_sectors(value: object) -> tuple[Mapping[str, Any], ...]:
     for item in value:
         if isinstance(item, Mapping):
             output.append(item)
-        elif (
-            isinstance(item, Sequence)
-            and not isinstance(item, (str, bytes))
-            and len(item) >= 2
-        ):
+        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes)) and len(item) >= 2:
             output.append({"name": item[0], "strong_count": item[1]})
     return tuple(output)
 

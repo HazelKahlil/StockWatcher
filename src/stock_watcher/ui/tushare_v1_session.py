@@ -64,8 +64,13 @@ from stock_watcher.runtime import (
     alert_timeline_records,
     application_summary_record,
     collect_post_close_review,
+    manifest_is_current,
+    write_local_fallback_artifacts,
+    write_pdf_manifest,
     write_post_close_report,
 )
+from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
+from stock_watcher.runtime.post_close_report_model import LocalFallbackReport
 from stock_watcher.runtime.post_close_review import PostCloseDataProvider
 from stock_watcher.security import (
     FAST_CREDENTIAL,
@@ -147,6 +152,7 @@ class TushareV1Session:
                 request_budget=self._request_budget,
             )
         if runtime_factory is None:
+
             def budgeted_runtime_factory(
                 current_settings: DataSourceSettings,
                 store: CredentialStore,
@@ -196,9 +202,7 @@ class TushareV1Session:
         self._runtime_audit_issue: str | None = None
         recovery = getattr(self.store, "last_recovery", None)
         if recovery:
-            self._runtime_audit_issue = (
-                f"db-recovery:{recovery.get('source_backup', 'unknown')}"
-            )
+            self._runtime_audit_issue = f"db-recovery:{recovery.get('source_backup', 'unknown')}"
         self.last_scan_succeeded_at: datetime | None = None
         self._recovery_round = 0
         self._stall_threshold_seconds = 90.0
@@ -232,10 +236,7 @@ class TushareV1Session:
     @property
     def requires_data_source_setup(self) -> bool:
         """Open the simple Token page on first macOS launch without a Token."""
-        return (
-            self.settings.mode is DataSourceMode.TUSHARE_15000
-            and not self._primary_present()
-        )
+        return self.settings.mode is DataSourceMode.TUSHARE_15000 and not self._primary_present()
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
@@ -373,11 +374,7 @@ class TushareV1Session:
         audit = outcome.selection_audit
         confirmed = bool(audit is None or audit.display_velocity_ready)
         if confirmed:
-            subtitle = (
-                "本轮整体偏弱"
-                if self.batch.overall_weak
-                else "正式确认Top3"
-            )
+            subtitle = "本轮整体偏弱" if self.batch.overall_weak else "正式确认Top3"
         else:
             subtitle = "即时预览｜涨速尚未完全确认"
         if self.pending_alert is None:
@@ -389,9 +386,8 @@ class TushareV1Session:
         # Manual observations are deliberately retained even when no alert
         # event references them.  The history pruning fix keeps this snapshot
         # for the full 30-day audit window.
-        self.last_fetch_detail = (
-            f"本次已保存观察 #{snapshot_id}；"
-            + ("涨速窗口已就绪。" if confirmed else "稍后将由持续扫描自动确认。")
+        self.last_fetch_detail = f"本次已保存观察 #{snapshot_id}；" + (
+            "涨速窗口已就绪。" if confirmed else "稍后将由持续扫描自动确认。"
         )
 
     def consume_pending_alert(self) -> PendingUiAlert | None:
@@ -411,19 +407,14 @@ class TushareV1Session:
         self.phase_label = _visible_phase(now)
         due_tasks = self._prepare_automation_tasks(now)
         summary_task = next(
-            (
-                spec
-                for spec in due_tasks
-                if spec.task_type is AutomationTaskType.SUMMARY_1530
-            ),
+            (spec for spec in due_tasks if spec.task_type is AutomationTaskType.SUMMARY_1530),
             None,
         )
         fixed_task = next(
             (
                 spec
                 for spec in due_tasks
-                if spec.task_type
-                in {AutomationTaskType.FIXED_0945, AutomationTaskType.FIXED_1445}
+                if spec.task_type in {AutomationTaskType.FIXED_0945, AutomationTaskType.FIXED_1445}
             ),
             None,
         )
@@ -495,10 +486,7 @@ class TushareV1Session:
         if (
             self._runtime.universe is not None
             and not self._runtime.universe.concept_loaded
-            and (
-                self._universe_retry_at is None
-                or now >= self._universe_retry_at
-            )
+            and (self._universe_retry_at is None or now >= self._universe_retry_at)
         ):
             # Concept membership is optional for realtime continuity but is a
             # real V1 selection capability. Retry it in the low-priority static
@@ -551,11 +539,7 @@ class TushareV1Session:
                     )
                 )
             )
-        open_dates = (
-            self._runtime.universe.open_dates
-            if self._runtime.universe is not None
-            else ()
-        )
+        open_dates = self._runtime.universe.open_dates if self._runtime.universe is not None else ()
         if (
             fixed_task is None
             and not force
@@ -570,11 +554,7 @@ class TushareV1Session:
             self.candidate_gate_label = "上次结果" if self.batch else "等待开盘"
             self.phase_label = _visible_phase(now)
             self.health_detail = "非交易时段不发起全市场实时扫描。"
-            self.status_issues = (
-                (self._summary_issue,)
-                if self._summary_issue is not None
-                else ()
-            )
+            self.status_issues = (self._summary_issue,) if self._summary_issue is not None else ()
             return None
         if fixed_task is not None:
             self._mark_task_running(fixed_task, now)
@@ -622,9 +602,7 @@ class TushareV1Session:
             else TqConnectionState.DISCONNECTED
         )
         self.connection_detail = (
-            "实时行情与板块数据正常。"
-            if outcome.health is HealthState.HEALTHY
-            else outcome.detail
+            "实时行情与板块数据正常。" if outcome.health is HealthState.HEALTHY else outcome.detail
         )
         if outcome.batch is not None:
             self.batch = outcome.batch
@@ -635,9 +613,7 @@ class TushareV1Session:
             self.connection_state = TqConnectionState.CHECKING
             self.connection_detail = "接口暂时限流，已保存Token，等待自动恢复。"
             self.health_detail = self.connection_detail
-            self.status_issues = (
-                f"预计约 {max(1, round(remaining))} 秒后从失败环节继续检测。",
-            )
+            self.status_issues = (f"预计约 {max(1, round(remaining))} 秒后从失败环节继续检测。",)
         elif outcome.health is HealthState.HEALTHY:
             self.data_gate_label = "运行正常"
             self.phase_label = _phase(now)
@@ -654,17 +630,13 @@ class TushareV1Session:
                 ):
                     fund_issue = "资金接口仅有日级数据，不作为盘中增强依据。"
                 self.status_issues = (
-                    (fund_issue,)
-                    if outcome.batch.fund_module == "unavailable"
-                    else ()
+                    (fund_issue,) if outcome.batch.fund_module == "unavailable" else ()
                 )
         elif outcome.health is HealthState.WARMING:
             required_cycles = self._manual_required_scan_cycles()
             self.data_gate_label = "正在准备"
             self.candidate_gate_label = "保留上次结果" if self.batch else "准备中"
-            self.status_issues = (
-                f"当前需连续 {required_cycles} 轮新鲜完整数据后恢复。",
-            )
+            self.status_issues = (f"当前需连续 {required_cycles} 轮新鲜完整数据后恢复。",)
         else:
             self.data_gate_label = "数据中断"
             self.candidate_gate_label = "保留上次结果" if self.batch else "无新结果"
@@ -674,9 +646,7 @@ class TushareV1Session:
             self.last_scan_succeeded_at = completed_at
             self._recovery_round += 1
             if self._recovery_round >= 3:
-                self.record_platform_event(
-                    "ready", detail={"rounds": self._recovery_round}
-                )
+                self.record_platform_event("ready", detail={"rounds": self._recovery_round})
                 self._recovery_round = 0
         attempt_state = (
             "completed"
@@ -743,11 +713,7 @@ class TushareV1Session:
         fixed = forced_fixed or self._schedule.fixed_trigger(now)
         if fixed is not None:
             existing = next(
-                (
-                    row
-                    for row in self._today_alerts(now)
-                    if row.get("trigger_type") == fixed.value
-                ),
+                (row for row in self._today_alerts(now) if row.get("trigger_type") == fixed.value),
                 None,
             )
             if existing is not None:
@@ -756,9 +722,7 @@ class TushareV1Session:
             decision = self._alert_policy.decide(self.batch, now, fixed)
             if decision.should_alert:
                 title = (
-                    "09:45 观察提醒"
-                    if fixed is AlertTrigger.SCHEDULED_0945
-                    else "14:45 观察提醒"
+                    "09:45 观察提醒" if fixed is AlertTrigger.SCHEDULED_0945 else "14:45 观察提醒"
                 )
                 subtitle = (
                     "数据延迟，展示上次结果"
@@ -798,9 +762,7 @@ class TushareV1Session:
             displayed = _parsed_datetime(row.get("displayed_at"))
             if displayed is None or displayed < cooldown_cutoff:
                 continue
-            if set(strong_event.triggering_codes) & _payload_codes(
-                row.get("payload_json")
-            ):
+            if set(strong_event.triggering_codes) & _payload_codes(row.get("payload_json")):
                 return None
         decision = self._alert_policy.decide(
             self.batch,
@@ -846,11 +808,7 @@ class TushareV1Session:
         codes = tuple(getattr(strong_event, "triggering_codes", ()))
         trigger_symbol = codes[0] if codes else ""
         trigger_name = ""
-        audit_rows = (
-            tuple(getattr(audit, "rows", ()))
-            if audit is not None
-            else ()
-        )
+        audit_rows = tuple(getattr(audit, "rows", ())) if audit is not None else ()
         row = next(
             (
                 candidate
@@ -1125,7 +1083,70 @@ class TushareV1Session:
         optional reports are unavailable.
         """
         trade_date = now.date().isoformat()
-        if self._summary_date == trade_date or self.store.get_daily_summary(trade_date):
+        if self._summary_date == trade_date:
+            self._summary_date = trade_date
+            return True
+        existing_summary = self.store.get_daily_summary(trade_date)
+        if existing_summary is not None:
+            reports_dir = report_directory_for_database(self.store.path)
+            full_json = reports_dir / f"{trade_date}-A股盘后回顾.json"
+            local_json = reports_dir / f"{trade_date}-local-summary.json"
+            local_pdf = reports_dir / f"{trade_date}-A股盘后回顾.pdf"
+            if full_json.is_file():
+                try:
+                    record = json.loads(full_json.read_text(encoding="utf-8"))
+                    if not isinstance(record, dict):
+                        raise ValueError("完整盘后报告JSON格式无效")
+                    source_version = str(record.get("version", "full-market-v1"))
+                    source_generated_at = str(record.get("generated_at", ""))
+                    if not manifest_is_current(
+                        local_pdf,
+                        source_path=full_json,
+                        report_mode="full_market",
+                        source_version=source_version,
+                        source_generated_at=source_generated_at,
+                    ):
+                        temporary = local_pdf.with_name(f".{local_pdf.name}.tmp")
+                        render_post_close_pdf(record, temporary)
+                        temporary.replace(local_pdf)
+                        write_pdf_manifest(
+                            local_pdf,
+                            source_path=full_json,
+                            report_mode="full_market",
+                            source_version=source_version,
+                            source_generated_at=source_generated_at,
+                        )
+                    self._summary_date = trade_date
+                    return True
+                except Exception:
+                    self._set_summary_retry(now)
+                    return False
+            if local_json.is_file():
+                try:
+                    source = json.loads(local_json.read_text(encoding="utf-8"))
+                    if not isinstance(source, dict):
+                        raise ValueError("本地总结JSON格式无效")
+                    report = LocalFallbackReport.from_record(source)
+                    if manifest_is_current(
+                        local_pdf,
+                        source_path=local_json,
+                        report_mode="local_fallback",
+                        source_version=report.source_version,
+                        source_generated_at=report.source_generated_at,
+                        source_commit_value=report.source_commit,
+                    ):
+                        self._summary_date = trade_date
+                        return True
+                except Exception:
+                    # Rebuild from the durable SQLite summary below.  A stale or
+                    # malformed artifact must never be treated as a successful
+                    # 15:30 report merely because the file exists.
+                    pass
+            try:
+                self._write_local_summary_report(existing_summary)
+            except Exception:
+                self._set_summary_retry(now)
+                return False
             self._summary_date = trade_date
             return True
         if self._summary_retry_at is not None and now < self._summary_retry_at:
@@ -1148,8 +1169,7 @@ class TushareV1Session:
                 )
             except Exception:
                 fallback = (
-                    self._post_close_fallback_provider
-                    or self._build_super_post_close_provider()
+                    self._post_close_fallback_provider or self._build_super_post_close_provider()
                 )
                 if fallback is not None:
                     try:
@@ -1199,16 +1219,20 @@ class TushareV1Session:
             if not history and not observations:
                 self._set_summary_retry(now)
                 return False
-            summary = DailySummaryEngine().generate(
-                trade_date=now.date(),
-                generated_at=now,
-                alert_history=history,
-                observation_history=observations,
-                health_interruption_count=interruption_count,
-                continuity_evidence=self._collect_continuity_evidence(trade_date),
-                catch_up=catch_up,
-                version="daily-summary-local-fallback-v1",
-            ).as_record()
+            summary = (
+                DailySummaryEngine()
+                .generate(
+                    trade_date=now.date(),
+                    generated_at=now,
+                    alert_history=history,
+                    observation_history=observations,
+                    health_interruption_count=interruption_count,
+                    continuity_evidence=self._collect_continuity_evidence(trade_date),
+                    catch_up=catch_up,
+                    version="daily-summary-local-fallback-v1",
+                )
+                .as_record()
+            )
             try:
                 self.store.record_daily_summary(summary)
                 self._write_local_summary_report(summary)
@@ -1243,9 +1267,7 @@ class TushareV1Session:
         parts: list[str] = []
         if gaps:
             longest, gap_start, gap_end = max(gaps)
-            trading = (
-                _trading_block(gap_start) == _trading_block(gap_end) > 0
-            )
+            trading = _trading_block(gap_start) == _trading_block(gap_end) > 0
             parts.append(
                 f"最长无扫描间隔{_format_duration(longest)}（{gap_start:%H:%M}→{gap_end:%H:%M}"
                 f"{'，位于交易时段内' if trading else '，位于非交易时段'}）"
@@ -1307,38 +1329,20 @@ class TushareV1Session:
         rows = [
             row
             for row in self.store.list_scan_runs(trade_date)
-            if row.get("health") == HealthState.HEALTHY.value
-            and row.get("stable_batch_json")
+            if row.get("health") == HealthState.HEALTHY.value and row.get("stable_batch_json")
         ]
         # Keep the report bounded while still representing the day.  Scan runs
         # remain fully available in SQLite for detailed audit.
-        return [
-            {"payload_json": str(row["stable_batch_json"])}
-            for row in rows[-30:]
-        ]
+        return [{"payload_json": str(row["stable_batch_json"])} for row in rows[-30:]]
 
     def _write_local_summary_report(self, summary: dict[str, object]) -> None:
-        reports_dir = report_directory_for_database(self.store.path)
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        trade_date = str(summary["trade_date"])
-        json_path = reports_dir / f"{trade_date}-local-summary.json"
-        md_path = reports_dir / f"{trade_date}-local-summary.md"
-        json_path.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        md_path.write_text(
-            "\n".join(
-                (
-                    f"# {trade_date} 盘后总结",
-                    "",
-                    str(summary["summary_text"]),
-                    "",
-                    "本总结只整理当天本地真实扫描与提醒，不修改选股规则。",
-                )
-            )
-            + "\n",
-            encoding="utf-8",
+        generated_at = _parsed_datetime(str(summary.get("generated_at", ""))) or self._clock()
+        write_local_fallback_artifacts(
+            self.store,
+            summary,
+            reports_dir=report_directory_for_database(self.store.path),
+            now=generated_at,
+            source_commit_value=source_commit(),
         )
 
     def _prune_history_if_due(self, now: datetime) -> None:
@@ -1362,9 +1366,7 @@ class TushareV1Session:
     def _set_summary_retry(self, now: datetime) -> None:
         self._summary_retry_at = now + timedelta(seconds=60)
         self._summary_issue = "盘后回顾暂未生成，将在60秒后自动重试。"
-        self.status_issues = tuple(
-            dict.fromkeys((*self.status_issues, self._summary_issue))
-        )
+        self.status_issues = tuple(dict.fromkeys((*self.status_issues, self._summary_issue)))
 
     def _build_super_post_close_provider(self) -> PostCloseDataProvider | None:
         try:
@@ -1385,7 +1387,7 @@ class TushareV1Session:
                     transport,
                     mode=DataSourceMode.SUPER,
                 )
-            )
+            ),
         )
 
     def _is_open_date(self, now: datetime) -> bool:
@@ -1419,8 +1421,7 @@ class TushareV1Session:
             return now.date().weekday() < 5
         return any(
             str(record.get("cal_date", "")).replace("-", "") == compact
-            and str(record.get("is_open", "")).casefold()
-            in {"1", "true", "y", "yes"}
+            and str(record.get("is_open", "")).casefold() in {"1", "true", "y", "yes"}
             for record in result.records
         )
 
@@ -1484,17 +1485,12 @@ class TushareV1Session:
         """
         universe = getattr(self._runtime, "universe", None)
         open_dates = (
-            universe.open_dates
-            if universe is not None and universe.open_dates is not None
-            else ()
+            universe.open_dates if universe is not None and universe.open_dates is not None else ()
         )
         if not _session_is_trading(self._schedule, now, open_dates):
             return
         with self._platform_recovery_lock:
-            if (
-                self._platform_recovery_reason is not None
-                or self._network_interrupted
-            ):
+            if self._platform_recovery_reason is not None or self._network_interrupted:
                 return
         if self.last_scan_succeeded_at is None:
             return
@@ -1623,14 +1619,11 @@ class TushareV1Session:
         self.health_detail = self.connection_detail
         if self._manual_started_monotonic is not None:
             self.last_fetch_detail = (
-                "第1/3步：基础数据准备中；"
-                f"预计剩余不超过 {self._manual_remaining_seconds()} 秒。"
+                f"第1/3步：基础数据准备中；预计剩余不超过 {self._manual_remaining_seconds()} 秒。"
             )
             self.status_issues = ("股票行业与日线均按全市场批量获取，不逐只循环。",)
         else:
-            self.status_issues = (
-                "实时扫描只会读取缓存并调用 realtime_quote(src=\"sina\")。",
-            )
+            self.status_issues = ('实时扫描只会读取缓存并调用 realtime_quote(src="sina")。',)
 
     def _set_capability_warming(self) -> None:
         assert self.capability_checks is not None
@@ -1665,8 +1658,7 @@ class TushareV1Session:
         self.connection_detail = "Token已保存，正在分项准备基础数据、实时行情和板块历史。"
         self.health_detail = "核心能力检测完成后将开始预热；资金和历史分钟未确认不会阻塞候选。"
         self.status_issues = (
-            f"实时验证完成后需连续 {self._manual_required_scan_cycles()} "
-            "轮新鲜完整数据。",
+            f"实时验证完成后需连续 {self._manual_required_scan_cycles()} 轮新鲜完整数据。",
         )
 
     def _set_realtime_capability_warming(self) -> None:
@@ -1709,11 +1701,10 @@ class TushareV1Session:
             self.status_issues = (retry_note,)
             return
         self.connection_detail = "正在按1只、100只、300只、800只验证实时接口。"
-        self.health_detail = "验证只调用 realtime_quote(src=\"sina\")，不会请求普通Pro。"
+        self.health_detail = '验证只调用 realtime_quote(src="sina")，不会请求普通Pro。'
         if self._manual_started_monotonic is not None:
             self.last_fetch_detail = (
-                "第2/3步：实时批次验证中；"
-                f"预计剩余不超过 {self._manual_remaining_seconds()} 秒。"
+                f"第2/3步：实时批次验证中；预计剩余不超过 {self._manual_remaining_seconds()} 秒。"
             )
         self.status_issues = ("800只批次通过后才开始全市场七批扫描。",)
 
@@ -1749,17 +1740,13 @@ class TushareV1Session:
         self.data_gate_label = "全市场扫描中"
         self.candidate_gate_label = f"新鲜数据 {shown_round}/{total} 轮"
         self.connection_detail = (
-            f"第3/3步：正在执行第 {shown_round}/{total} 轮全市场实时扫描，"
-            "每轮约7批。"
+            f"第3/3步：正在执行第 {shown_round}/{total} 轮全市场实时扫描，每轮约7批。"
         )
         self.health_detail = self.connection_detail
         self.last_fetch_detail = (
-            f"第3/3步：全市场实时扫描 {shown_round}/{total} 轮；"
-            f"预计剩余不超过 {remaining} 秒。"
+            f"第3/3步：全市场实时扫描 {shown_round}/{total} 轮；预计剩余不超过 {remaining} 秒。"
         )
-        self.status_issues = (
-            "只调用 realtime_quote(src=\"sina\")；完成后立即显示并弹出3只。",
-        )
+        self.status_issues = ('只调用 realtime_quote(src="sina")；完成后立即显示并弹出3只。',)
 
     def _manual_required_scan_cycles(self) -> int:
         runtime = self._runtime
@@ -1778,9 +1765,7 @@ class TushareV1Session:
         self.connection_detail = "本次获取未在60秒内完成，已停止本次等待。"
         self.health_detail = self.connection_detail
         self.last_fetch_detail = "本次超过60秒，未生成新Top3。"
-        self.status_issues = (
-            "基础缓存仍会在后台安全准备；可看到明确阶段后再重试。",
-        )
+        self.status_issues = ("基础缓存仍会在后台安全准备；可看到明确阶段后再重试。",)
 
     def _manual_remaining_seconds(self) -> int:
         started = self._manual_started_monotonic
@@ -2020,14 +2005,10 @@ class TushareV1Session:
         if self._failure_active:
             return
         representative = (
-            self.batch.candidates[0]
-            if self.batch is not None and self.batch.candidates
-            else None
+            self.batch.candidates[0] if self.batch is not None and self.batch.candidates else None
         )
         provider_version = (
-            representative.provider_version
-            if representative is not None
-            else "tushare-15000"
+            representative.provider_version if representative is not None else "tushare-15000"
         )
         config_version = (
             representative.config_version
@@ -2065,9 +2046,7 @@ def _runtime_factory(
     def secret_getter() -> str | None:
         return credential_store.get(PRIMARY_CREDENTIAL)
 
-    budget = request_budget or ApplicationRequestBudget(
-        settings.request_budget_interval_seconds
-    )
+    budget = request_budget or ApplicationRequestBudget(settings.request_budget_interval_seconds)
     pro = TushareSdkProTransport(
         settings.primary_profile,
         secret_getter,
@@ -2175,8 +2154,7 @@ def _required_capabilities_ready(
         ProviderCapability.REALTIME_800,
     )
     return bool(statuses) and all(
-        statuses[capability].state is ProviderCapabilityState.AVAILABLE
-        for capability in required
+        statuses[capability].state is ProviderCapabilityState.AVAILABLE for capability in required
     )
 
 
@@ -2190,8 +2168,7 @@ def _realtime_capabilities_ready(
         ProviderCapability.REALTIME_800,
     )
     return bool(statuses) and all(
-        statuses[capability].state is ProviderCapabilityState.AVAILABLE
-        for capability in required
+        statuses[capability].state is ProviderCapabilityState.AVAILABLE for capability in required
     )
 
 
