@@ -1041,7 +1041,14 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self._mac_window_close_policy.should_hide_on_close:
+        # A spontaneous close is the user clicking the macOS red button (hide);
+        # a non-spontaneous close is QApplication::closeAllWindows(), which is
+        # how Qt handles the quit AppleEvent (Dock Quit, logout, osascript) -
+        # that must really exit instead of being swallowed by the hide policy.
+        if (
+            self._mac_window_close_policy.should_hide_on_close
+            and event.spontaneous()
+        ):
             event.ignore()
             self.hide()
             return

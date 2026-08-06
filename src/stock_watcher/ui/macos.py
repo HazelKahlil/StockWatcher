@@ -684,14 +684,14 @@ def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
         ctypes.c_uint32,
         ctypes.c_uint32,
         ctypes.c_void_p,
-        ctypes.c_void_p,
+        ctypes.c_int32,  # SRefCon is a 4-byte SInt32, not a pointer
         ctypes.c_uint8,
     ]
     status = carbon.AEInstallEventHandler(
         _AE_CARBON_CLASS,
         _AE_QUIT_APPLICATION,
         ctypes.cast(_on_quit_event, ctypes.c_void_p),
-        None,
+        0,
         0,
     )
     if status != 0:

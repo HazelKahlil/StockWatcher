@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtNetwork import QLocalServer, QNetworkInformation  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMenuBar  # noqa: E402
 
@@ -678,3 +679,21 @@ def test_macos_lifecycle_external_quit_records_graceful_and_exits() -> None:
     assert calls == [("shutdown", "apple_event_quit")]
     assert quit_calls == [True]
     assert lifecycle._quitting
+
+
+def test_macos_close_event_programmatic_close_exits_not_hides(
+    tmp_path: Path,
+) -> None:
+    """closeAllWindows-style close (quit AppleEvent) must exit, not hide."""
+    application()
+    session = ReplaySession(tmp_path / "close-policy.sqlite3")
+    window = MainWindow(session)
+    window._mac_window_close_policy.enable_background_close()
+    assert window._mac_window_close_policy.should_hide_on_close
+
+    event = QCloseEvent()
+    assert not event.spontaneous()
+    window.closeEvent(event)
+
+    assert event.isAccepted()
+    window.close()
