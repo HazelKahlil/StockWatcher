@@ -15,6 +15,14 @@ from PySide6.QtGui import QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkInformation
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar
 
+from .macos_keep_awake import (
+    SETTING_AUTOSTART,
+    SETTING_KEEP_AWAKE,
+    TradingHoursKeepAwake,
+    install_launch_agent,
+    uninstall_launch_agent,
+)
+
 
 class MacMainWindow(Protocol):
     def menuBar(self) -> QMenuBar: ...
@@ -383,6 +391,10 @@ class MacApplicationLifecycle(QObject):
         self._sleep_gap_seconds = sleep_gap_seconds
         self._last_heartbeat = self._monotonic_clock()
         self._heartbeat = QTimer(self)
+        self._keep_awake = TradingHoursKeepAwake()
+        self._keep_awake_timer = QTimer(self)
+        self._keep_awake_timer.setInterval(60_000)
+        self._keep_awake_timer.timeout.connect(self._refresh_keep_awake)
         if not self._enabled:
             return
         self._app.setQuitOnLastWindowClosed(False)
@@ -393,13 +405,29 @@ class MacApplicationLifecycle(QObject):
         self._heartbeat.setInterval(5_000)
         self._heartbeat.timeout.connect(self.check_for_sleep_gap)
         self._heartbeat.start()
+        self._keep_awake_timer.start()
+        self._refresh_keep_awake()
         self._attach_network_information()
+
+    def _refresh_keep_awake(self) -> None:
+        store = getattr(getattr(self._window, "session", None), "store", None)
+        enabled = False
+        if store is not None:
+            enabled = bool(store.get_app_setting(SETTING_KEEP_AWAKE))
+        self._keep_awake.update(enabled)
+
+    def set_keep_awake_enabled(self, enabled: bool) -> None:
+        store = getattr(getattr(self._window, "session", None), "store", None)
+        if store is not None:
+            store.set_app_setting(SETTING_KEEP_AWAKE, bool(enabled))
+        self._refresh_keep_awake()
 
     def show_notification(self, title: str, subtitle: str) -> bool:
         return self.notifier.notify(title, subtitle)
 
     def request_quit(self) -> None:
         self._quitting = True
+        self._keep_awake.shutdown()
         self._window.request_application_exit()
         window = self._window
         if isinstance(window, QMainWindow):
@@ -487,10 +515,33 @@ class MacApplicationLifecycle(QObject):
         data_source.triggered.connect(self._window._open_data_source_settings)
         menu.addAction(data_source)
         menu.addSeparator()
+        keep_awake = QAction("交易时段保持运行", self)
+        keep_awake.setCheckable(True)
+        store = getattr(getattr(self._window, "session", None), "store", None)
+        if store is not None:
+            keep_awake.setChecked(bool(store.get_app_setting(SETTING_KEEP_AWAKE)))
+        keep_awake.triggered.connect(self.set_keep_awake_enabled)
+        menu.addAction(keep_awake)
+        auto_start = QAction("交易日09:20自动启动", self)
+        auto_start.setCheckable(True)
+        if store is not None:
+            auto_start.setChecked(bool(store.get_app_setting(SETTING_AUTOSTART)))
+        auto_start.triggered.connect(self._toggle_auto_start)
+        menu.addAction(auto_start)
+        menu.addSeparator()
         quit_action = QAction("退出 StockWatcher", self)
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.request_quit)
         menu.addAction(quit_action)
+
+    def _toggle_auto_start(self, enabled: bool) -> None:
+        store = getattr(getattr(self._window, "session", None), "store", None)
+        if store is not None:
+            store.set_app_setting(SETTING_AUTOSTART, bool(enabled))
+        if enabled:
+            install_launch_agent()
+        else:
+            uninstall_launch_agent()
 
     def _attach_network_information(self) -> None:
         information = self._network_information

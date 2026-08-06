@@ -767,6 +767,31 @@ class SQLiteStore:
                     )
                 return snapshot_id
 
+    def get_app_setting(self, key: str) -> Any:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT value_json FROM app_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0])
+
+    def set_app_setting(self, key: str, value: Any) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO app_settings (key, value_json, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
+                "updated_at = excluded.updated_at",
+                (
+                    key,
+                    json.dumps(value, ensure_ascii=False, sort_keys=True),
+                    datetime.now().isoformat(),
+                ),
+            )
+
     def record_alert_event(
         self,
         snapshot_id: int,
