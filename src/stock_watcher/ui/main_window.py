@@ -844,6 +844,9 @@ class MainWindow(QMainWindow):
             self.show()
         self.raise_()
         self.activateWindow()
+        record = getattr(self.session, "record_window_activation", None)
+        if callable(record):
+            record()
 
     def set_secondary_notification_sender(
         self,
