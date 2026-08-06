@@ -481,3 +481,54 @@ def test_tushare_v1_session_wires_runtime_lifecycle(tmp_path: Path) -> None:
     assert ended is not None
     assert ended["graceful_exit"] == 1
     assert ended["exit_reason"] == "menu_quit"
+
+
+def test_sleep_cancels_active_scan_and_records_sleep_event(tmp_path: Path) -> None:
+    """mark_sleep persists sleep_detected and voids the in-flight scan attempt."""
+    now = datetime(2026, 8, 6, 10, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "sleep.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        attempt_id = session._begin_scan_attempt(now=now, operation="automatic")
+        assert attempt_id is not None
+        session.mark_sleep(now=now, reason="system-suspend")
+        attempts = session.store.list_scan_attempts(session_id=session._runtime_session_id)
+        assert attempts[0]["state"] == "sleep_interrupted"
+        events = session.store.list_runtime_events(session._runtime_session_id)
+        assert events[0]["event_type"] == "sleep_detected"
+        persisted = session.store.get_runtime_session(session._runtime_session_id)
+        assert persisted is not None
+        assert persisted["last_sleep_at"].startswith("2026-08-06T10:30")
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_scan_stall_records_event_and_enters_recovery(tmp_path: Path) -> None:
+    """A >90s trading-hours gap without sleep triggers scan_stalled recovery."""
+    now = datetime(2026, 8, 6, 10, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "stall.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session._runtime = cast(TushareV1Runtime, object())
+        session.last_scan_succeeded_at = now - timedelta(minutes=3)
+        session._run(force=True, manual_request=False)
+        events = session.store.list_runtime_events(session._runtime_session_id)
+        assert events[0]["event_type"] == "scan_stalled"
+        assert session._platform_recovery_reason is not None
+        assert session.state is HealthState.WARMING
+    finally:
+        session.shutdown(exit_reason="menu_quit")

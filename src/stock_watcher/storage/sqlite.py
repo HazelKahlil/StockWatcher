@@ -426,15 +426,26 @@ class SQLiteStore:
         *,
         last_scan_at: str | None = None,
         last_window_activation_at: str | None = None,
+        last_sleep_at: str | None = None,
+        last_wake_at: str | None = None,
     ) -> None:
         self.initialize()
         with self.connect() as connection:
             cursor = connection.execute(
                 "UPDATE runtime_sessions SET last_heartbeat_at = ?, "
                 "last_scan_at = COALESCE(?, last_scan_at), "
-                "last_window_activation_at = COALESCE(?, last_window_activation_at) "
+                "last_window_activation_at = COALESCE(?, last_window_activation_at), "
+                "last_sleep_at = COALESCE(?, last_sleep_at), "
+                "last_wake_at = COALESCE(?, last_wake_at) "
                 "WHERE session_id = ? AND ended_at IS NULL",
-                (heartbeat_at, last_scan_at, last_window_activation_at, session_id),
+                (
+                    heartbeat_at,
+                    last_scan_at,
+                    last_window_activation_at,
+                    last_sleep_at,
+                    last_wake_at,
+                    session_id,
+                ),
             )
         if cursor.rowcount != 1:
             raise KeyError(session_id)

@@ -421,6 +421,7 @@ class MacApplicationLifecycle(QObject):
             return
         if state is Qt.ApplicationState.ApplicationActive:
             if self._was_suspended:
+                self._mark_wake()
                 self._window.begin_platform_recovery(
                     "系统已从挂起状态恢复，正在清理旧基线并重新预热数据。"
                 )
@@ -430,9 +431,22 @@ class MacApplicationLifecycle(QObject):
             return
         if state is Qt.ApplicationState.ApplicationSuspended:
             self._was_suspended = True
+            self._mark_sleep("系统已暂停，唤醒后将重新预热数据。")
             self._window.mark_network_interrupted(
                 "系统已暂停，已停止产生新候选，唤醒后将重新预热数据。"
             )
+
+    def _mark_sleep(self, reason: str) -> None:
+        session = getattr(self._window, "session", None)
+        mark_sleep = getattr(session, "mark_sleep", None)
+        if callable(mark_sleep):
+            mark_sleep(reason=reason)
+
+    def _mark_wake(self) -> None:
+        session = getattr(self._window, "session", None)
+        mark_wake = getattr(session, "mark_wake", None)
+        if callable(mark_wake):
+            mark_wake(reason="系统已从挂起状态恢复")
 
     @Slot()
     def check_for_sleep_gap(self) -> None:
