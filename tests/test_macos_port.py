@@ -14,9 +14,9 @@ from typing import Any, cast
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QEventLoop, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QCloseEvent  # noqa: E402
-from PySide6.QtNetwork import QLocalServer, QNetworkInformation  # noqa: E402
+from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkInformation  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMenuBar  # noqa: E402
 
 import stock_watcher.paths as paths_module  # noqa: E402
@@ -245,6 +245,86 @@ def test_single_instance_guard_recovers_after_interrupted_primary() -> None:
     finally:
         recovered.close()
         QLocalServer.removeServer(name)
+
+
+def test_send_ack_survives_torn_down_socket() -> None:
+    """Regression: a secondary vanishing mid-ACK must not crash the primary.
+
+    2026-08-06 crash: the primary touched a deleted QLocalSocket inside the
+    readyRead callback, escaped as a shiboken RuntimeError, and the app died
+    with SIGSEGV seconds after launch.
+    """
+    app = application()
+    name = f"stockwatcher-torn-{uuid.uuid4().hex}"
+    primary = SingleInstanceGuard(name)
+    try:
+        assert primary.acquire()
+        client = QLocalSocket()
+        client.connectToServer(name)
+        assert client.waitForConnected(1000)
+        client.disconnectFromServer()
+        client.deleteLater()
+        # A short event-loop run executes the DeferredDelete so the C++
+        # object is actually destroyed and the shiboken wrapper becomes
+        # dead, mirroring the crashed build's race.
+        loop = QEventLoop()
+        QTimer.singleShot(0, loop.quit)
+        loop.exec()
+        dead = False
+        for _ in range(50):
+            app.processEvents()
+            try:
+                client.write(b"x")
+            except RuntimeError:
+                dead = True
+                break
+        assert dead, "QLocalSocket wrapper should be dead after deleteLater"
+        # Must not raise, must not touch the dead C++ object.
+        primary._send_ack(client, {"ok": True, "result": "success"})
+    finally:
+        primary.close()
+
+
+def test_send_ack_guards_write_failure_and_invalid_socket(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ACK write failures are diagnosed, never re-raised into the Qt callback."""
+    application()
+    name = f"stockwatcher-ackfail-{uuid.uuid4().hex}"
+    primary = SingleInstanceGuard(name)
+
+    class _FakeSocket:
+        def __init__(self, valid: bool = True) -> None:
+            self.valid = valid
+
+        def isValid(self) -> bool:
+            return self.valid
+
+        def write(self, _data: bytes) -> int:
+            raise RuntimeError(
+                "libshiboken: Internal C++ object "
+                "(PySide6.QtNetwork.QLocalSocket) already deleted."
+            )
+
+        def flush(self) -> bool:  # pragma: no cover - unused
+            return True
+
+        def waitForBytesWritten(self, _ms: int) -> bool:  # pragma: no cover
+            return True
+
+        def disconnectFromServer(self) -> None:  # pragma: no cover
+            pass
+
+    try:
+        assert primary.acquire()
+        with caplog.at_level("WARNING", logger="stock_watcher.ui.macos"):
+            primary._send_ack(_FakeSocket(), {"ok": True, "result": "success"})
+            primary._send_ack(_FakeSocket(valid=False), {"ok": True, "result": "success"})
+        messages = [r.message for r in caplog.records]
+        assert any("already deleted" in m for m in messages)
+        assert any("socket-invalid" in m for m in messages)
+    finally:
+        primary.close()
 
 
 def test_worker_exit_precedes_ui_refresh_and_queued_manual_fetch(

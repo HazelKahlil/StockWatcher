@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -26,6 +27,24 @@ from .macos_keep_awake import (
 )
 
 
+class _AckTarget(Protocol):
+    """Minimal socket surface used to deliver an activation ACK.
+
+    Kept structural so tests can inject a fake that raises the shiboken
+    RuntimeError without creating a real (and already-deleted) QLocalSocket.
+    """
+
+    def isValid(self) -> bool: ...
+
+    def write(self, data: bytes) -> int: ...
+
+    def flush(self) -> bool: ...
+
+    def waitForBytesWritten(self, msecs: int) -> bool: ...
+
+    def disconnectFromServer(self) -> None: ...
+
+
 class MacMainWindow(Protocol):
     def menuBar(self) -> QMenuBar: ...
 
@@ -40,6 +59,9 @@ class MacMainWindow(Protocol):
     def mark_network_interrupted(self, reason: str) -> None: ...
 
     def _open_data_source_settings(self) -> None: ...
+
+
+_logger = logging.getLogger(__name__)
 
 
 class MacWindowClosePolicy:
@@ -203,8 +225,19 @@ class SingleInstanceGuard(QObject):
             self._read_activation(socket)
 
     def _read_activation(self, socket: QLocalSocket) -> None:
+        # The secondary may have disconnected and its C++ object been deleted
+        # before the readyRead callback runs; touching it raises a shiboken
+        # RuntimeError that must not escape the Qt callback.
+        try:
+            if not socket.isValid():
+                self._buffers.pop(id(socket), None)
+                return
+            incoming = bytes(cast(Any, socket.readAll()))
+        except RuntimeError:
+            self._buffers.pop(id(socket), None)
+            return
         key = id(socket)
-        self._buffers[key] = self._buffers.get(key, b"") + bytes(cast(Any, socket.readAll()))
+        self._buffers[key] = self._buffers.get(key, b"") + incoming
         if b"\n" not in self._buffers[key]:
             return
         raw, _separator, remainder = self._buffers.pop(key).partition(b"\n")
@@ -276,17 +309,52 @@ class SingleInstanceGuard(QObject):
         response["error_reason"] = response.get("error_reason")
         self._send_ack(socket, response)
 
-    def _send_ack(self, socket: QLocalSocket, response: Mapping[str, object]) -> None:
-        socket.write(_json_line(dict(response)))
-        socket.flush()
-        socket.waitForBytesWritten(500)
-        socket.disconnectFromServer()
+    def _send_ack(self, socket: _AckTarget, response: Mapping[str, object]) -> None:
+        """Write the ACK without letting a torn-down socket crash the app.
+
+        A secondary may disconnect while the ACK is being written (the event
+        loop re-enters inside waitForBytesWritten, and the disconnected
+        handler deletes the socket).  Touching the dead C++ object afterwards
+        raises a shiboken RuntimeError; letting it escape the readyRead
+        callback has crashed the app with SIGSEGV on macOS (2026-08-06).
+        Guard the whole write and record a diagnostic instead.
+        """
+        try:
+            if not socket.isValid():
+                self._log_ack_failure(response, "socket-invalid")
+                return
+            socket.write(_json_line(dict(response)))
+            socket.flush()
+            socket.waitForBytesWritten(500)
+            socket.disconnectFromServer()
+        except RuntimeError as error:  # libshiboken: C++ object already deleted
+            self._log_ack_failure(response, f"{type(error).__name__}: {error}")
+
+    def _log_ack_failure(self, response: Mapping[str, object], reason: str) -> None:
+        """Diagnostics for a failed activation ACK; never touches the socket."""
+        _logger.warning(
+            "activation ACK not delivered: reason=%s result=%s primary_pid=%s "
+            "primary_app_path=%s primary_source_commit=%s",
+            reason,
+            response.get("result"),
+            os.getpid(),
+            self.app_path,
+            self.source_commit,
+        )
 
     def _discard_connection(self, socket: QLocalSocket) -> None:
         self._buffers.pop(id(socket), None)
         if socket in self._connections:
             self._connections.remove(socket)
-        socket.deleteLater()
+        # deleteLater drops all signal connections and pending events; the
+        # Python-side guards in _read_activation/_send_ack are what must never
+        # touch the dead C++ object (SIGSEGV regression, 2026-08-06).  A
+        # second disconnected delivery can still race the deferred delete, so
+        # guard it too.
+        try:
+            socket.deleteLater()
+        except RuntimeError:
+            pass
 
 
 def _json_line(value: Mapping[str, object]) -> bytes:
