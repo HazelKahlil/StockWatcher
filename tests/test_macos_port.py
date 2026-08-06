@@ -46,6 +46,7 @@ from stock_watcher.ui.macos import (  # noqa: E402
     MacWindowClosePolicy,
     NotificationCenterNotifier,
     SingleInstanceGuard,
+    install_apple_event_quit_handler,
 )
 from stock_watcher.ui.main_window import MainWindow, ReplaySession  # noqa: E402
 from stock_watcher.ui.tushare_v1_session import TushareV1Session  # noqa: E402
@@ -637,3 +638,43 @@ def test_macos_lifecycle_records_graceful_quit_on_system_quit_event() -> None:
     )
     lifecycle._on_about_to_quit()
     assert calls == [("shutdown", "app_quit_event")]
+
+
+def test_apple_event_quit_handler_degrades_safely_when_carbon_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ctypes/Carbon failure must not break startup or the hide-on-close policy."""
+    import ctypes as ctypes_module
+
+    def _explode(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated Carbon load failure")
+
+    monkeypatch.setattr(ctypes_module, "CDLL", _explode)
+    monkeypatch.setattr(
+        "stock_watcher.ui.macos._AE_INSTALLED", False
+    )
+    assert install_apple_event_quit_handler(lambda: None) is False
+
+
+def test_macos_lifecycle_external_quit_records_graceful_and_exits() -> None:
+    app = application()
+    window = _LifecycleWindow()
+    calls: list[tuple[str, str]] = []
+    quit_calls: list[bool] = []
+
+    class _FakeSession:
+        def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+            calls.append(("shutdown", exit_reason))
+
+    window.session = _FakeSession()
+    lifecycle = MacApplicationLifecycle(
+        app,
+        cast(Any, window),
+        platform="darwin",
+        network_information=cast(QNetworkInformation, _FakeNetworkInformation()),
+    )
+    lifecycle._app.quit = lambda: quit_calls.append(True)  # type: ignore[method-assign]
+    lifecycle._handle_external_quit()
+    assert calls == [("shutdown", "apple_event_quit")]
+    assert quit_calls == [True]
+    assert lifecycle._quitting

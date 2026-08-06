@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -405,6 +407,10 @@ class MacApplicationLifecycle(QObject):
         # closeEvent; record it as a graceful exit so the next launch does not
         # misreport the previous session as unclean.
         self._app.aboutToQuit.connect(self._on_about_to_quit)
+        # AppleEvent quit (Dock Quit, logout, osascript) must really exit instead
+        # of being swallowed by the hide-on-close window policy.
+        install_apple_event_quit_handler(self._handle_external_quit)
+        self._install_sigterm_fallback()
         self._app.applicationStateChanged.connect(self.handle_application_state)
         self._heartbeat.setInterval(5_000)
         self._heartbeat.timeout.connect(self.check_for_sleep_gap)
@@ -446,6 +452,41 @@ class MacApplicationLifecycle(QObject):
         shutdown = getattr(session, "shutdown", None)
         if callable(shutdown):
             shutdown(exit_reason="app_quit_event")
+
+    def _handle_external_quit(self, exit_reason: str = "apple_event_quit") -> None:
+        """Quit for real when macOS sends a quit AppleEvent or SIGTERM.
+
+        The window close policy hides on close, which would swallow Qt's
+        closeAllWindows-based quit handling; this path ends the runtime session
+        first and then quits the application directly.
+        """
+        if not self._enabled or self._quitting:
+            return
+        self._quitting = True
+        try:
+            self._keep_awake.shutdown()
+        except Exception:
+            pass
+        session = getattr(self._window, "session", None)
+        shutdown = getattr(session, "shutdown", None)
+        if callable(shutdown):
+            shutdown(exit_reason=exit_reason)
+        self._window.request_application_exit()
+        window = self._window
+        if isinstance(window, QMainWindow):
+            window.close()
+        self._app.quit()
+
+    def _install_sigterm_fallback(self) -> None:
+        """Record SIGTERM (kill, logout escalation) as a graceful exit when possible."""
+
+        def _on_sigterm(_signum: int, _frame: object) -> None:
+            self._handle_external_quit(exit_reason="sigterm")
+
+        try:
+            signal.signal(signal.SIGTERM, _on_sigterm)
+        except (ValueError, OSError):
+            pass
 
     def request_quit(self) -> None:
         self._quitting = True
@@ -600,3 +641,60 @@ def _run_osascript(arguments: list[str]) -> int:
         timeout=5,
     )
     return completed.returncode
+
+
+_AE_INSTALLED = False
+_AE_CARBON_CLASS = 0x61657674  # four-char code 'aevt' (core events)
+_AE_QUIT_APPLICATION = 0x71756974  # four-char code 'quit'
+
+
+def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
+    """Route the macOS quit AppleEvent to a Python callback without third-party deps.
+
+    Qt maps kAEQuitApplication to closeAllWindows(); our window hides instead of
+    closing, so a Dock Quit / logout / osascript quit is silently swallowed the
+    first time.  Registering a Carbon AEInstallEventHandler puts our handler at
+    the front of the AppleEvent dispatch chain; returning noErr lets us run the
+    graceful-exit path while Qt never sees the event.  The Carbon framework is a
+    system library loaded at runtime, so nothing extra is bundled.
+    """
+    global _AE_INSTALLED
+    if _AE_INSTALLED:
+        return True
+    try:
+        carbon = ctypes.CDLL(
+            "/System/Library/Frameworks/Carbon.framework/Carbon"
+        )
+    except OSError:
+        return False
+
+    handler_type = ctypes.CFUNCTYPE(
+        ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+    )
+
+    @handler_type  # type: ignore[untyped-decorator]
+    def _on_quit_event(
+        _event: int, _reply: int, _refcon: int
+    ) -> int:
+        callback()
+        return 0  # noErr: event consumed, do not fall through to Qt
+
+    carbon.AEInstallEventHandler.restype = ctypes.c_int32
+    carbon.AEInstallEventHandler.argtypes = [
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint8,
+    ]
+    status = carbon.AEInstallEventHandler(
+        _AE_CARBON_CLASS,
+        _AE_QUIT_APPLICATION,
+        ctypes.cast(_on_quit_event, ctypes.c_void_p),
+        None,
+        0,
+    )
+    if status != 0:
+        return False
+    _AE_INSTALLED = True
+    return True
