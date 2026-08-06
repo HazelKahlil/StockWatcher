@@ -33,7 +33,7 @@ class StartupRecorder:
         self.error_path = self.runtime_dir / "last-startup-error.txt"
         self.fault_path = self.runtime_dir / "last-startup-faulthandler.log"
         self._fault_file: Any | None = None
-        self._fatal_recorded = False
+        self._failure_recorded = False
         self._previous_excepthook = sys.excepthook
         self._state: dict[str, Any] = {
             "schema_version": 1,
@@ -82,28 +82,47 @@ class StartupRecorder:
             runtime_dir=str(self.runtime_dir),
         )
 
-    def fatal(self, error: BaseException, *, app_available: bool) -> None:
-        if self._fatal_recorded:
+    def record_error(
+        self,
+        error: BaseException,
+        *,
+        app_available: bool,
+        stage: str,
+    ) -> None:
+        """Persist an exception without turning normal process exits into fatals."""
+        if self._failure_recorded:
             return
-        self._fatal_recorded = True
+        self._failure_recorded = True
         rendered = _safe_text("".join(traceback.format_exception(error)))
         try:
             self.error_path.write_text(rendered, encoding="utf-8")
         except OSError:
             pass
         self.stage(
-            "fatal-error",
+            stage,
             error_type=type(error).__name__,
             error_message=_safe_text(str(error)),
             error_path=str(self.error_path),
         )
         _show_fatal_message(self.error_path, app_available=app_available)
 
+    def fatal(self, error: BaseException, *, app_available: bool) -> None:
+        self.record_error(
+            error,
+            app_available=app_available,
+            stage="startup_fatal_error",
+        )
+
     def finish(self, exit_code: int, reason: str) -> None:
         self._state["exit_code"] = int(exit_code)
         self._state["exit_reason"] = _safe_text(reason)
         self._state["ended_at"] = _now()
-        self.stage("normal-exit", exit_code=int(exit_code), exit_reason=reason)
+        if not self._failure_recorded:
+            self.stage("graceful_exit", exit_code=int(exit_code), exit_reason=reason)
+        else:
+            # Keep the failure stage as the terminal semantic event.  A later
+            # bookkeeping call must not make a fatal startup look graceful.
+            self._write_state()
         sys.excepthook = self._previous_excepthook
         if self._fault_file is not None:
             try:

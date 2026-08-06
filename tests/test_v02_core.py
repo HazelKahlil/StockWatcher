@@ -296,11 +296,11 @@ def test_corrupt_database_switches_to_read_only_degradation(tmp_path: Path) -> N
     assert store.read_only
 
 
-def test_sqlite_explicit_v1_to_v4_migration_is_idempotent(tmp_path: Path) -> None:
+def test_sqlite_explicit_v1_to_v5_migration_is_idempotent(tmp_path: Path) -> None:
     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
     empty_store.initialize()
     with empty_store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (4,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (5,)
 
     path = tmp_path / "watcher.sqlite3"
     with sqlite3.connect(path) as connection:
@@ -314,7 +314,7 @@ def test_sqlite_explicit_v1_to_v4_migration_is_idempotent(tmp_path: Path) -> Non
     store.initialize()
     store.initialize()
     with store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (4,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (5,)
         assert connection.execute("SELECT value FROM notes WHERE key = 'v1-data'").fetchone() == (
             "preserved",
         )
@@ -333,6 +333,8 @@ def test_sqlite_explicit_v1_to_v4_migration_is_idempotent(tmp_path: Path) -> Non
         "health_metrics",
         "automation_tasks",
         "scan_runs",
+        "runtime_sessions",
+        "scan_attempts",
     } <= tables
     assert path.with_suffix(".sqlite3.pre-v2.bak").exists()
 

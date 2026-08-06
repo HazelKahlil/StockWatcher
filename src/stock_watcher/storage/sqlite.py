@@ -16,7 +16,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 4
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 5
 
     def connect(self) -> sqlite3.Connection:
         connection = (
@@ -62,7 +62,7 @@ class SQLiteStore:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3):
+        if version not in (0, 1, 2, 3, 4):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -72,7 +72,9 @@ class SQLiteStore:
                 self._apply_v2_migration(connection)
             if version <= 2:
                 self._apply_v3_migration(connection)
-            self._apply_v4_migration(connection)
+            if version <= 3:
+                self._apply_v4_migration(connection)
+            self._apply_v5_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -183,6 +185,34 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _apply_v5_migration(connection: sqlite3.Connection) -> None:
+        """Add durable process and in-flight scan lifecycle evidence."""
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_sessions "
+            "(session_id TEXT PRIMARY KEY, pid INTEGER NOT NULL, ppid INTEGER NOT NULL, "
+            "app_path TEXT NOT NULL, source_commit TEXT NOT NULL, started_at TEXT NOT NULL, "
+            "last_heartbeat_at TEXT NOT NULL, ended_at TEXT, exit_reason TEXT, "
+            "graceful_exit INTEGER NOT NULL DEFAULT 0, last_scan_at TEXT, "
+            "last_window_activation_at TEXT)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_sessions_started "
+            "ON runtime_sessions(started_at)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS scan_attempts "
+            "(attempt_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, started_at TEXT NOT NULL, "
+            "last_heartbeat_at TEXT NOT NULL, completed_at TEXT, state TEXT NOT NULL, "
+            "operation TEXT NOT NULL, thread_name TEXT NOT NULL, timer_active INTEGER NOT NULL, "
+            "detail TEXT NOT NULL, recovery_count INTEGER NOT NULL DEFAULT 0, "
+            "FOREIGN KEY(session_id) REFERENCES runtime_sessions(session_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_attempts_started "
+            "ON scan_attempts(started_at, state)"
+        )
+
+    @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
         if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise RuntimeError("database integrity check failed")
@@ -200,6 +230,8 @@ class SQLiteStore:
             "health_metrics",
             "automation_tasks",
             "scan_runs",
+            "runtime_sessions",
+            "scan_attempts",
         }
         tables = {
             str(row[0])
@@ -211,6 +243,255 @@ class SQLiteStore:
         ):
             raise RuntimeError("schema migration did not reach current version")
         self._assert_integrity(connection)
+
+    def start_runtime_session(
+        self,
+        *,
+        session_id: str,
+        pid: int,
+        ppid: int,
+        app_path: str,
+        source_commit: str,
+        started_at: str,
+    ) -> None:
+        """Create a process session and close any prior live session as unclean."""
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                previous = connection.execute(
+                    "SELECT session_id, last_heartbeat_at, last_scan_at "
+                    "FROM runtime_sessions WHERE ended_at IS NULL AND session_id <> ?",
+                    (session_id,),
+                ).fetchall()
+                for previous_id, heartbeat, last_scan in previous:
+                    connection.execute(
+                        "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, "
+                        "graceful_exit = 0 WHERE session_id = ?",
+                        (started_at, "unclean_exit", previous_id),
+                    )
+                    connection.execute(
+                        "UPDATE scan_attempts SET completed_at = ?, state = ?, detail = ? "
+                        "WHERE session_id = ? AND completed_at IS NULL",
+                        (
+                            started_at,
+                            "aborted",
+                            "previous session ended without graceful shutdown",
+                            previous_id,
+                        ),
+                    )
+                connection.execute(
+                    "INSERT OR REPLACE INTO runtime_sessions "
+                    "(session_id, pid, ppid, app_path, source_commit, started_at, "
+                    "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
+                    "last_window_activation_at) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, NULL, NULL)",
+                    (session_id, pid, ppid, app_path, source_commit, started_at, started_at),
+                )
+
+    def heartbeat_runtime_session(
+        self,
+        session_id: str,
+        heartbeat_at: str,
+        *,
+        last_scan_at: str | None = None,
+        last_window_activation_at: str | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runtime_sessions SET last_heartbeat_at = ?, "
+                "last_scan_at = COALESCE(?, last_scan_at), "
+                "last_window_activation_at = COALESCE(?, last_window_activation_at) "
+                "WHERE session_id = ? AND ended_at IS NULL",
+                (heartbeat_at, last_scan_at, last_window_activation_at, session_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(session_id)
+
+    def end_runtime_session(
+        self,
+        session_id: str,
+        ended_at: str,
+        *,
+        exit_reason: str,
+        graceful_exit: bool,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, graceful_exit = ? "
+                "WHERE session_id = ? AND ended_at IS NULL",
+                (ended_at, exit_reason, int(graceful_exit), session_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(session_id)
+
+    def get_runtime_session(self, session_id: str) -> dict[str, Any] | None:
+        self.initialize()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT session_id, pid, ppid, app_path, source_commit, started_at, "
+                "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
+                "last_window_activation_at FROM runtime_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
+            "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
+            "last_scan_at", "last_window_activation_at",
+        )
+        return dict(zip(keys, row))
+
+    def list_runtime_sessions(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        self.initialize()
+        query = (
+            "SELECT session_id, pid, ppid, app_path, source_commit, started_at, "
+            "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
+            "last_window_activation_at FROM runtime_sessions"
+        )
+        values: tuple[Any, ...] = ()
+        if trade_date is not None:
+            query += " WHERE substr(started_at, 1, 10) = ?"
+            values = (trade_date,)
+        query += " ORDER BY started_at, session_id"
+        with self.connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        keys = (
+            "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
+            "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
+            "last_scan_at", "last_window_activation_at",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def start_scan_attempt(
+        self,
+        *,
+        attempt_id: str,
+        session_id: str,
+        started_at: str,
+        operation: str,
+        thread_name: str,
+        timer_active: bool,
+        detail: str = "scan started",
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO scan_attempts "
+                "(attempt_id, session_id, started_at, last_heartbeat_at, completed_at, state, "
+                "operation, thread_name, timer_active, detail, recovery_count) "
+                "VALUES (?, ?, ?, ?, NULL, 'running', ?, ?, ?, ?, 0)",
+                (attempt_id, session_id, started_at, started_at, operation, thread_name,
+                 int(timer_active), detail),
+            )
+
+    def heartbeat_scan_attempt(
+        self,
+        attempt_id: str,
+        heartbeat_at: str,
+        *,
+        detail: str | None = None,
+        timer_active: bool | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE scan_attempts SET last_heartbeat_at = ?, "
+                "detail = COALESCE(?, detail), timer_active = COALESCE(?, timer_active) "
+                "WHERE attempt_id = ? AND completed_at IS NULL",
+                (
+                    heartbeat_at,
+                    detail,
+                    None if timer_active is None else int(timer_active),
+                    attempt_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(attempt_id)
+
+    def finish_scan_attempt(
+        self,
+        attempt_id: str,
+        completed_at: str,
+        *,
+        state: str,
+        detail: str,
+        recovery_count: int = 0,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE scan_attempts SET completed_at = ?, last_heartbeat_at = ?, state = ?, "
+                "detail = ?, recovery_count = ? WHERE attempt_id = ? AND completed_at IS NULL",
+                (completed_at, completed_at, state, detail, recovery_count, attempt_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(attempt_id)
+
+    def list_scan_attempts(
+        self,
+        *,
+        session_id: str | None = None,
+        trade_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        query = (
+            "SELECT attempt_id, session_id, started_at, last_heartbeat_at, completed_at, state, "
+            "operation, thread_name, timer_active, detail, recovery_count FROM scan_attempts"
+        )
+        clauses: list[str] = []
+        values: list[Any] = []
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            values.append(session_id)
+        if trade_date is not None:
+            clauses.append("substr(started_at, 1, 10) = ?")
+            values.append(trade_date)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY started_at, attempt_id"
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(values)).fetchall()
+        keys = (
+            "attempt_id", "session_id", "started_at", "last_heartbeat_at", "completed_at",
+            "state", "operation", "thread_name", "timer_active", "detail", "recovery_count",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def record_scan_recovery_event(
+        self,
+        *,
+        session_id: str,
+        occurred_at: str,
+        state: str,
+        detail: str,
+    ) -> None:
+        """Keep recovery evidence in the credential-free notes table."""
+        self.put_note(
+            f"scan-recovery:{session_id}:{occurred_at}",
+            json.dumps({"occurred_at": occurred_at, "state": state, "detail": detail},
+                       ensure_ascii=False, sort_keys=True),
+        )
+
+    def list_scan_recovery_events(self, session_id: str | None = None) -> list[dict[str, Any]]:
+        self.initialize()
+        prefix = f"scan-recovery:{session_id}:" if session_id else "scan-recovery:"
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT key, value FROM notes WHERE key LIKE ? ORDER BY key",
+                (prefix + "%",),
+            ).fetchall()
+        output: list[dict[str, Any]] = []
+        for key, value in rows:
+            try:
+                payload = json.loads(str(value))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                output.append({"key": key, **payload})
+        return output
 
     def put_note(self, key: str, value: str) -> None:
         with self.connect() as connection:

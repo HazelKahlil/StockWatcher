@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -139,10 +141,60 @@ def _restore_window(
     _request: dict[str, object] | None = None,
 ) -> dict[str, object]:
     window.restore_main_window()
+    app = QApplication.instance()
+    if app is not None:
+        app.setActiveWindow(window)
     QTimer.singleShot(0, window.restore_main_window)
+    if sys.platform == "darwin":
+        _request_macos_application_activation()
+    if app is not None:
+        app.processEvents()
     minimized = bool(window.windowState() & Qt.WindowState.WindowMinimized)
     visible = window.isVisible() and not minimized
-    return {"window_visible": visible, "result": "success" if visible else "activation-failed"}
+    application_active = _application_is_active(app)
+    ok = visible and not minimized and application_active
+    return {
+        "ok": ok,
+        "result": "success" if ok else "activation-failed",
+        "window_visible": visible,
+        "window_minimized": minimized,
+        "application_active": application_active,
+        "activation_timestamp": _timestamp(),
+        "error_reason": None if ok else "窗口可见性或应用前台状态未确认",
+    }
+
+
+def _application_is_active(app: QApplication | None) -> bool:
+    if app is None:
+        return False
+    if sys.platform != "darwin":
+        return True
+    return app.applicationState() is Qt.ApplicationState.ApplicationActive
+
+
+def _request_macos_application_activation() -> None:
+    try:
+        subprocess.run(
+            [
+                "/usr/bin/osascript",
+                "-e",
+                (
+                    'tell application "System Events" to set frontmost of first process '
+                    "whose unix id is "
+                    f"{os.getpid()} to true"
+                ),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _timestamp() -> str:
+    return datetime.now().astimezone().isoformat()
 
 
 def run(
@@ -165,7 +217,20 @@ def run(
             default=None,
             help="SQLite path; defaults to temporary Replay storage or platform app-data",
         )
-        args = parser.parse_args()
+        try:
+            args = parser.parse_args()
+        except SystemExit as error:
+            code = error.code if isinstance(error.code, int) else 1
+            if code == 0:
+                recorder.finish(0, "startup_argument_help")
+            else:
+                recorder.record_error(
+                    error,
+                    app_available=False,
+                    stage="startup_argument_error",
+                )
+                recorder.finish(code, "startup_argument_error")
+            return code
         app = QApplication(sys.argv)
         app.setApplicationName("StockWatcher")
         app.setOrganizationName("StockWatcher")
@@ -184,17 +249,19 @@ def run(
             )
             if not instance_guard.acquire():
                 recorder.stage(
-                    "single-instance-secondary",
+                    "secondary_activated"
+                    if instance_guard.last_activation_status == "success"
+                    else "secondary_activation_failed",
                     activation_status=instance_guard.last_activation_status,
                     ack=instance_guard.last_activation_ack,
                 )
                 if instance_guard.last_activation_status != "success":
-                    _show_secondary_failure(instance_guard)
-                    recorder.finish(1, "secondary-activation-failed")
+                    _show_secondary_failure(instance_guard, recorder.log_path)
+                    recorder.finish(1, "secondary_activation_failed")
                     return 1
-                recorder.finish(0, "secondary-activation")
+                recorder.finish(0, "secondary_activated")
                 return 0
-            recorder.stage("single-instance-primary")
+            recorder.stage("primary_started")
         paths = runtime_paths()
         paths.create()
         recorder.set_paths(paths)
@@ -266,19 +333,28 @@ def run(
         return 1
 
 
-def _show_secondary_failure(instance_guard: SingleInstanceGuard) -> None:
+def _show_secondary_failure(
+    instance_guard: SingleInstanceGuard,
+    log_path: Path,
+) -> None:
     status = instance_guard.last_activation_status
     ack = instance_guard.last_activation_ack
+    primary_path = str(ack.get("primary_app_path", "未知"))
+    primary_commit = str(ack.get("primary_source_commit", "unknown"))
+    primary_pid = str(ack.get("primary_pid", "未知"))
+    error_reason = str(ack.get("error_reason", "未收到有效激活确认"))
     if status == "version-conflict":
-        primary_path = str(ack.get("primary_app_path", "另一版本"))
-        primary_commit = str(ack.get("primary_source_commit", "unknown"))
         message = (
             "另一版本的 StockWatcher 正在运行。\n"
-            f"路径：{primary_path}\nCommit：{primary_commit}\n"
+            f"后台 PID：{primary_pid}\n路径：{primary_path}\nCommit：{primary_commit}\n"
             "请先显示旧窗口或退出旧版本后再启动。"
         )
     else:
-        message = "StockWatcher 后台实例无法恢复窗口。请查看启动日志后重试。"
+        message = (
+            "StockWatcher 后台实例无法恢复窗口。\n"
+            f"后台 PID：{primary_pid}\n路径：{primary_path}\nCommit：{primary_commit}\n"
+            f"原因：{error_reason}\n日志：{log_path}"
+        )
     if sys.platform == "darwin":
         try:
             subprocess.Popen(

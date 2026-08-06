@@ -207,8 +207,13 @@ class SingleInstanceGuard(QObject):
         self.activation_requested.emit()
         conflict = _metadata_conflicts(request, self.app_path, self.source_commit)
         response: dict[str, object] = {
+            "ok": True,
             "result": "success",
             "window_visible": True,
+            "window_minimized": False,
+            "application_active": True,
+            "activation_timestamp": _timestamp(),
+            "error_reason": None,
         }
         if conflict:
             # Restore the known primary so the user can choose to keep using it,
@@ -217,32 +222,49 @@ class SingleInstanceGuard(QObject):
                 try:
                     response.update(dict(self._activation_handler(request)))
                 except Exception as error:
-                    response = {
-                        "result": "version-conflict",
-                        "window_visible": False,
-                        "error": type(error).__name__,
-                    }
+                    response.update(
+                        {
+                            "ok": False,
+                            "result": "version-conflict",
+                            "window_visible": False,
+                            "window_minimized": False,
+                            "application_active": False,
+                            "error_reason": type(error).__name__,
+                        }
+                    )
+            response["ok"] = False
             response["result"] = "version-conflict"
+            response["error_reason"] = response.get("error_reason") or (
+                "App路径或SOURCE_COMMIT不一致"
+            )
         elif self._activation_handler is not None:
             try:
                 response.update(dict(self._activation_handler(request)))
             except Exception as error:
-                response = {
-                    "result": "activation-failed",
-                    "window_visible": False,
-                    "error": type(error).__name__,
-                }
+                response.update(
+                    {
+                        "ok": False,
+                        "result": "activation-failed",
+                        "window_visible": False,
+                        "window_minimized": False,
+                        "application_active": False,
+                        "error_reason": type(error).__name__,
+                    }
+                )
         response.update(
             {
                 "primary_pid": os.getpid(),
                 "primary_app_path": self.app_path,
                 "primary_source_commit": self.source_commit,
-                "timestamp": _timestamp(),
+                "activation_timestamp": response.get("activation_timestamp") or _timestamp(),
             }
         )
+        response["ok"] = bool(response.get("ok", response.get("result") == "success"))
+        response["window_visible"] = bool(response.get("window_visible", False))
+        response["window_minimized"] = bool(response.get("window_minimized", False))
+        response["application_active"] = bool(response.get("application_active", False))
+        response["error_reason"] = response.get("error_reason")
         self._send_ack(socket, response)
-        if remainder:
-            self._buffers[key] = remainder
 
     def _send_ack(self, socket: QLocalSocket, response: Mapping[str, object]) -> None:
         socket.write(_json_line(dict(response)))
