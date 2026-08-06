@@ -398,6 +398,7 @@ class _LifecycleWindow:
         self.recovery_reasons: list[str] = []
         self.network_reasons: list[str] = []
         self.menu_bar = _FakeMenuBar()
+        self.session: object | None = None
 
     def menuBar(self) -> QMenuBar:
         return cast(QMenuBar, self.menu_bar)
