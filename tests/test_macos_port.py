@@ -156,9 +156,11 @@ def test_single_instance_guard_wakes_existing_window() -> None:
     )
     activated: list[dict[str, object]] = []
     primary.activation_requested.connect(lambda: activated.append({"signal": True}))
-    primary.set_activation_handler(
-        lambda request: activated.append(request) or {"window_visible": True, "result": "success"}
-    )
+    def handler(request: dict[str, object]) -> dict[str, object]:
+        activated.append(request)
+        return {"window_visible": True, "result": "success"}
+
+    primary.set_activation_handler(handler)
 
     try:
         assert primary.acquire()
@@ -205,9 +207,12 @@ def test_single_instance_guard_reports_version_conflict_without_replacing_primar
     primary = SingleInstanceGuard(name, app_path="/old/StockWatcher.app", source_commit="old")
     secondary = SingleInstanceGuard(name, app_path="/new/StockWatcher.app", source_commit="new")
     restored: list[dict[str, object]] = []
-    primary.set_activation_handler(
-        lambda request: restored.append(request) or {"window_visible": True}
-    )
+
+    def handler(request: dict[str, object]) -> dict[str, object]:
+        restored.append(request)
+        return {"window_visible": True}
+
+    primary.set_activation_handler(handler)
 
     try:
         assert primary.acquire()

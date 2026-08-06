@@ -417,6 +417,10 @@ class MainWindow(QMainWindow):
         self._refresh()
         self._auto_check_timer = QTimer(self)
         self._operation_progress_timer = QTimer(self)
+        self._heartbeat_timer = QTimer(self)
+        self._heartbeat_timer.setInterval(30_000)
+        self._heartbeat_timer.timeout.connect(self._heartbeat_tick)
+        self._heartbeat_timer.start()
         self._operation_progress_timer.setInterval(1000)
         self._operation_progress_timer.timeout.connect(self._refresh)
         if not self.session.is_replay:
@@ -1005,6 +1009,12 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
+    def _heartbeat_tick(self) -> None:
+        """Write the runtime heartbeat independently of scan success."""
+        heartbeat = getattr(self.session, "heartbeat", None)
+        if callable(heartbeat):
+            heartbeat()
+
     def _clear_initial_data_source_dialog(self, _result: int) -> None:
         self._initial_data_source_dialog = None
 
@@ -1023,6 +1033,7 @@ class MainWindow(QMainWindow):
             return
         self._auto_check_timer.stop()
         self._operation_progress_timer.stop()
+        self._heartbeat_timer.stop()
         self._queued_manual_fetch = False
         if self._operation_thread is not None and self._operation_thread.isRunning():
             self._operation_thread.quit()

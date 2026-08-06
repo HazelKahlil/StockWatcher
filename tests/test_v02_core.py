@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -16,7 +17,11 @@ from stock_watcher.engine import (
     ReplaySchedule,
 )
 from stock_watcher.engine.candidates import CandidateBatch
+from stock_watcher.providers.tushare import Tushare15000Provider
+from stock_watcher.runtime import TushareV1Runtime
+from stock_watcher.security import MemoryCredentialStore
 from stock_watcher.storage import SQLiteStore
+from stock_watcher.ui.tushare_v1_session import TushareV1Session
 
 
 def stamp(minute: int = 45) -> datetime:
@@ -440,3 +445,39 @@ def test_sqlite_migration_failure_rolls_back_and_degrades_read_only(
             ).fetchone()
             is None
         )
+
+
+def test_tushare_v1_session_wires_runtime_lifecycle(tmp_path: Path) -> None:
+    """Session creation starts a runtime session; heartbeat and shutdown persist."""
+    import os
+    from zoneinfo import ZoneInfo
+
+    now = datetime(2026, 8, 6, 9, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    session = TushareV1Session(
+        tmp_path / "lifecycle.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast("TushareV1Runtime", object()),
+            cast("Tushare15000Provider", object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session.heartbeat(now=now + timedelta(minutes=1))
+        session.record_platform_event(
+            "sleep_detected", now=now + timedelta(minutes=2), detail={"reason": "test"}
+        )
+        persisted = session.store.get_runtime_session(session._runtime_session_id)
+        assert persisted is not None
+        assert persisted["pid"] == os.getpid()
+        assert persisted["graceful_exit"] == 0
+        assert persisted["last_heartbeat_at"].startswith("2026-08-06T09:21")
+        assert session.store.list_runtime_events(session._runtime_session_id)[0][
+            "event_type"
+        ] == "sleep_detected"
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+    ended = session.store.get_runtime_session(session._runtime_session_id)
+    assert ended is not None
+    assert ended["graceful_exit"] == 1
+    assert ended["exit_reason"] == "menu_quit"

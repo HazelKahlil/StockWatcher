@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QCoreApplication, Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -142,7 +142,7 @@ def _restore_window(
 ) -> dict[str, object]:
     window.restore_main_window()
     app = QApplication.instance()
-    if app is not None:
+    if isinstance(app, QApplication):
         app.setActiveWindow(window)
     QTimer.singleShot(0, window.restore_main_window)
     if sys.platform == "darwin":
@@ -164,12 +164,14 @@ def _restore_window(
     }
 
 
-def _application_is_active(app: QApplication | None) -> bool:
+def _application_is_active(app: QCoreApplication | None) -> bool:
     if app is None:
         return False
     if sys.platform != "darwin":
         return True
-    return app.applicationState() is Qt.ApplicationState.ApplicationActive
+    if isinstance(app, QApplication):
+        return app.applicationState() is Qt.ApplicationState.ApplicationActive
+    return True
 
 
 def _request_macos_application_activation() -> None:
