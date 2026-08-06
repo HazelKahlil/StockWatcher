@@ -1578,8 +1578,12 @@ class TushareV1Session:
         else:
             self._universe_retry_at = now + timedelta(minutes=5)
             reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
+            preserved = bool(getattr(runtime, "concept_cache_preserved", False))
             self._universe_refresh_issue = (
-                "概念板块暂未加载；行业筛选继续运行，5分钟后后台重试"
+                "概念刷新失败，已保留上次成功概念缓存；行业筛选继续运行，5分钟后重试"
+                + (f"（{reason}）" if reason else "。")
+                if preserved
+                else "概念板块暂未加载；行业筛选继续运行，5分钟后后台重试"
                 + (f"（{reason}）" if reason else "。")
             )
 

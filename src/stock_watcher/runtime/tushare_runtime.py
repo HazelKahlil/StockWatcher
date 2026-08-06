@@ -580,6 +580,7 @@ class TushareV1Runtime:
         self._state_lock = RLock()
         self.universe: RuntimeUniverse | None = None
         self.universe_cache_failure: str | None = None
+        self.concept_cache_preserved = False
         if self.universe_cache is not None:
             if self.universe_seed_path is not None:
                 try:
@@ -611,7 +612,12 @@ class TushareV1Runtime:
         cold_start = self.universe is None
         fresh = self.loader.load()
         if self.universe_cache is not None:
-            self.universe_cache.save(fresh)
+            self.concept_cache_preserved = (
+                self.universe_cache.save_preserving_last_known_good(
+                    fresh,
+                    self.universe,
+                )
+            )
         with self._state_lock:
             if cold_start:
                 self.buffer.clear()

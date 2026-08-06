@@ -546,3 +546,45 @@ def test_missing_cache_stops_safely_without_pro_or_realtime_call(
     assert outcome.failure_reason == "universe_cache"
     assert loader.calls == 0
     assert realtime.calls == 0
+
+
+def test_concept_cache_keeps_last_known_good_after_failed_refresh(
+    tmp_path: Path,
+) -> None:
+    """A failed concept refresh must never erase verified concept memberships."""
+    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    base = _universe()
+    concept_membership = SectorMembership(
+        security=_security(1),
+        sector_code="C1",
+        sector_name="概念1",
+        sector_type="concept",
+        member_count=5,
+        effective_date=NOW.date(),
+        source_ts=NOW,
+        received_ts=NOW,
+        provider_version="pro-cache-test",
+        config_version="runtime-universe-v1",
+        quality=DataQuality.DEGRADED,
+        source_timestamp_kind=SourceTimestampKind.RECEIVED_FALLBACK,
+    )
+    concept_universe = replace(
+        base,
+        concept_loaded=True,
+        memberships=(*base.memberships, concept_membership),
+    )
+    cache.save(concept_universe)
+    assert cache.load(now=NOW).concept_loaded
+
+    industry_only = replace(_universe(), concept_loaded=False)
+    preserved = cache.save_preserving_last_known_good(industry_only, concept_universe)
+    assert preserved is True
+    reloaded = cache.load(now=NOW)
+    assert reloaded.concept_loaded is True
+
+    assert cache.save_preserving_last_known_good(concept_universe, industry_only) is False
+    assert cache.load(now=NOW).concept_loaded is True
+
+    cold = cache.save_preserving_last_known_good(industry_only, None)
+    assert cold is False
+    assert cache.load(now=NOW).concept_loaded is False

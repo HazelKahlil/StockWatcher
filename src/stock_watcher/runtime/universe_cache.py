@@ -183,6 +183,22 @@ class RuntimeUniverseCache:
             raise UniverseCacheError(UniverseCacheFailure.IO) from None
         return True
 
+    def save_preserving_last_known_good(
+        self,
+        fresh: RuntimeUniverse,
+        previous: RuntimeUniverse | None,
+    ) -> bool:
+        """Atomically replace the cache, except when concepts just failed.
+
+        A failed concept load must never overwrite a verified concept-enabled
+        cache with an industry-only version.  Returns True when the previous
+        on-disk cache was preserved (last-known-good).
+        """
+        if fresh.concept_loaded or previous is None or not previous.concept_loaded:
+            self.save(fresh)
+            return False
+        return True
+
     def save(self, universe: RuntimeUniverse) -> None:
         _validate_structure(universe, minimum_profiles=self.minimum_profile_count)
         if universe.generated_at is None or universe.trend_through_date is None:
