@@ -41,6 +41,9 @@ analysis = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
+        "objc",
+        "Foundation",
+        "PyObjCTools",
         "tushare",
         "tushare.stock",
         "tushare.stock.cons",

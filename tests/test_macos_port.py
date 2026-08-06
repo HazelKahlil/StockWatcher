@@ -650,6 +650,7 @@ def test_apple_event_quit_handler_degrades_safely_when_carbon_unavailable(
     def _explode(*_args: object, **_kwargs: object) -> None:
         raise OSError("simulated Carbon load failure")
 
+    monkeypatch.setitem(sys.modules, "Foundation", None)
     monkeypatch.setattr(ctypes_module, "CDLL", _explode)
     monkeypatch.setattr(
         "stock_watcher.ui.macos._AE_INSTALLED", False

@@ -644,26 +644,61 @@ def _run_osascript(arguments: list[str]) -> int:
 
 
 _AE_INSTALLED = False
+_ae_quit_handler_holder: list[Any] = []
 _AE_CARBON_CLASS = 0x61657674  # four-char code 'aevt' (core events)
 _AE_QUIT_APPLICATION = 0x71756974  # four-char code 'quit'
 
 
 def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
-    """Route the macOS quit AppleEvent to a Python callback without third-party deps.
+    """Route the macOS quit AppleEvent to a Python callback.
 
-    Qt maps kAEQuitApplication to closeAllWindows(); our window hides instead of
-    closing, so a Dock Quit / logout / osascript quit is silently swallowed the
-    first time.  AEInstallEventHandler queues our handler *behind* Qt's (which
-    was registered earlier), so we use AESetEventHandler to replace Qt's handler
-    for the quit event instead; returning noErr then runs our graceful-exit path
-    while Qt never sees the event.  The callback is marshalled to the Qt main
-    thread with QTimer.singleShot so AppleEvent dispatch never touches Qt or
-    database objects from a foreign thread.  The Carbon framework is a system
-    library loaded at runtime, so nothing extra is bundled.
+    Qt maps kAEQuitApplication to closeAllWindows(); our window hides instead
+    of closing, so a Dock Quit / logout / osascript quit is silently swallowed
+    the first time.  NSAppleEventManager handlers are consulted at the end of
+    the AppleEvent dispatch chain, so registering the quit event there reliably
+    consumes it before Qt's default handling runs.  The callback is marshalled
+    to the Qt main thread with QTimer.singleShot so AppleEvent dispatch never
+    touches Qt or database objects from a foreign thread.
+
+    PyObjC is imported lazily; when it is unavailable the function degrades to
+    a Carbon AEInstallEventHandler registration (queued behind Qt, usually
+    ineffective) and reports success only so the SIGTERM fallback still gets
+    installed by the caller.
     """
     global _AE_INSTALLED
     if _AE_INSTALLED:
         return True
+    try:
+        from Foundation import (  # type: ignore[import-untyped]
+            NSAppleEventManager,
+            NSObject,
+        )
+    except ImportError:
+        pass
+    else:
+        manager = NSAppleEventManager.sharedAppleEventManager()
+
+        class _QuitHandler(NSObject):  # type: ignore[misc]
+            def handleQuitEvent_withReplyEvent_(
+                self, _event: object, _reply: object
+            ) -> None:
+                # Marshal to the Qt main thread: quit AppleEvents are dispatched
+                # on the AppleEvent manager's own thread.
+                QTimer.singleShot(0, callback)
+
+        handler = _QuitHandler.alloc().init()
+        manager.setEventHandler_andSelector_forEventClass_andEventID_(
+            handler,
+            "handleQuitEvent:withReplyEvent:",
+            int.from_bytes(b"aevt", "big"),
+            int.from_bytes(b"quit", "big"),
+        )
+        # Keep the handler alive for the process lifetime; the AppleEvent
+        # manager stores it as a weak reference.
+        _ae_quit_handler_holder.append(handler)
+        _AE_INSTALLED = True
+        return True
+
     try:
         carbon = ctypes.CDLL(
             "/System/Library/Frameworks/Carbon.framework/Carbon"
@@ -676,42 +711,27 @@ def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
     )
 
     @handler_type  # type: ignore[untyped-decorator]
-    def _on_quit_event(
+    def _on_quit_event_carbon(
         _event: int, _reply: int, _refcon: int
     ) -> int:
-        # Marshal to the Qt main thread: quit AppleEvents are dispatched on the
-        # AppleEvent manager's own thread, where touching Qt/DB objects is unsafe.
         QTimer.singleShot(0, callback)
         return 0  # noErr: event consumed, do not fall through to Qt
 
-    function_pointer = ctypes.cast(_on_quit_event, ctypes.c_void_p)
-    carbon.AESetEventHandler.restype = ctypes.c_int32
-    carbon.AESetEventHandler.argtypes = [
+    carbon.AEInstallEventHandler.restype = ctypes.c_int32
+    carbon.AEInstallEventHandler.argtypes = [
         ctypes.c_uint32,
         ctypes.c_uint32,
         ctypes.c_void_p,
-        ctypes.c_int32,
+        ctypes.c_int32,  # SRefCon is a 4-byte SInt32, not a pointer
+        ctypes.c_uint8,
     ]
-    status = carbon.AESetEventHandler(
-        _AE_CARBON_CLASS, _AE_QUIT_APPLICATION, function_pointer, 0
+    status = carbon.AEInstallEventHandler(
+        _AE_CARBON_CLASS,
+        _AE_QUIT_APPLICATION,
+        ctypes.cast(_on_quit_event_carbon, ctypes.c_void_p),
+        0,
+        0,
     )
-    if status != 0:
-        # Fallback for systems where the setter is unavailable: queue behind Qt.
-        carbon.AEInstallEventHandler.restype = ctypes.c_int32
-        carbon.AEInstallEventHandler.argtypes = [
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_void_p,
-            ctypes.c_int32,  # SRefCon is a 4-byte SInt32, not a pointer
-            ctypes.c_uint8,
-        ]
-        status = carbon.AEInstallEventHandler(
-            _AE_CARBON_CLASS,
-            _AE_QUIT_APPLICATION,
-            function_pointer,
-            0,
-            0,
-        )
     if status != 0:
         return False
     _AE_INSTALLED = True
