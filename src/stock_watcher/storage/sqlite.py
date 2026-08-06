@@ -251,6 +251,14 @@ class SQLiteStore:
             connection.execute(
                 "ALTER TABLE daily_summaries ADD COLUMN catch_up INTEGER NOT NULL DEFAULT 0"
             )
+        alert_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(alert_events)")
+        }
+        if "detail_json" not in alert_columns:
+            connection.execute(
+                "ALTER TABLE alert_events ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
 
     @staticmethod
@@ -766,6 +774,7 @@ class SQLiteStore:
         decision: str,
         channel: str,
         trigger_type: str = "intraday",
+        detail: dict[str, Any] | None = None,
     ) -> None:
         if any(word in channel.lower() for word in ("token", "secret", "password", "account")):
             raise ValueError("alert channel must not contain credentials or account information")
@@ -773,9 +782,16 @@ class SQLiteStore:
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO alert_events "
-                "(snapshot_id, displayed_at, decision, channel, trigger_type) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (snapshot_id, displayed_at, decision, channel, trigger_type),
+                "(snapshot_id, displayed_at, decision, channel, trigger_type, detail_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot_id,
+                    displayed_at,
+                    decision,
+                    channel,
+                    trigger_type,
+                    json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
+                ),
             )
 
     def record_health_metric(self, metadata: dict[str, str]) -> None:
@@ -1044,6 +1060,7 @@ class SQLiteStore:
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT e.id, e.displayed_at, e.decision, e.channel, e.trigger_type, "
+                "e.detail_json, "
                 "s.id, s.source_ts, s.overall_weak, s.payload_json "
                 "FROM alert_events e JOIN candidate_snapshots s ON s.id = e.snapshot_id "
                 "WHERE e.displayed_at >= ? "
@@ -1056,6 +1073,7 @@ class SQLiteStore:
             "decision",
             "channel",
             "trigger_type",
+            "detail_json",
             "snapshot_id",
             "source_ts",
             "overall_weak",

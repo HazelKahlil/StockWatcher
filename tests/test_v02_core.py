@@ -612,3 +612,105 @@ def test_summary_catch_up_marks_catch_up_flag(tmp_path: Path) -> None:
         assert "catch_up=true" in str(task["detail"])
     finally:
         session.shutdown(exit_reason="menu_quit")
+
+
+def test_alert_policy_global_batch_cooldown_blocks_rapid_batches() -> None:
+    """Two intraday batches must be at least 5 minutes apart."""
+    first = batch(item("600001"), item("600002"), item("600003"))
+    second = batch(
+        item("600004", source_ts=stamp(46)),
+        item("600005", source_ts=stamp(46)),
+        item("600006", source_ts=stamp(46)),
+    )
+    assert first is not None and second is not None
+    policy = AlertPolicy(AlertPolicyConfig(replacement_cycles=2, replacement_margin=1.0))
+    now = stamp()
+    assert policy.decide(
+        first, now, AlertTrigger.INTRADAY,
+        strong_movement=True, triggering_codes=("600001",), event_strength=1.0,
+    ).should_alert
+    decision = policy.decide(
+        second, now + timedelta(minutes=1), AlertTrigger.INTRADAY,
+        strong_movement=True, triggering_codes=("600004",), event_strength=1.0,
+    )
+    assert decision.reason == "global-cooldown"
+    assert policy.decide(
+        second, now + timedelta(minutes=6), AlertTrigger.INTRADAY,
+        strong_movement=True, triggering_codes=("600004",), event_strength=1.2,
+    ).should_alert
+
+
+def test_feature_readiness_blocks_warmup_strong_alert(tmp_path: Path) -> None:
+    """A warming baseline must never fire an intraday anomaly alert."""
+    from types import SimpleNamespace
+
+    from stock_watcher.engine import StrongMovementEvent
+
+    now = datetime(2026, 8, 6, 10, 5, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "warmup.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session.batch = batch(item("600001"), item("600002"), item("600003"))
+        assert session.batch is not None
+        event = StrongMovementEvent(
+            triggering_codes=("600001",),
+            strength=1.5,
+            funds_unconfirmed=True,
+        )
+        audit = SimpleNamespace(warmup_state="warming", display_velocity_ready=False, rows=())
+        assert (
+            session._evaluate_alerts(now, event, selection_audit=audit, scan_run_id=7)
+            is None
+        )
+        assert session.store.list_alert_history(now=now, days=1) == []
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_strong_alert_fires_with_full_detail_when_ready(tmp_path: Path) -> None:
+    """A ready baseline stores complete audit detail in alert_events."""
+    import json as json_module
+    from types import SimpleNamespace
+
+    from stock_watcher.engine import StrongMovementEvent
+
+    now = datetime(2026, 8, 6, 10, 5, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "ready.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session.batch = batch(item("600001"), item("600002"), item("600003"))
+        assert session.batch is not None
+        event = StrongMovementEvent(
+            triggering_codes=("600001",),
+            strength=1.5,
+            funds_unconfirmed=True,
+        )
+        audit = SimpleNamespace(warmup_state="ready", display_velocity_ready=True, rows=())
+        snapshot_id = session._evaluate_alerts(
+            now, event, selection_audit=audit, scan_run_id=7
+        )
+        assert snapshot_id is not None
+        rows = session.store.list_alert_history(now=now, days=1)
+        assert rows and rows[0]["trigger_type"] == "intraday"
+        detail = json_module.loads(str(rows[0]["detail_json"]))
+        assert detail["trigger_symbol"] == "600001"
+        assert detail["trigger_time"].startswith("2026-08-06T10:05")
+        assert detail["feature_readiness"] == "ready"
+        assert detail["source_scan_id"] == 7
+        assert detail["cooldown_decision"] == "strong-movement"
+    finally:
+        session.shutdown(exit_reason="menu_quit")

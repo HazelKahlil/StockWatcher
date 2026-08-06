@@ -161,6 +161,7 @@ class AlertPolicy:
     config: AlertPolicyConfig = field(default_factory=AlertPolicyConfig)
     _last_codes: tuple[str, ...] = ()
     _last_sent: dict[str, datetime] = field(default_factory=dict)
+    _last_intraday_at: datetime | None = None
     _intraday_sent_today: int = 0
     _fixed_sent: set[AlertTrigger] = field(default_factory=set)
     _day: date | None = None
@@ -200,6 +201,11 @@ class AlertPolicy:
             return AlertDecision(False, "not-strong-movement")
         if self._intraday_sent_today >= self.config.daily_limit:
             return AlertDecision(False, "daily-limit")
+        if (
+            self._last_intraday_at is not None
+            and now - self._last_intraday_at < self.config.cooldown
+        ):
+            return AlertDecision(False, "global-cooldown")
         if self._replacement_relation is not None and codes == self._last_codes:
             self._reset_replacement_debounce(clear_source_ts=True)
         if (
@@ -230,6 +236,7 @@ class AlertPolicy:
             self._reset_replacement_debounce()
         self._last_codes = codes
         self._last_sent.update({code: now for code in cooldown_codes})
+        self._last_intraday_at = now
         self._intraday_sent_today += 1
         self._last_event_strength = event_strength
         self._reset_replacement_debounce()
@@ -255,6 +262,7 @@ class AlertPolicy:
     def _reset_day(self, day: date) -> None:
         self._day = day
         self._intraday_sent_today = 0
+        self._last_intraday_at = None
         self._fixed_sent = set()
         self._last_sent = {}
         self._last_codes = ()

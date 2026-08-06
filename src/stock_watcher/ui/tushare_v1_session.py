@@ -684,7 +684,7 @@ class TushareV1Session:
             state=attempt_state,
             detail=outcome.failure_reason or outcome.detail,
         )
-        self._record_scan_run(
+        scan_run_id = self._record_scan_run(
             outcome,
             started_at=now,
             completed_at=completed_at,
@@ -700,6 +700,8 @@ class TushareV1Session:
             completed_at,
             outcome.strong_event,
             forced_fixed=forced_fixed or crossed,
+            selection_audit=outcome.selection_audit,
+            scan_run_id=scan_run_id,
         )
         completed_fixed_task = fixed_task or _automation_spec_for_trigger(
             self._automation,
@@ -728,6 +730,8 @@ class TushareV1Session:
         strong_event: object | None,
         *,
         forced_fixed: AlertTrigger | None = None,
+        selection_audit: object | None = None,
+        scan_run_id: int | None = None,
     ) -> int | None:
         if self.batch is None or len(self.batch.candidates) != 3:
             return None
@@ -768,6 +772,15 @@ class TushareV1Session:
 
         if not isinstance(strong_event, StrongMovementEvent):
             return None
+        audit = selection_audit
+        readiness = "cold"
+        velocity_ready = False
+        if audit is not None:
+            readiness = str(getattr(audit, "warmup_state", "cold"))
+            velocity_ready = bool(getattr(audit, "display_velocity_ready", False))
+        if not velocity_ready:
+            # A cold/warming baseline must never fire an intraday anomaly alert.
+            return None
         today_intraday = [
             row
             for row in self._today_alerts(now)
@@ -798,14 +811,69 @@ class TushareV1Session:
                 if strong_event.funds_unconfirmed
                 else "个股、板块与资金同步增强"
             )
+            detail = self._build_strong_alert_detail(
+                now,
+                strong_event,
+                audit,
+                decision.reason,
+                readiness,
+                scan_run_id,
+            )
             return self._record_alert(
                 now,
                 AlertTrigger.INTRADAY,
                 decision.reason,
                 "盘中强异动",
                 subtitle,
+                detail=detail,
             )
         return None
+
+    def _build_strong_alert_detail(
+        self,
+        now: datetime,
+        strong_event: object,
+        audit: object | None,
+        decision_reason: str,
+        readiness: str,
+        scan_run_id: int | None,
+    ) -> dict[str, object]:
+        codes = tuple(getattr(strong_event, "triggering_codes", ()))
+        trigger_symbol = codes[0] if codes else ""
+        trigger_name = ""
+        audit_rows = (
+            tuple(getattr(audit, "rows", ()))
+            if audit is not None
+            else ()
+        )
+        row = next(
+            (
+                candidate
+                for candidate in audit_rows
+                if getattr(candidate, "code", "") == trigger_symbol
+            ),
+            None,
+        )
+        if row is not None:
+            trigger_name = str(getattr(row, "name", ""))
+        detail: dict[str, object] = {
+            "trigger_symbol": trigger_symbol,
+            "trigger_name": trigger_name,
+            "trigger_time": now.isoformat(),
+            "raw_rank_before": getattr(row, "raw_rank", None),
+            "raw_rank_after": None,
+            "velocity_1m_before": None,
+            "velocity_3m_before": None,
+            "velocity_5m_before": None,
+            "sector_name": getattr(row, "sector", ""),
+            "sector_type": getattr(row, "sector_type", ""),
+            "sector_up_ratio": None,
+            "sector_strong_count": None,
+            "feature_readiness": readiness,
+            "cooldown_decision": decision_reason,
+            "source_scan_id": scan_run_id,
+        }
+        return {key: value for key, value in detail.items() if value is not None}
 
     def _today_alerts(self, now: datetime) -> list[dict[str, object]]:
         return [
@@ -1023,6 +1091,8 @@ class TushareV1Session:
         decision: str,
         title: str,
         subtitle: str,
+        *,
+        detail: dict[str, object] | None = None,
     ) -> int:
         assert self.batch is not None
         snapshot_id = self.store.record_batch(self.batch)
@@ -1032,6 +1102,7 @@ class TushareV1Session:
             decision,
             self._alert_client_platform,
             trigger_type=trigger.value,
+            detail=detail,
         )
         self.pending_alert = PendingUiAlert(
             title=title,
