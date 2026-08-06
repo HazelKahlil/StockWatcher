@@ -173,7 +173,11 @@ def main() -> int:
                 {
                     "scan_id": scan["id"],
                     "completed_at": scan["completed_at"],
-                    **{key: candidate.get(key) for key in excluded_fields if key not in {"scan_id", "completed_at"}},
+                    **{
+                        key: candidate.get(key)
+                        for key in excluded_fields
+                        if key not in {"scan_id", "completed_at"}
+                    },
                 }
             )
     _write_csv(args.output / "excluded-candidates.csv", excluded_fields, excluded_rows)
@@ -244,7 +248,12 @@ def main() -> int:
         try:
             document = json.loads(cache_path.read_text(encoding="utf-8"))
             if isinstance(document, dict):
-                cache_rows.append({"aspect": "concept_loaded", "status": bool(document.get("concept_loaded"))})
+                cache_rows.append(
+                    {
+                        "aspect": "concept_loaded",
+                        "status": bool(document.get("concept_loaded")),
+                    }
+                )
                 generated = document.get("generated_at") or document.get("prepared_at")
                 if generated:
                     cache_rows.append({"aspect": "cache_generated_at", "status": generated})
