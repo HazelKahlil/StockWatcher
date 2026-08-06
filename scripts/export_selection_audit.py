@@ -125,7 +125,12 @@ def main() -> int:
         raw_codes = audit.get("raw_codes", [])
         for index, code in enumerate(raw_codes[:20], start=1):
             raw_rows.append(
-                {"scan_id": scan["id"], "completed_at": scan["completed_at"], "rank": index, "code": code}
+                {
+                    "scan_id": scan["id"],
+                    "completed_at": scan["completed_at"],
+                    "rank": index,
+                    "code": code,
+                }
             )
     _write_csv(args.output / "raw-top20.csv", raw_fields, raw_rows)
 
@@ -136,7 +141,12 @@ def main() -> int:
         stable_codes = audit.get("stable_codes", [])
         for index, code in enumerate(stable_codes, start=1):
             stable_rows.append(
-                {"scan_id": scan["id"], "completed_at": scan["completed_at"], "rank": index, "code": code}
+                {
+                    "scan_id": scan["id"],
+                    "completed_at": scan["completed_at"],
+                    "rank": index,
+                    "code": code,
+                }
             )
     _write_csv(args.output / "stable-top3-timeline.csv", stable_fields, stable_rows)
 
