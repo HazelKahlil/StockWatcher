@@ -62,6 +62,9 @@ class Candidate:
     trend_label: str = "一般"
     acceleration_pct: float | None = None
     velocity_available: bool = False
+    velocity_1m_pct: float | None = None
+    velocity_3m_pct: float | None = None
+    velocity_5m_pct: float | None = None
     volume_ratio_1m: float | None = None
     amount_ratio_1m: float | None = None
     sector_gate_passed: bool = False
@@ -104,6 +107,9 @@ class CandidateAuditRow:
     selected_raw: bool
     selected_stable: bool
     decision: str
+    velocity_1m_pct: float | None = None
+    velocity_3m_pct: float | None = None
+    velocity_5m_pct: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +229,9 @@ class CandidateEngine:
                     level=candidate.level,
                     is_formal=candidate.is_formal,
                     velocity_available=candidate.velocity_available,
+                    velocity_1m_pct=candidate.velocity_1m_pct,
+                    velocity_3m_pct=candidate.velocity_3m_pct,
+                    velocity_5m_pct=candidate.velocity_5m_pct,
                     selected_raw=candidate.code in raw_codes,
                     selected_stable=candidate.code in stable_codes,
                     decision=decision,

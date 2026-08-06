@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from threading import Lock
+from threading import Lock, current_thread
 from time import monotonic as monotonic_time
 from time import sleep as sleep_seconds
 from typing import cast
 
+from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
 from stock_watcher.domain import SHANGHAI, HealthState
 from stock_watcher.engine import (
@@ -187,10 +190,18 @@ class TushareV1Session:
         self._platform_recovery_lock = Lock()
         self._platform_recovery_reason: str | None = None
         self._network_interrupted = False
+        self._runtime_session_id = uuid.uuid4().hex
+        self._runtime_session_active = False
+        self._active_scan_attempt_id: str | None = None
+        self._runtime_audit_issue: str | None = None
+        self.last_scan_succeeded_at: datetime | None = None
+        self._recovery_round = 0
+        self._stall_threshold_seconds = 90.0
         self.app_badge = "Mac V1" if sys.platform == "darwin" else "Windows V1"
         self._alert_client_platform = (
             "macos-desktop" if sys.platform == "darwin" else "windows-desktop"
         )
+        self._start_runtime_session()
         self._refresh_credential_state()
 
     def provider_changed(self, mode: DataSourceMode) -> None:
@@ -238,8 +249,19 @@ class TushareV1Session:
         with self._platform_recovery_lock:
             self._platform_recovery_reason = reason
             self._network_interrupted = False
-        if self._runtime is not None:
-            self._runtime.request_scan_cancellation()
+        self._recovery_round = 0
+        self.record_platform_event(
+            "recovering_network",
+            detail={"reason": reason},
+        )
+        self._cancel_in_flight_scan()
+        if self._active_scan_attempt_id is not None:
+            self._finish_scan_attempt(
+                self._active_scan_attempt_id,
+                completed_at=_shanghai(self._clock()),
+                state="sleep_interrupted",
+                detail="跨睡眠/恢复的扫描被作废",
+            )
         self.pending_alert = None
         self.state = HealthState.WARMING
         self.connection_state = TqConnectionState.CHECKING
@@ -253,8 +275,11 @@ class TushareV1Session:
         """Fail closed on a platform-reported network interruption."""
         with self._platform_recovery_lock:
             self._network_interrupted = True
-        if self._runtime is not None:
-            self._runtime.request_scan_cancellation()
+        self.record_platform_event(
+            "recovering_network",
+            detail={"reason": reason},
+        )
+        self._cancel_in_flight_scan()
         self.pending_alert = None
         self.state = HealthState.STOPPED
         self.connection_state = TqConnectionState.DISCONNECTED
@@ -377,6 +402,7 @@ class TushareV1Session:
     ) -> ScanOutcome | None:
         now = _shanghai(self._clock())
         self._prune_history_if_due(now)
+        self._detect_scan_stall(now)
         self.phase_label = _visible_phase(now)
         due_tasks = self._prepare_automation_tasks(now)
         summary_task = next(
@@ -548,15 +574,33 @@ class TushareV1Session:
         if fixed_task is not None:
             self._mark_task_running(fixed_task, now)
         self.last_fetch_at = now
+        scan_trigger = (
+            fixed_task.task_type.value
+            if fixed_task is not None
+            else ("manual" if manual_request else "automatic")
+        )
+        attempt_id = self._begin_scan_attempt(now=now, operation=scan_trigger)
         outcome = self._runtime.scan_once()
         if self._is_network_interrupted():
             # An interruption landed while the request was in flight.  Its
             # cancellation outcome must not overwrite the fail-closed state.
+            self._finish_scan_attempt(
+                attempt_id,
+                completed_at=_shanghai(self._clock()),
+                state="cancelled",
+                detail="network-interrupted",
+            )
             return None
         if self._apply_pending_platform_recovery():
             # A sleep/wake or network event arrived while the request was in
             # flight.  The cancelled response is intentionally not ranked,
             # persisted or allowed to trigger an old alert.
+            self._finish_scan_attempt(
+                attempt_id,
+                completed_at=_shanghai(self._clock()),
+                state="sleep_interrupted",
+                detail="platform-recovery",
+            )
             return None
         if self._runtime.universe is not None:
             self._prepared_date = now.date()
@@ -621,12 +665,26 @@ class TushareV1Session:
             self.candidate_gate_label = "保留上次结果" if self.batch else "无新结果"
             self.status_issues = ("本轮未生成新候选。",)
         completed_at = _shanghai(self._clock())
-        scan_trigger = (
-            fixed_task.task_type.value
-            if fixed_task is not None
-            else ("manual" if manual_request else "automatic")
+        if outcome.health is HealthState.HEALTHY:
+            self.last_scan_succeeded_at = completed_at
+            self._recovery_round += 1
+            if self._recovery_round >= 3:
+                self.record_platform_event(
+                    "ready", detail={"rounds": self._recovery_round}
+                )
+                self._recovery_round = 0
+        attempt_state = (
+            "completed"
+            if outcome.health is HealthState.HEALTHY
+            else ("failed" if outcome.failure_reason is not None else "completed")
         )
-        self._record_scan_run(
+        self._finish_scan_attempt(
+            attempt_id,
+            completed_at=completed_at,
+            state=attempt_state,
+            detail=outcome.failure_reason or outcome.detail,
+        )
+        scan_run_id = self._record_scan_run(
             outcome,
             started_at=now,
             completed_at=completed_at,
@@ -642,6 +700,8 @@ class TushareV1Session:
             completed_at,
             outcome.strong_event,
             forced_fixed=forced_fixed or crossed,
+            selection_audit=outcome.selection_audit,
+            scan_run_id=scan_run_id,
         )
         completed_fixed_task = fixed_task or _automation_spec_for_trigger(
             self._automation,
@@ -670,6 +730,8 @@ class TushareV1Session:
         strong_event: object | None,
         *,
         forced_fixed: AlertTrigger | None = None,
+        selection_audit: object | None = None,
+        scan_run_id: int | None = None,
     ) -> int | None:
         if self.batch is None or len(self.batch.candidates) != 3:
             return None
@@ -710,6 +772,15 @@ class TushareV1Session:
 
         if not isinstance(strong_event, StrongMovementEvent):
             return None
+        audit = selection_audit
+        readiness = "cold"
+        velocity_ready = False
+        if audit is not None:
+            readiness = str(getattr(audit, "warmup_state", "cold"))
+            velocity_ready = bool(getattr(audit, "display_velocity_ready", False))
+        if not velocity_ready:
+            # A cold/warming baseline must never fire an intraday anomaly alert.
+            return None
         today_intraday = [
             row
             for row in self._today_alerts(now)
@@ -740,14 +811,69 @@ class TushareV1Session:
                 if strong_event.funds_unconfirmed
                 else "个股、板块与资金同步增强"
             )
+            detail = self._build_strong_alert_detail(
+                now,
+                strong_event,
+                audit,
+                decision.reason,
+                readiness,
+                scan_run_id,
+            )
             return self._record_alert(
                 now,
                 AlertTrigger.INTRADAY,
                 decision.reason,
                 "盘中强异动",
                 subtitle,
+                detail=detail,
             )
         return None
+
+    def _build_strong_alert_detail(
+        self,
+        now: datetime,
+        strong_event: object,
+        audit: object | None,
+        decision_reason: str,
+        readiness: str,
+        scan_run_id: int | None,
+    ) -> dict[str, object]:
+        codes = tuple(getattr(strong_event, "triggering_codes", ()))
+        trigger_symbol = codes[0] if codes else ""
+        trigger_name = ""
+        audit_rows = (
+            tuple(getattr(audit, "rows", ()))
+            if audit is not None
+            else ()
+        )
+        row = next(
+            (
+                candidate
+                for candidate in audit_rows
+                if getattr(candidate, "code", "") == trigger_symbol
+            ),
+            None,
+        )
+        if row is not None:
+            trigger_name = str(getattr(row, "name", ""))
+        detail: dict[str, object] = {
+            "trigger_symbol": trigger_symbol,
+            "trigger_name": trigger_name,
+            "trigger_time": now.isoformat(),
+            "raw_rank_before": getattr(row, "raw_rank", None),
+            "raw_rank_after": None,
+            "velocity_1m_before": None,
+            "velocity_3m_before": None,
+            "velocity_5m_before": None,
+            "sector_name": getattr(row, "sector", ""),
+            "sector_type": getattr(row, "sector_type", ""),
+            "sector_up_ratio": None,
+            "sector_strong_count": None,
+            "feature_readiness": readiness,
+            "cooldown_decision": decision_reason,
+            "source_scan_id": scan_run_id,
+        }
+        return {key: value for key, value in detail.items() if value is not None}
 
     def _today_alerts(self, now: datetime) -> list[dict[str, object]]:
         return [
@@ -847,6 +973,29 @@ class TushareV1Session:
             increment_attempt=increment_attempt,
         )
 
+    def check_automation_tasks(self, *, now: datetime | None = None) -> None:
+        """Independent 15:30 scheduling entry, decoupled from the scan loop.
+
+        The summary obligation must reach a terminal state even when the
+        realtime scan loop is stalled, sleeping or restarting.  A late launch
+        still catches up with catch_up=True.
+        """
+        current = _shanghai(now or self._clock())
+        if current.date().weekday() >= 5:
+            return
+        summary_task = next(
+            (
+                spec
+                for spec in self._prepare_automation_tasks(current)
+                if spec.task_type is AutomationTaskType.SUMMARY_1530
+            ),
+            None,
+        )
+        if summary_task is None:
+            return
+        catch_up = current > summary_task.target_at + timedelta(minutes=1)
+        self._execute_summary_task(current, summary_task, catch_up=catch_up)
+
     def _record_scan_run(
         self,
         outcome: ScanOutcome,
@@ -911,15 +1060,21 @@ class TushareV1Session:
         self,
         now: datetime,
         spec: AutomationTaskSpec,
+        *,
+        catch_up: bool = False,
     ) -> None:
         if self._summary_retry_at is not None and now < self._summary_retry_at:
             return
         self._mark_task_running(spec, now)
-        if self._generate_summary(now):
+        if self._generate_summary(now, catch_up=catch_up):
             self._mark_task_succeeded(
                 spec,
                 now,
-                detail="15:30本地总结已生成；外部增强可降级。",
+                detail=(
+                    "15:30补生成总结（catch_up=true）。"
+                    if catch_up
+                    else "15:30本地总结已生成；外部增强可降级。"
+                ),
             )
             return
         self.store.update_automation_task(
@@ -936,6 +1091,8 @@ class TushareV1Session:
         decision: str,
         title: str,
         subtitle: str,
+        *,
+        detail: dict[str, object] | None = None,
     ) -> int:
         assert self.batch is not None
         snapshot_id = self.store.record_batch(self.batch)
@@ -945,6 +1102,7 @@ class TushareV1Session:
             decision,
             self._alert_client_platform,
             trigger_type=trigger.value,
+            detail=detail,
         )
         self.pending_alert = PendingUiAlert(
             title=title,
@@ -953,7 +1111,7 @@ class TushareV1Session:
         )
         return snapshot_id
 
-    def _generate_summary(self, now: datetime) -> bool:
+    def _generate_summary(self, now: datetime, *, catch_up: bool = False) -> bool:
         """Generate the 15:30 summary with a local-first fallback.
 
         External daily/sector enrichment is useful but it must never erase the
@@ -1017,7 +1175,9 @@ class TushareV1Session:
                     collection,
                     alert_count=len(history),
                     health_interruption_count=interruption_count,
+                    continuity_evidence=self._collect_continuity_evidence(trade_date),
                 )
+                summary["catch_up"] = 1 if catch_up else 0
                 self.store.record_daily_summary(summary)
                 write_post_close_report(
                     collection,
@@ -1040,6 +1200,8 @@ class TushareV1Session:
                 alert_history=history,
                 observation_history=observations,
                 health_interruption_count=interruption_count,
+                continuity_evidence=self._collect_continuity_evidence(trade_date),
+                catch_up=catch_up,
                 version="daily-summary-local-fallback-v1",
             ).as_record()
             try:
@@ -1054,6 +1216,87 @@ class TushareV1Session:
         self._summary_retry_at = None
         self._summary_issue = None
         return True
+
+    def _collect_continuity_evidence(self, trade_date: str) -> str:
+        """Report real continuity facts; never assume an uneventful day."""
+        runs = [
+            row
+            for row in self.store.list_scan_runs(trade_date)
+            if row.get("completed_at") and row.get("health") == HealthState.HEALTHY.value
+        ]
+        timestamps: list[datetime] = []
+        for row in runs:
+            parsed = _parsed_datetime(str(row["completed_at"]))
+            if parsed is not None:
+                timestamps.append(parsed)
+        timestamps.sort()
+        gaps: list[tuple[float, datetime, datetime]] = []
+        for previous, current in zip(timestamps, timestamps[1:]):
+            delta = (current - previous).total_seconds()
+            if delta > 0:
+                gaps.append((delta, previous, current))
+        parts: list[str] = []
+        if gaps:
+            longest, gap_start, gap_end = max(gaps)
+            trading = (
+                _trading_block(gap_start) == _trading_block(gap_end) > 0
+            )
+            parts.append(
+                f"最长无扫描间隔{_format_duration(longest)}（{gap_start:%H:%M}→{gap_end:%H:%M}"
+                f"{'，位于交易时段内' if trading else '，位于非交易时段'}）"
+            )
+        sessions = self.store.list_runtime_sessions(trade_date)
+        if len(sessions) > 1:
+            parts.append(f"进程重启{len(sessions) - 1}次")
+        event_counts: dict[str, int] = {}
+        for session in sessions:
+            for event in self.store.list_runtime_events(str(session["session_id"])):
+                occurred = str(event.get("occurred_at", ""))
+                if not occurred.startswith(trade_date):
+                    continue
+                event_type = str(event.get("event_type", ""))
+                event_counts[event_type] = event_counts.get(event_type, 0) + 1
+        if event_counts.get("sleep_detected"):
+            parts.append(f"睡眠{event_counts['sleep_detected']}次")
+        if event_counts.get("scan_stalled"):
+            parts.append(f"扫描器自恢复{event_counts['scan_stalled']}次")
+        for task in self.store.list_automation_tasks(trade_date):
+            key = str(task.get("task_key", ""))
+            state = str(task.get("state", ""))
+            if "09:45" in key:
+                parts.append(f"09:45提醒{state}")
+            elif "14:45" in key:
+                parts.append(f"14:45提醒{state}")
+            elif "15:30" in key:
+                parts.append(f"15:30总结{state}")
+        intraday_count = len(
+            [
+                row
+                for row in self.store.list_alert_history(
+                    now=datetime.combine(
+                        datetime.fromisoformat(trade_date).date(),
+                        time(15, 31),
+                        tzinfo=SHANGHAI,
+                    ),
+                    days=1,
+                )
+                if str(row.get("trigger_type", "")).startswith("intraday")
+            ]
+        )
+        if intraday_count:
+            parts.append(f"盘中强异动提醒{intraday_count}批")
+        universe = getattr(self._runtime, "universe", None)
+        concept_state = (
+            "已加载"
+            if universe is not None and universe.concept_loaded
+            else (
+                self._universe_refresh_issue
+                if self._universe_refresh_issue is not None
+                else "未加载（使用行业上下文）"
+            )
+        )
+        parts.append(f"概念缓存：{concept_state}")
+        return "；".join(parts) if parts else "未记录到扫描或连续性事件。"
 
     def _local_summary_observations(self, trade_date: str) -> list[dict[str, object]]:
         rows = [
@@ -1199,8 +1442,14 @@ class TushareV1Session:
             self._platform_recovery_reason = None
         if reason is None:
             return False
-        if self._runtime is not None:
-            self._runtime.reset_for_external_recovery()
+        reset = getattr(self._runtime, "reset_for_external_recovery", None)
+        if callable(reset):
+            reset()
+        self._recovery_round = 0
+        self.record_platform_event(
+            "warming_1_of_3",
+            detail={"reason": reason},
+        )
         self.pending_alert = None
         self.state = HealthState.WARMING
         self.connection_state = TqConnectionState.CHECKING
@@ -1214,6 +1463,61 @@ class TushareV1Session:
     def _is_network_interrupted(self) -> bool:
         with self._platform_recovery_lock:
             return self._network_interrupted
+
+    def _cancel_in_flight_scan(self) -> None:
+        """Best-effort cancellation; fake runtimes used in tests may not opt in."""
+        runtime = self._runtime
+        cancel = getattr(runtime, "request_scan_cancellation", None)
+        if callable(cancel):
+            cancel()
+
+    def _detect_scan_stall(self, now: datetime) -> None:
+        """Rebuild the scan loop when no scan succeeded for > 90s in a session.
+
+        Only applies during trading hours without a pending sleep/wake or
+        network recovery; a sleep gap is explained by sleep events instead.
+        """
+        universe = getattr(self._runtime, "universe", None)
+        open_dates = (
+            universe.open_dates
+            if universe is not None and universe.open_dates is not None
+            else ()
+        )
+        if not _session_is_trading(self._schedule, now, open_dates):
+            return
+        with self._platform_recovery_lock:
+            if (
+                self._platform_recovery_reason is not None
+                or self._network_interrupted
+            ):
+                return
+        if self.last_scan_succeeded_at is None:
+            return
+        # The lunch break (11:30-13:00) and the pre-open gap are legitimate
+        # pauses; only a stall inside the same trading block is actionable.
+        if _trading_block(now) != _trading_block(self.last_scan_succeeded_at):
+            return
+        gap_seconds = (now - self.last_scan_succeeded_at).total_seconds()
+        if gap_seconds <= self._stall_threshold_seconds:
+            return
+        detail = {
+            "stall_started_at": self.last_scan_succeeded_at.isoformat(),
+            "last_success_at": self.last_scan_succeeded_at.isoformat(),
+            "gap_seconds": round(gap_seconds, 1),
+            "active_request": self._active_scan_attempt_id is not None,
+        }
+        self.record_platform_event("scan_stalled", now=now, detail=detail)
+        self._cancel_in_flight_scan()
+        if self._active_scan_attempt_id is not None:
+            self._finish_scan_attempt(
+                self._active_scan_attempt_id,
+                completed_at=now,
+                state="cancelled",
+                detail=f"scan-stalled gap={round(gap_seconds, 1)}s",
+            )
+        self.begin_platform_recovery(
+            "检测到扫描停滞（超过90秒无成功扫描），已自动取消旧任务并重建扫描循环。"
+        )
 
     def _capabilities_ready(self) -> bool:
         if self.capability_checks is None:
@@ -1274,8 +1578,12 @@ class TushareV1Session:
         else:
             self._universe_retry_at = now + timedelta(minutes=5)
             reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
+            preserved = bool(getattr(runtime, "concept_cache_preserved", False))
             self._universe_refresh_issue = (
-                "概念板块暂未加载；行业筛选继续运行，5分钟后后台重试"
+                "概念刷新失败，已保留上次成功概念缓存；行业筛选继续运行，5分钟后重试"
+                + (f"（{reason}）" if reason else "。")
+                if preserved
+                else "概念板块暂未加载；行业筛选继续运行，5分钟后后台重试"
                 + (f"（{reason}）" if reason else "。")
             )
 
@@ -1492,7 +1800,169 @@ class TushareV1Session:
             capability_checks=self.capability_checks,
         )
 
-    def shutdown(self) -> None:
+    def _start_runtime_session(self) -> None:
+        """Persist process provenance; audit failures never block the UI."""
+        try:
+            now = datetime.now(SHANGHAI).isoformat()
+            self.store.start_runtime_session(
+                session_id=self._runtime_session_id,
+                pid=os.getpid(),
+                ppid=os.getppid(),
+                app_path=_application_path(),
+                source_commit=source_commit(),
+                started_at=now,
+            )
+            self._runtime_session_active = True
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-session:{type(error).__name__}"
+
+    def heartbeat(self, *, now: datetime | None = None) -> None:
+        """Write a lightweight heartbeat every timer tick."""
+        if not self._runtime_session_active:
+            return
+        try:
+            heartbeat_at = _shanghai(now or self._clock()).isoformat()
+            self.store.heartbeat_runtime_session(
+                self._runtime_session_id,
+                heartbeat_at,
+                last_scan_at=self.last_fetch_at.isoformat()
+                if self.last_fetch_at is not None
+                else None,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-heartbeat:{type(error).__name__}"
+
+    def record_window_activation(self, *, now: datetime | None = None) -> None:
+        if not self._runtime_session_active:
+            return
+        try:
+            self.store.heartbeat_runtime_session(
+                self._runtime_session_id,
+                _shanghai(now or self._clock()).isoformat(),
+                last_window_activation_at=_shanghai(now or self._clock()).isoformat(),
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"window-activation:{type(error).__name__}"
+
+    def record_platform_event(
+        self,
+        event_type: str,
+        *,
+        now: datetime | None = None,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        if not self._runtime_session_active:
+            return
+        try:
+            self.store.record_runtime_event(
+                session_id=self._runtime_session_id,
+                occurred_at=_shanghai(now or self._clock()).isoformat(),
+                event_type=event_type,
+                detail=detail,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-event:{type(error).__name__}"
+
+    def mark_sleep(self, *, now: datetime | None = None, reason: str = "") -> None:
+        """Persist a sleep event and cancel any scan still in flight."""
+        occurred = _shanghai(now or self._clock())
+        self.record_platform_event(
+            "sleep_detected",
+            now=occurred,
+            detail={"reason": reason or "system-suspend"},
+        )
+        if not self._runtime_session_active:
+            return
+        try:
+            self.store.heartbeat_runtime_session(
+                self._runtime_session_id,
+                occurred.isoformat(),
+                last_sleep_at=occurred.isoformat(),
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-sleep:{type(error).__name__}"
+        self._cancel_in_flight_scan()
+        if self._active_scan_attempt_id is not None:
+            self._finish_scan_attempt(
+                self._active_scan_attempt_id,
+                completed_at=occurred,
+                state="sleep_interrupted",
+                detail="进入睡眠，扫描被取消",
+            )
+
+    def mark_wake(self, *, now: datetime | None = None, reason: str = "") -> None:
+        """Persist a wake event for the audit trail; recovery follows."""
+        occurred = _shanghai(now or self._clock())
+        self.record_platform_event(
+            "wake_detected",
+            now=occurred,
+            detail={"reason": reason or "system-wake"},
+        )
+        if not self._runtime_session_active:
+            return
+        try:
+            self.store.heartbeat_runtime_session(
+                self._runtime_session_id,
+                occurred.isoformat(),
+                last_wake_at=occurred.isoformat(),
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"runtime-wake:{type(error).__name__}"
+
+    def _begin_scan_attempt(self, *, now: datetime, operation: str) -> str | None:
+        if not self._runtime_session_active:
+            return None
+        attempt_id = uuid.uuid4().hex
+        try:
+            self.store.start_scan_attempt(
+                attempt_id=attempt_id,
+                session_id=self._runtime_session_id,
+                started_at=now.isoformat(),
+                operation=operation,
+                thread_name=current_thread().name,
+                timer_active=True,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"scan-attempt-start:{type(error).__name__}"
+            return None
+        self._active_scan_attempt_id = attempt_id
+        return attempt_id
+
+    def _finish_scan_attempt(
+        self,
+        attempt_id: str | None,
+        *,
+        completed_at: datetime,
+        state: str,
+        detail: str,
+    ) -> None:
+        if attempt_id is None:
+            return
+        try:
+            self.store.finish_scan_attempt(
+                attempt_id,
+                completed_at.isoformat(),
+                state=state,
+                detail=detail,
+            )
+        except Exception as error:
+            self._runtime_audit_issue = f"scan-attempt-finish:{type(error).__name__}"
+        finally:
+            if self._active_scan_attempt_id == attempt_id:
+                self._active_scan_attempt_id = None
+
+    def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+        if self._runtime_session_active:
+            try:
+                self.store.end_runtime_session(
+                    self._runtime_session_id,
+                    _shanghai(self._clock()).isoformat(),
+                    exit_reason=exit_reason,
+                    graceful_exit=True,
+                )
+            except Exception as error:
+                self._runtime_audit_issue = f"runtime-end:{type(error).__name__}"
+            self._runtime_session_active = False
         if self.capability_checks is not None:
             self.capability_checks.shutdown()
         self._universe_executor.shutdown(wait=False, cancel_futures=True)
@@ -1570,6 +2040,14 @@ class TushareV1Session:
             }
         )
         self._failure_active = True
+
+
+def _application_path() -> str:
+    executable = Path(sys.executable).resolve()
+    for parent in (executable, *executable.parents):
+        if parent.suffix == ".app":
+            return str(parent)
+    return str(Path(sys.argv[0]).resolve())
 
 
 def _runtime_factory(
@@ -1795,3 +2273,19 @@ def _payload_codes(value: object) -> set[str]:
         for candidate in candidates
         if isinstance(candidate, dict) and candidate.get("code")
     }
+
+
+def _trading_block(ts: datetime) -> int:
+    """Return 1 (morning), 2 (afternoon) or 0 (outside trading hours)."""
+    current = ts.timetz().replace(tzinfo=None)
+    if time(9, 30) <= current <= time(11, 30):
+        return 1
+    if time(13, 0) <= current <= time(15, 0):
+        return 2
+    return 0
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds >= 60:
+        return f"{int(seconds // 60)}分{int(seconds % 60)}秒"
+    return f"{int(seconds)}秒"

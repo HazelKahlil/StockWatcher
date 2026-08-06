@@ -16,7 +16,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 4
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 6
 
     def connect(self) -> sqlite3.Connection:
         connection = (
@@ -62,7 +62,7 @@ class SQLiteStore:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3):
+        if version not in (0, 1, 2, 3, 4, 5):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -72,7 +72,12 @@ class SQLiteStore:
                 self._apply_v2_migration(connection)
             if version <= 2:
                 self._apply_v3_migration(connection)
-            self._apply_v4_migration(connection)
+            if version <= 3:
+                self._apply_v4_migration(connection)
+            if version <= 4:
+                self._apply_v5_migration(connection)
+            if version <= 5:
+                self._apply_v6_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -183,6 +188,80 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _apply_v5_migration(connection: sqlite3.Connection) -> None:
+        """Add durable process and in-flight scan lifecycle evidence."""
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_sessions "
+            "(session_id TEXT PRIMARY KEY, pid INTEGER NOT NULL, ppid INTEGER NOT NULL, "
+            "app_path TEXT NOT NULL, source_commit TEXT NOT NULL, started_at TEXT NOT NULL, "
+            "last_heartbeat_at TEXT NOT NULL, ended_at TEXT, exit_reason TEXT, "
+            "graceful_exit INTEGER NOT NULL DEFAULT 0, last_scan_at TEXT, "
+            "last_window_activation_at TEXT)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_sessions_started "
+            "ON runtime_sessions(started_at)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS scan_attempts "
+            "(attempt_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, started_at TEXT NOT NULL, "
+            "last_heartbeat_at TEXT NOT NULL, completed_at TEXT, state TEXT NOT NULL, "
+            "operation TEXT NOT NULL, thread_name TEXT NOT NULL, timer_active INTEGER NOT NULL, "
+            "detail TEXT NOT NULL, recovery_count INTEGER NOT NULL DEFAULT 0, "
+            "FOREIGN KEY(session_id) REFERENCES runtime_sessions(session_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scan_attempts_started "
+            "ON scan_attempts(started_at, state)"
+        )
+
+    @staticmethod
+    def _apply_v6_migration(connection: sqlite3.Connection) -> None:
+        """Add structured runtime lifecycle evidence without changing scan semantics."""
+        runtime_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(runtime_sessions)")
+        }
+        for column, definition in (
+            ("last_sleep_at", "TEXT"),
+            ("last_wake_at", "TEXT"),
+            ("previous_session_id", "TEXT"),
+            ("previous_unclean_exit", "INTEGER NOT NULL DEFAULT 0"),
+            ("watchdog_restart_count", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column not in runtime_columns:
+                connection.execute(
+                    f"ALTER TABLE runtime_sessions ADD COLUMN {column} {definition}"
+                )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_events "
+            "(event_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, occurred_at TEXT NOT NULL, "
+            "event_type TEXT NOT NULL, detail_json TEXT NOT NULL, "
+            "FOREIGN KEY(session_id) REFERENCES runtime_sessions(session_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_events_session_time "
+            "ON runtime_events(session_id, occurred_at)"
+        )
+        summary_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(daily_summaries)")
+        }
+        if "catch_up" not in summary_columns:
+            connection.execute(
+                "ALTER TABLE daily_summaries ADD COLUMN catch_up INTEGER NOT NULL DEFAULT 0"
+            )
+        alert_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(alert_events)")
+        }
+        if "detail_json" not in alert_columns:
+            connection.execute(
+                "ALTER TABLE alert_events ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"
+            )
+
+
+    @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
         if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise RuntimeError("database integrity check failed")
@@ -200,6 +279,9 @@ class SQLiteStore:
             "health_metrics",
             "automation_tasks",
             "scan_runs",
+            "runtime_sessions",
+            "scan_attempts",
+            "runtime_events",
         }
         tables = {
             str(row[0])
@@ -211,6 +293,367 @@ class SQLiteStore:
         ):
             raise RuntimeError("schema migration did not reach current version")
         self._assert_integrity(connection)
+
+    def start_runtime_session(
+        self,
+        *,
+        session_id: str,
+        pid: int,
+        ppid: int,
+        app_path: str,
+        source_commit: str,
+        started_at: str,
+    ) -> None:
+        """Create a process session and close any prior live session as unclean."""
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                previous = connection.execute(
+                    "SELECT session_id, last_heartbeat_at, last_scan_at "
+                    "FROM runtime_sessions WHERE ended_at IS NULL AND session_id <> ?",
+                    (session_id,),
+                ).fetchall()
+                for previous_id, heartbeat, last_scan in previous:
+                    connection.execute(
+                        "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, "
+                        "graceful_exit = 0, previous_unclean_exit = 1 WHERE session_id = ?",
+                        (started_at, "unclean_exit", previous_id),
+                    )
+                    connection.execute(
+                        "UPDATE scan_attempts SET completed_at = ?, state = ?, detail = ? "
+                        "WHERE session_id = ? AND completed_at IS NULL",
+                        (
+                            started_at,
+                            "aborted",
+                            "previous session ended without graceful shutdown",
+                            previous_id,
+                        ),
+                    )
+                    self._insert_runtime_event(
+                        connection,
+                        session_id=previous_id,
+                        occurred_at=started_at,
+                        event_type="unclean_exit",
+                        detail={
+                            "last_heartbeat_at": heartbeat,
+                            "last_scan_at": last_scan,
+                        },
+                    )
+                previous_id = (
+                    previous[0][0]
+                    if previous
+                    else None
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO runtime_sessions "
+                    "(session_id, pid, ppid, app_path, source_commit, started_at, "
+                    "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
+                    "last_window_activation_at, last_sleep_at, last_wake_at, "
+                    "previous_session_id, previous_unclean_exit, watchdog_restart_count) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, NULL, NULL, NULL, NULL, ?, ?, 0)",
+                    (
+                        session_id,
+                        pid,
+                        ppid,
+                        app_path,
+                        source_commit,
+                        started_at,
+                        started_at,
+                        previous_id,
+                        int(bool(previous)),
+                    ),
+                )
+
+    @staticmethod
+    def _insert_runtime_event(
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        occurred_at: str,
+        event_type: str,
+        detail: dict[str, Any],
+    ) -> None:
+        connection.execute(
+            "INSERT INTO runtime_events "
+            "(session_id, occurred_at, event_type, detail_json) VALUES (?, ?, ?, ?)",
+            (
+                session_id,
+                occurred_at,
+                event_type,
+                json.dumps(detail, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+
+    def record_runtime_event(
+        self,
+        *,
+        session_id: str,
+        occurred_at: str,
+        event_type: str,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                self._insert_runtime_event(
+                    connection,
+                    session_id=session_id,
+                    occurred_at=occurred_at,
+                    event_type=event_type,
+                    detail=detail or {},
+                )
+                if event_type == "sleep_detected":
+                    connection.execute(
+                        "UPDATE runtime_sessions SET last_sleep_at = ? WHERE session_id = ?",
+                        (occurred_at, session_id),
+                    )
+                elif event_type == "wake_detected":
+                    connection.execute(
+                        "UPDATE runtime_sessions SET last_wake_at = ? WHERE session_id = ?",
+                        (occurred_at, session_id),
+                    )
+
+    def list_runtime_events(
+        self,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT event_id, session_id, occurred_at, event_type, detail_json "
+                "FROM runtime_events WHERE session_id = ? ORDER BY occurred_at, event_id",
+                (session_id,),
+            ).fetchall()
+        return [
+            {
+                "event_id": row[0],
+                "session_id": row[1],
+                "occurred_at": row[2],
+                "event_type": row[3],
+                "detail": json.loads(row[4]),
+            }
+            for row in rows
+        ]
+
+    def heartbeat_runtime_session(
+        self,
+        session_id: str,
+        heartbeat_at: str,
+        *,
+        last_scan_at: str | None = None,
+        last_window_activation_at: str | None = None,
+        last_sleep_at: str | None = None,
+        last_wake_at: str | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runtime_sessions SET last_heartbeat_at = ?, "
+                "last_scan_at = COALESCE(?, last_scan_at), "
+                "last_window_activation_at = COALESCE(?, last_window_activation_at), "
+                "last_sleep_at = COALESCE(?, last_sleep_at), "
+                "last_wake_at = COALESCE(?, last_wake_at) "
+                "WHERE session_id = ? AND ended_at IS NULL",
+                (
+                    heartbeat_at,
+                    last_scan_at,
+                    last_window_activation_at,
+                    last_sleep_at,
+                    last_wake_at,
+                    session_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(session_id)
+
+    def end_runtime_session(
+        self,
+        session_id: str,
+        ended_at: str,
+        *,
+        exit_reason: str,
+        graceful_exit: bool,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, graceful_exit = ? "
+                "WHERE session_id = ? AND ended_at IS NULL",
+                (ended_at, exit_reason, int(graceful_exit), session_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(session_id)
+
+    def get_runtime_session(self, session_id: str) -> dict[str, Any] | None:
+        self.initialize()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT session_id, pid, ppid, app_path, source_commit, started_at, "
+                "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
+                "last_window_activation_at, last_sleep_at, last_wake_at, "
+                "previous_session_id, previous_unclean_exit, watchdog_restart_count "
+                "FROM runtime_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
+            "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
+            "last_scan_at", "last_window_activation_at", "last_sleep_at", "last_wake_at",
+            "previous_session_id", "previous_unclean_exit", "watchdog_restart_count",
+        )
+        return dict(zip(keys, row))
+
+    def list_runtime_sessions(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        self.initialize()
+        query = (
+            "SELECT session_id, pid, ppid, app_path, source_commit, started_at, "
+            "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
+            "last_window_activation_at FROM runtime_sessions"
+        )
+        values: tuple[Any, ...] = ()
+        if trade_date is not None:
+            query += " WHERE substr(started_at, 1, 10) = ?"
+            values = (trade_date,)
+        query += " ORDER BY started_at, session_id"
+        with self.connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        keys = (
+            "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
+            "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
+            "last_scan_at", "last_window_activation_at", "last_sleep_at", "last_wake_at",
+            "previous_session_id", "previous_unclean_exit", "watchdog_restart_count",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def start_scan_attempt(
+        self,
+        *,
+        attempt_id: str,
+        session_id: str,
+        started_at: str,
+        operation: str,
+        thread_name: str,
+        timer_active: bool,
+        detail: str = "scan started",
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO scan_attempts "
+                "(attempt_id, session_id, started_at, last_heartbeat_at, completed_at, state, "
+                "operation, thread_name, timer_active, detail, recovery_count) "
+                "VALUES (?, ?, ?, ?, NULL, 'running', ?, ?, ?, ?, 0)",
+                (attempt_id, session_id, started_at, started_at, operation, thread_name,
+                 int(timer_active), detail),
+            )
+
+    def heartbeat_scan_attempt(
+        self,
+        attempt_id: str,
+        heartbeat_at: str,
+        *,
+        detail: str | None = None,
+        timer_active: bool | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE scan_attempts SET last_heartbeat_at = ?, "
+                "detail = COALESCE(?, detail), timer_active = COALESCE(?, timer_active) "
+                "WHERE attempt_id = ? AND completed_at IS NULL",
+                (
+                    heartbeat_at,
+                    detail,
+                    None if timer_active is None else int(timer_active),
+                    attempt_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(attempt_id)
+
+    def finish_scan_attempt(
+        self,
+        attempt_id: str,
+        completed_at: str,
+        *,
+        state: str,
+        detail: str,
+        recovery_count: int = 0,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE scan_attempts SET completed_at = ?, last_heartbeat_at = ?, state = ?, "
+                "detail = ?, recovery_count = ? WHERE attempt_id = ? AND completed_at IS NULL",
+                (completed_at, completed_at, state, detail, recovery_count, attempt_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(attempt_id)
+
+    def list_scan_attempts(
+        self,
+        *,
+        session_id: str | None = None,
+        trade_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self.initialize()
+        query = (
+            "SELECT attempt_id, session_id, started_at, last_heartbeat_at, completed_at, state, "
+            "operation, thread_name, timer_active, detail, recovery_count FROM scan_attempts"
+        )
+        clauses: list[str] = []
+        values: list[Any] = []
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            values.append(session_id)
+        if trade_date is not None:
+            clauses.append("substr(started_at, 1, 10) = ?")
+            values.append(trade_date)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY started_at, attempt_id"
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(values)).fetchall()
+        keys = (
+            "attempt_id", "session_id", "started_at", "last_heartbeat_at", "completed_at",
+            "state", "operation", "thread_name", "timer_active", "detail", "recovery_count",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def record_scan_recovery_event(
+        self,
+        *,
+        session_id: str,
+        occurred_at: str,
+        state: str,
+        detail: str,
+    ) -> None:
+        """Keep recovery evidence in the credential-free notes table."""
+        self.put_note(
+            f"scan-recovery:{session_id}:{occurred_at}",
+            json.dumps({"occurred_at": occurred_at, "state": state, "detail": detail},
+                       ensure_ascii=False, sort_keys=True),
+        )
+
+    def list_scan_recovery_events(self, session_id: str | None = None) -> list[dict[str, Any]]:
+        self.initialize()
+        prefix = f"scan-recovery:{session_id}:" if session_id else "scan-recovery:"
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT key, value FROM notes WHERE key LIKE ? ORDER BY key",
+                (prefix + "%",),
+            ).fetchall()
+        output: list[dict[str, Any]] = []
+        for key, value in rows:
+            try:
+                payload = json.loads(str(value))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                output.append({"key": key, **payload})
+        return output
 
     def put_note(self, key: str, value: str) -> None:
         with self.connect() as connection:
@@ -324,6 +767,31 @@ class SQLiteStore:
                     )
                 return snapshot_id
 
+    def get_app_setting(self, key: str) -> Any:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT value_json FROM app_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0])
+
+    def set_app_setting(self, key: str, value: Any) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO app_settings (key, value_json, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
+                "updated_at = excluded.updated_at",
+                (
+                    key,
+                    json.dumps(value, ensure_ascii=False, sort_keys=True),
+                    datetime.now().isoformat(),
+                ),
+            )
+
     def record_alert_event(
         self,
         snapshot_id: int,
@@ -331,6 +799,7 @@ class SQLiteStore:
         decision: str,
         channel: str,
         trigger_type: str = "intraday",
+        detail: dict[str, Any] | None = None,
     ) -> None:
         if any(word in channel.lower() for word in ("token", "secret", "password", "account")):
             raise ValueError("alert channel must not contain credentials or account information")
@@ -338,9 +807,16 @@ class SQLiteStore:
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO alert_events "
-                "(snapshot_id, displayed_at, decision, channel, trigger_type) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (snapshot_id, displayed_at, decision, channel, trigger_type),
+                "(snapshot_id, displayed_at, decision, channel, trigger_type, detail_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot_id,
+                    displayed_at,
+                    decision,
+                    channel,
+                    trigger_type,
+                    json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
+                ),
             )
 
     def record_health_metric(self, metadata: dict[str, str]) -> None:
@@ -609,6 +1085,7 @@ class SQLiteStore:
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT e.id, e.displayed_at, e.decision, e.channel, e.trigger_type, "
+                "e.detail_json, "
                 "s.id, s.source_ts, s.overall_weak, s.payload_json "
                 "FROM alert_events e JOIN candidate_snapshots s ON s.id = e.snapshot_id "
                 "WHERE e.displayed_at >= ? "
@@ -621,6 +1098,7 @@ class SQLiteStore:
             "decision",
             "channel",
             "trigger_type",
+            "detail_json",
             "snapshot_id",
             "source_ts",
             "overall_weak",
@@ -691,7 +1169,8 @@ class SQLiteStore:
                 "INSERT OR REPLACE INTO daily_summaries "
                 "(trade_date, generated_at, alert_count, top_sectors_json, "
                 "repeated_candidates_json, closing_performance_json, fund_summary, "
-                "health_summary, summary_text, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "health_summary, summary_text, version, catch_up) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(summary["trade_date"]),
                     str(summary["generated_at"]),
@@ -711,6 +1190,7 @@ class SQLiteStore:
                     str(summary["health_summary"]),
                     str(summary["summary_text"]),
                     str(summary["version"]),
+                    int(summary.get("catch_up", 0)),
                 ),
             )
 
@@ -719,7 +1199,7 @@ class SQLiteStore:
             row = connection.execute(
                 "SELECT trade_date, generated_at, alert_count, top_sectors_json, "
                 "repeated_candidates_json, closing_performance_json, fund_summary, "
-                "health_summary, summary_text, version "
+                "health_summary, summary_text, version, catch_up "
                 "FROM daily_summaries WHERE trade_date = ?",
                 (trade_date,),
             ).fetchone()
@@ -736,6 +1216,7 @@ class SQLiteStore:
             "health_summary": row[7],
             "summary_text": row[8],
             "version": row[9],
+            "catch_up": row[10],
         }
 
     def list_daily_summaries(self, *, since: date) -> list[dict[str, Any]]:

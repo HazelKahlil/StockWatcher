@@ -19,6 +19,7 @@ class DailySummary:
     health_summary: str
     summary_text: str
     version: str
+    catch_up: int = 0
 
     def as_record(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,6 +37,8 @@ class DailySummaryEngine:
         observation_history: list[dict[str, Any]] | None = None,
         closing_prices: dict[str, float] | None = None,
         health_interruption_count: int = 0,
+        continuity_evidence: str | None = None,
+        catch_up: bool = False,
         version: str = "daily-summary-v1",
     ) -> DailySummary:
         closing_prices = closing_prices or {}
@@ -86,7 +89,7 @@ class DailySummaryEngine:
             if not fund_labels or set(fund_labels) == {"资金未确认"}
             else "；".join(f"{label} {count}次" for label, count in fund_labels.most_common())
         )
-        health_summary = (
+        health_summary = continuity_evidence or (
             "数据运行正常，未记录中断。"
             if health_interruption_count == 0
             else f"记录到 {health_interruption_count} 次数据延迟或中断。"
@@ -121,6 +124,7 @@ class DailySummaryEngine:
             health_summary=health_summary,
             summary_text=summary_text,
             version=version,
+            catch_up=1 if catch_up else 0,
         )
 
 

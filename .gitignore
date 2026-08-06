@@ -31,3 +31,7 @@ logs/
 .idea/
 .vscode/
 Thumbs.db
+
+# Generated conversation transcripts and acceptance run logs (archived outside repo)
+conversations/
+outputs/run-logs/

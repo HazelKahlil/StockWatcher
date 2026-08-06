@@ -172,13 +172,14 @@ def application_summary_record(
     *,
     alert_count: int,
     health_interruption_count: int,
+    continuity_evidence: str | None = None,
 ) -> dict[str, Any]:
     review = collection.review
     market = review.market
     top3_names = "、".join(candidate.name for candidate in review.top3)
     top_sector_names = "、".join(sector.name for sector in review.top_sectors[:3])
     market_tone = _market_tone(market.up_ratio, market.median_change_pct)
-    interruption_copy = (
+    interruption_copy = continuity_evidence or (
         "数据运行未记录中断。"
         if health_interruption_count == 0
         else f"记录到 {health_interruption_count} 次数据延迟或中断。"
