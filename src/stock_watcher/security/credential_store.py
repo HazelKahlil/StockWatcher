@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sys
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Protocol
 
 import keyring
@@ -61,6 +62,12 @@ class KeyringCredentialStore:
     """
 
     platform: str = sys.platform
+    _presence_cache: dict[CredentialRef, str | None] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _presence_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     @property
     def storage_label(self) -> str:
@@ -81,22 +88,46 @@ class KeyringCredentialStore:
     def _verify_backend(self) -> None:
         self.backend_status()
 
+    def get_cached(self, reference: CredentialRef) -> tuple[bool, str | None]:
+        """Return a cached credential without entering the native Keychain.
+
+        The macOS Keychain can block inside ``SecItemCopyMatching`` while the
+        user session is locked or waiting for a security prompt.  GUI code uses
+        this method so a status refresh never turns into synchronous secret I/O.
+        """
+        with self._presence_lock:
+            if reference not in self._presence_cache:
+                return False, None
+            return True, self._presence_cache[reference]
+
+    def _cache(self, reference: CredentialRef, secret: str | None) -> None:
+        with self._presence_lock:
+            self._presence_cache[reference] = secret
+
     def get(self, reference: CredentialRef) -> str | None:
+        cached, secret = self.get_cached(reference)
+        if cached:
+            return secret
         self._verify_backend()
-        return keyring.get_password(reference.service, reference.username)
+        secret = keyring.get_password(reference.service, reference.username)
+        self._cache(reference, secret)
+        return secret
 
     def set(self, reference: CredentialRef, secret: str) -> None:
         if not secret:
             raise ValueError("credential must not be empty")
         self._verify_backend()
         keyring.set_password(reference.service, reference.username, secret)
+        self._cache(reference, secret)
 
     def delete(self, reference: CredentialRef) -> bool:
         self._verify_backend()
         try:
             keyring.delete_password(reference.service, reference.username)
         except PasswordDeleteError:
+            self._cache(reference, None)
             return False
+        self._cache(reference, None)
         return True
 
 

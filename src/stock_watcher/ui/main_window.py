@@ -410,6 +410,7 @@ class MainWindow(QMainWindow):
         self._mac_window_close_policy = MacWindowClosePolicy()
         self._secondary_notification: Callable[[str, str], bool] | None = None
         self._initial_data_source_dialog: DataSourceSettingsDialog | None = None
+        self._closing = False
         self.setWindowTitle(session.window_title)
         self.resize(1040, 760)
         self.setMinimumSize(880, 640)
@@ -433,13 +434,33 @@ class MainWindow(QMainWindow):
             self._auto_check_timer.setInterval(interval_ms)
             self._auto_check_timer.timeout.connect(self._auto_check_tq)
             self._auto_check_timer.start()
-            QTimer.singleShot(0, self._auto_check_tq)
-            if bool(getattr(self.session, "requires_data_source_setup", False)):
-                # Do not block the event loop at startup.  On a first macOS
-                # launch this still brings the simple Token page forward, but
-                # leaves the main window responsive and testable.
-                QTimer.singleShot(0, self._open_initial_data_source_settings)
+            refresh_credentials = getattr(self.session, "refresh_credential_state_async", None)
+            if callable(refresh_credentials):
+                refresh_credentials(self._on_credential_state_ready)
+            else:
+                QTimer.singleShot(0, self._auto_check_tq)
+                if bool(getattr(self.session, "requires_data_source_setup", False)):
+                    # Do not block the event loop at startup.  On a first macOS
+                    # launch this still brings the simple Token page forward, but
+                    # leaves the main window responsive and testable.
+                    QTimer.singleShot(0, self._open_initial_data_source_settings)
         QTimer.singleShot(250, self._show_initial_alert)
+
+    @Slot()
+    def _on_credential_state_ready(self) -> None:
+        """Resume the normal startup path after background Keychain I/O."""
+        if self._closing:
+            return
+        self._refresh()
+        state = str(getattr(self.session, "credential_state", "unknown"))
+        if state == "missing":
+            if bool(getattr(self.session, "requires_data_source_setup", False)):
+                QTimer.singleShot(0, self._open_initial_data_source_settings)
+            return
+        if state == "error":
+            return
+        if state == "present":
+            QTimer.singleShot(0, self._auto_check_tq)
 
     def _build(self) -> None:
         self._build_developer_menu()
@@ -791,6 +812,8 @@ class MainWindow(QMainWindow):
         style.polish(widget)
 
     def _show_initial_alert(self) -> None:
+        if self._closing:
+            return
         snapshot = self._snapshot()
         if snapshot.alert_allowed:
             self._show_alert(snapshot, title="09:45 观察提醒")
@@ -924,6 +947,10 @@ class MainWindow(QMainWindow):
     def _auto_check_tq(self) -> None:
         if self.session.is_replay:
             return
+        if not bool(getattr(self.session, "credential_state_ready", True)):
+            return
+        if str(getattr(self.session, "credential_state", "present")) != "present":
+            return
         self._start_tq_operation("check")
 
     def _start_tq_operation(self, operation: str) -> None:
@@ -1045,10 +1072,12 @@ class MainWindow(QMainWindow):
         # a non-spontaneous close is QApplication::closeAllWindows(), which is
         # how Qt handles the quit AppleEvent (Dock Quit, logout, osascript) -
         # that must really exit instead of being swallowed by the hide policy.
+        self._closing = True
         if (
             self._mac_window_close_policy.should_hide_on_close
             and event.spontaneous()
         ):
+            self._closing = False
             event.ignore()
             self.hide()
             return
