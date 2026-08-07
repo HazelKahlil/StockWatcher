@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}历史 · StockWatcher{% endblock %}
+{% block content %}
+<h1>历史观察</h1>
+<section class="filters">
+  <label>日期从 <input id="from" type="date"></label>
+  <label>到 <input id="to" type="date"></label>
+  <label>代码 <input id="code" placeholder="600001.SH"></label>
+  <button id="filter-btn" type="button">筛选</button>
+</section>
+<div id="history" class="table-wrap"></div>
+<button id="load-more" type="button" hidden>加载更多</button>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/history.js"></script>
+{% endblock %}

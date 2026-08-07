@@ -1,0 +1,110 @@
+/* StockWatcher Web — native CSS, no frameworks. WCAG AA, desktop-first, 360px usable. */
+:root {
+  --bg: #f7f7f5;
+  --fg: #1c1c1a;
+  --muted: #5c5c57;
+  --line: #d8d8d2;
+  --accent: #b3541e;
+  --accent-fg: #ffffff;
+  --ok: #1e6b3a;
+  --warn: #8a5a00;
+  --err: #a12622;
+  --card: #ffffff;
+  --focus: #0057a3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161614;
+    --fg: #e8e6e0;
+    --muted: #a5a59e;
+    --line: #3a3a35;
+    --card: #201f1c;
+    --ok: #58c47a;
+    --warn: #e0b45c;
+    --err: #f08380;
+    --focus: #7db4e8;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+}
+a { color: var(--focus); }
+.topbar {
+  display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+  padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.topbar .brand { font-weight: 700; text-decoration: none; color: var(--fg); }
+.topbar nav { display: flex; flex-wrap: wrap; gap: 0.8rem; }
+.topbar nav a { color: var(--fg); text-decoration: none; padding: 0.2rem 0.3rem; }
+.topbar nav a:hover { text-decoration: underline; }
+.topbar .account { margin-left: auto; display: flex; gap: 0.6rem; align-items: center; }
+.role-badge {
+  border: 1px solid var(--line); border-radius: 0.6rem; padding: 0 0.45rem;
+  font-size: 0.8rem;
+}
+main { max-width: 960px; margin: 0 auto; padding: 1rem; }
+.footer { max-width: 960px; margin: 2rem auto 1rem; padding: 0 1rem; color: var(--muted); font-size: 0.85rem; }
+h1 { font-size: 1.35rem; }
+.muted { color: var(--muted); }
+.error { color: var(--err); }
+.linklike { background: none; border: none; color: var(--focus); cursor: pointer; padding: 0; font-size: 1rem; }
+button, .btn {
+  background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 0.4rem;
+  padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer;
+}
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 3px solid var(--focus); outline-offset: 2px;
+}
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+input, select {
+  display: block; width: 100%; max-width: 26rem; margin: 0.25rem 0 0.75rem;
+  padding: 0.5rem; border: 1px solid var(--line); border-radius: 0.4rem;
+  background: var(--card); color: var(--fg); font-size: 1rem;
+}
+label { font-weight: 600; }
+.login-card, .cards {
+  background: var(--card); border: 1px solid var(--line); border-radius: 0.6rem;
+  padding: 1.2rem; margin-bottom: 1rem;
+}
+.statusbar { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; padding: 0.6rem 0; }
+.pill { border-radius: 0.9rem; padding: 0.15rem 0.7rem; border: 1px solid var(--line); }
+.pill-healthy { background: color-mix(in srgb, var(--ok) 18%, transparent); border-color: var(--ok); }
+.pill-warming { background: color-mix(in srgb, var(--warn) 18%, transparent); border-color: var(--warn); }
+.pill-stale { background: color-mix(in srgb, var(--warn) 35%, transparent); border-color: var(--warn); }
+.pill-stopped { background: color-mix(in srgb, var(--err) 18%, transparent); border-color: var(--err); }
+.pill-stopped::after, .pill-stale::after { content: "（数据可能陈旧）"; font-size: 0.8rem; }
+.tasks { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
+.task { border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.3rem 0.6rem; font-size: 0.9rem; }
+.cards { display: grid; gap: 0.8rem; }
+.card {
+  border: 1px solid var(--line); border-radius: 0.6rem; padding: 1rem;
+  background: var(--card);
+}
+.card h3 { margin: 0 0 0.4rem; }
+.rank { display: inline-block; min-width: 1.6rem; text-align: center; border-radius: 0.4rem; background: var(--line); margin-right: 0.4rem; }
+.level-强 { color: var(--ok); font-weight: 700; }
+.level-中 { color: var(--warn); font-weight: 700; }
+.level-近 { color: var(--muted); font-weight: 700; }
+table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table-wrap { overflow-x: auto; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; }
+.kv dt { font-weight: 600; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: end; margin-bottom: 0.8rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; margin: 1rem 0; }
+.weak-note { color: var(--warn); font-weight: 600; }
+@media (max-width: 420px) {
+  .topbar { flex-direction: column; align-items: stretch; }
+  .topbar .account { margin-left: 0; }
+  main { padding: 0.6rem; }
+  .cards { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

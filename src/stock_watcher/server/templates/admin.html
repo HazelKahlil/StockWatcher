@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}管理 · StockWatcher{% endblock %}
+{% block content %}
+<h1>管理</h1>
+<section class="cards" aria-label="数据源">
+  <h2>数据源与 Token</h2>
+  <dl class="kv">
+    <dt>活动 Token fingerprint</dt><dd id="token-fp">—</dd>
+    <dt>数据源模式</dt><dd id="ds-mode">—</dd>
+  </dl>
+  <form id="token-form" novalidate>
+    <label for="token-input">候选 Token（永不回填）</label>
+    <input id="token-input" type="password" autocomplete="new-password" placeholder="仅在此输入，服务器加密保存">
+    <p class="muted">流程：立即加密 -> Worker 分层测试 -> 通过后激活；失败保留旧 Token。</p>
+    <p id="token-result" class="error" role="status" hidden></p>
+    <button type="submit">测试并更新 Token</button>
+  </form>
+  <button id="cache-refresh" type="button">刷新基础缓存</button>
+</section>
+
+<section class="cards" aria-label="诊断">
+  <h2>诊断</h2>
+  <div id="diagnostics" class="table-wrap"></div>
+</section>
+
+<section class="cards" aria-label="扫描审计">
+  <h2>扫描与审计</h2>
+  <div id="scan-runs" class="table-wrap"></div>
+</section>
+
+<section class="cards" aria-label="用户">
+  <h2>用户</h2>
+  <form id="user-form" novalidate>
+    <label for="new-username">用户名</label>
+    <input id="new-username" required>
+    <label for="new-password">初始密码（≥12 字符）</label>
+    <input id="new-password" type="password" minlength="12" required>
+    <label for="new-role">角色</label>
+    <select id="new-role"><option value="tester">tester</option><option value="admin">admin</option></select>
+    <button type="submit">创建用户</button>
+  </form>
+  <div id="users" class="table-wrap"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/admin.js"></script>
+{% endblock %}

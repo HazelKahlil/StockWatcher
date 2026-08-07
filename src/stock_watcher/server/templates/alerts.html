@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}提醒中心 · StockWatcher{% endblock %}
+{% block content %}
+<h1>提醒中心</h1>
+<section aria-label="实时事件流" id="alerts-live" class="cards" aria-live="polite">
+  <p class="muted">等待实时事件…</p>
+</section>
+<section aria-label="历史提醒">
+  <h2>历史提醒</h2>
+  <div id="alerts-history" class="table-wrap"></div>
+  <button id="load-more" type="button" hidden>加载更多</button>
+</section>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/alerts.js"></script>
+{% endblock %}

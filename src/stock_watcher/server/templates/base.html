@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}StockWatcher{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<meta name="color-scheme" content="light dark">
+{% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  {% if user %}
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/summary">盘后总结</a>
+    {% if user.role == 'admin' %}<a href="/admin">管理</a>{% endif %}
+  </nav>
+  <div class="account">
+    <span class="role-badge">{{ user.role }}</span>
+    <span>{{ user.username }}</span>
+    <button id="logout-btn" type="button" class="linklike">退出</button>
+  </div>
+  {% endif %}
+</header>
+<main id="main">
+{% block content %}{% endblock %}
+</main>
+<footer class="footer">
+  只读观察 · 不连接交易账户 · 资金未确认不阻塞候选
+</footer>
+{% if user %}
+<script type="module" src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+{% endif %}
+</body>
+</html>

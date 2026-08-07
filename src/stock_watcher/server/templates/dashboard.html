@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}当前观察 · StockWatcher{% endblock %}
+{% block content %}
+<section aria-label="状态条" class="statusbar">
+  <span id="svc-state" class="pill pill-warming">预热</span>
+  <span id="market-state">—</span>
+  <span id="last-scan" class="muted">尚未完成实时扫描</span>
+  <span id="ws-state" class="muted">连接中…</span>
+  <span id="worker-age" class="muted"></span>
+</section>
+
+<section aria-label="今日自动任务" class="tasks" id="tasks"></section>
+
+<section aria-label="当前稳定 Top3" id="cards" class="cards" aria-live="polite">
+  <p class="muted">正在等待第一份健康快照…</p>
+</section>
+
+<section class="actions">
+  <button id="manual-refresh" type="button">立即获取最新3只</button>
+  <button id="notify-btn" type="button" hidden>开启浏览器通知</button>
+  <span id="command-state" class="muted" role="status"></span>
+</section>
+
+<section aria-label="详情" id="detail" hidden></section>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/dashboard.js"></script>
+{% endblock %}
