@@ -4,6 +4,8 @@ import json
 import re
 import shutil
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -18,7 +20,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 6
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 7
 
     _SQLITE_MAGIC = b"SQLite format 3\x00"
     last_recovery: dict[str, object] | None = None
@@ -31,8 +33,24 @@ class SQLiteStore:
         )
         if not self.read_only:
             connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            connection.execute("PRAGMA busy_timeout=5000")
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield one connection with an active read-write transaction.
+
+        Web mutations and the Worker's business writes plus their outbox
+        events are committed atomically through this entry point.
+        """
+        if self.read_only:
+            raise RuntimeError("cannot open a write transaction on a read-only store")
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                yield connection
 
     def initialize(self) -> None:
         self.last_recovery = None
@@ -113,7 +131,7 @@ class SQLiteStore:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3, 4, 5):
+        if version not in (0, 1, 2, 3, 4, 5, 6):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -129,6 +147,8 @@ class SQLiteStore:
                 self._apply_v5_migration(connection)
             if version <= 5:
                 self._apply_v6_migration(connection)
+            if version <= 6:
+                self._apply_v7_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -311,6 +331,209 @@ class SQLiteStore:
                 "ALTER TABLE alert_events ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"
             )
 
+    @staticmethod
+    def _apply_v7_migration(connection: sqlite3.Connection) -> None:
+        """Add the Web internal-test tables (users, sessions, lease, commands,
+        encrypted secrets, outbox events, public state, audit log).
+
+        The schema contract mirrors ``database/007_web_internal_test.sql`` and
+        is purely additive; business tables from v1-v6 are never altered.
+        """
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_users ("
+            "user_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "username TEXT NOT NULL COLLATE NOCASE UNIQUE, "
+            "password_hash TEXT NOT NULL, "
+            "role TEXT NOT NULL CHECK (role IN ('tester', 'admin')), "
+            "active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), "
+            "created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL, "
+            "last_login_at TEXT, "
+            "password_changed_at TEXT NOT NULL, "
+            "created_by INTEGER, "
+            "FOREIGN KEY(created_by) REFERENCES web_users(user_id))"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_sessions ("
+            "session_token_hash TEXT PRIMARY KEY CHECK (length(session_token_hash) = 64), "
+            "user_id INTEGER NOT NULL, "
+            "csrf_token_hash TEXT NOT NULL CHECK (length(csrf_token_hash) = 64), "
+            "created_at TEXT NOT NULL, "
+            "last_seen_at TEXT NOT NULL, "
+            "idle_expires_at TEXT NOT NULL, "
+            "absolute_expires_at TEXT NOT NULL, "
+            "revoked_at TEXT, "
+            "ip_hash TEXT, "
+            "user_agent TEXT NOT NULL DEFAULT '', "
+            "FOREIGN KEY(user_id) REFERENCES web_users(user_id) ON DELETE CASCADE)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_sessions_user "
+            "ON web_sessions(user_id, revoked_at, absolute_expires_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry "
+            "ON web_sessions(absolute_expires_at, idle_expires_at)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_user_state ("
+            "user_id INTEGER PRIMARY KEY, "
+            "last_event_id INTEGER NOT NULL DEFAULT 0, "
+            "browser_notifications_enabled INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (browser_notifications_enabled IN (0, 1)), "
+            "sound_enabled INTEGER NOT NULL DEFAULT 0 CHECK (sound_enabled IN (0, 1)), "
+            "updated_at TEXT NOT NULL, "
+            "FOREIGN KEY(user_id) REFERENCES web_users(user_id) ON DELETE CASCADE)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS service_leases ("
+            "lease_name TEXT PRIMARY KEY, "
+            "holder_id TEXT NOT NULL, "
+            "source_commit TEXT NOT NULL, "
+            "acquired_at TEXT NOT NULL, "
+            "heartbeat_at TEXT NOT NULL, "
+            "expires_at TEXT NOT NULL, "
+            "fencing_token INTEGER NOT NULL DEFAULT 1 CHECK (fencing_token > 0))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_service_leases_expiry "
+            "ON service_leases(expires_at)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS secret_requests ("
+            "request_id TEXT PRIMARY KEY, "
+            "purpose TEXT NOT NULL CHECK (purpose IN ('token_test', 'token_update')), "
+            "ciphertext_b64 TEXT NOT NULL, "
+            "nonce_b64 TEXT NOT NULL, "
+            "key_version INTEGER NOT NULL CHECK (key_version > 0), "
+            "fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 8), "
+            "requested_by INTEGER NOT NULL, "
+            "created_at TEXT NOT NULL, "
+            "expires_at TEXT NOT NULL, "
+            "consumed_at TEXT, "
+            "status TEXT NOT NULL CHECK (status IN ('pending', 'consumed', 'expired', 'failed')), "
+            "FOREIGN KEY(requested_by) REFERENCES web_users(user_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_secret_requests_status_expiry "
+            "ON secret_requests(status, expires_at)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS encrypted_secrets ("
+            "secret_name TEXT NOT NULL, "
+            "slot TEXT NOT NULL CHECK (slot IN ('active', 'previous')), "
+            "ciphertext_b64 TEXT NOT NULL, "
+            "nonce_b64 TEXT NOT NULL, "
+            "key_version INTEGER NOT NULL CHECK (key_version > 0), "
+            "fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 8), "
+            "status TEXT NOT NULL CHECK (status IN ('active', 'previous', 'revoked')), "
+            "updated_by INTEGER, "
+            "updated_at TEXT NOT NULL, "
+            "last_tested_at TEXT, "
+            "capability_json TEXT NOT NULL DEFAULT '{}', "
+            "PRIMARY KEY(secret_name, slot), "
+            "FOREIGN KEY(updated_by) REFERENCES web_users(user_id))"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_commands ("
+            "command_id TEXT PRIMARY KEY, "
+            "command_type TEXT NOT NULL CHECK (command_type IN ("
+            "'manual_refresh', 'universe_refresh', 'token_test', "
+            "'token_update', 'summary_generate')), "
+            "status TEXT NOT NULL CHECK (status IN ("
+            "'queued', 'running', 'succeeded', 'failed', 'cancelled', 'expired')), "
+            "requested_by INTEGER NOT NULL, "
+            "requested_at TEXT NOT NULL, "
+            "idempotency_key TEXT, "
+            "payload_json TEXT NOT NULL DEFAULT '{}', "
+            "secret_request_id TEXT, "
+            "claimed_by TEXT, "
+            "fencing_token INTEGER, "
+            "started_at TEXT, "
+            "completed_at TEXT, "
+            "expires_at TEXT, "
+            "attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0), "
+            "result_json TEXT, "
+            "error_code TEXT, "
+            "error_detail TEXT, "
+            "FOREIGN KEY(requested_by) REFERENCES web_users(user_id), "
+            "FOREIGN KEY(secret_request_id) REFERENCES secret_requests(request_id))"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_web_commands_idempotency "
+            "ON web_commands(idempotency_key) WHERE idempotency_key IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_web_commands_active_manual_refresh "
+            "ON web_commands(command_type) "
+            "WHERE command_type = 'manual_refresh' AND status IN ('queued', 'running')"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_commands_claim "
+            "ON web_commands(status, requested_at, command_type)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_commands_requester "
+            "ON web_commands(requested_by, requested_at)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_events ("
+            "event_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "event_type TEXT NOT NULL, "
+            "occurred_at TEXT NOT NULL, "
+            "source_commit TEXT NOT NULL, "
+            "correlation_id TEXT, "
+            "source_kind TEXT, "
+            "source_id TEXT, "
+            "visibility TEXT NOT NULL DEFAULT 'all' "
+            "CHECK (visibility IN ('all', 'tester', 'admin')), "
+            "payload_json TEXT NOT NULL, "
+            "expires_at TEXT)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_type_time "
+            "ON web_events(event_type, occurred_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_expiry ON web_events(expires_at)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_web_events_source_dedupe "
+            "ON web_events(event_type, source_kind, source_id) "
+            "WHERE source_kind IS NOT NULL AND source_id IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_public_state ("
+            "state_key TEXT PRIMARY KEY CHECK (state_key = 'current'), "
+            "state_version INTEGER NOT NULL CHECK (state_version >= 0), "
+            "snapshot_id INTEGER, "
+            "source_ts TEXT, "
+            "updated_at TEXT NOT NULL, "
+            "payload_json TEXT NOT NULL, "
+            "FOREIGN KEY(snapshot_id) REFERENCES candidate_snapshots(id))"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS web_audit_log ("
+            "audit_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "occurred_at TEXT NOT NULL, "
+            "actor_user_id INTEGER, "
+            "actor_session_hash_prefix TEXT, "
+            "action TEXT NOT NULL, "
+            "object_type TEXT, "
+            "object_id TEXT, "
+            "outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'denied')), "
+            "request_id TEXT, "
+            "detail_json TEXT NOT NULL DEFAULT '{}', "
+            "FOREIGN KEY(actor_user_id) REFERENCES web_users(user_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_audit_time ON web_audit_log(occurred_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_audit_actor "
+            "ON web_audit_log(actor_user_id, occurred_at)"
+        )
+
 
     @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
@@ -333,6 +556,16 @@ class SQLiteStore:
             "runtime_sessions",
             "scan_attempts",
             "runtime_events",
+            "web_users",
+            "web_sessions",
+            "web_user_state",
+            "service_leases",
+            "web_commands",
+            "secret_requests",
+            "encrypted_secrets",
+            "web_events",
+            "web_public_state",
+            "web_audit_log",
         }
         tables = {
             str(row[0])
@@ -771,6 +1004,20 @@ class SQLiteStore:
         first = batch.candidates[0] if batch.candidates else None
         if first is None:
             raise ValueError("empty candidate batches are not persisted as new snapshots")
+        self.initialize()
+        with self.connect() as connection:
+            with connection:
+                return self.record_batch_in(connection, batch)
+
+    def record_batch_in(
+        self,
+        connection: sqlite3.Connection,
+        batch: CandidateBatch,
+    ) -> int:
+        """Persist one batch inside the caller's open transaction."""
+        first = batch.candidates[0] if batch.candidates else None
+        if first is None:
+            raise ValueError("empty candidate batches are not persisted as new snapshots")
         metadata: dict[str, str | int | bool] = {
             "source_ts": batch.source_ts.isoformat(),
             "generated_at": batch.generated_at.isoformat(),
@@ -780,43 +1027,40 @@ class SQLiteStore:
             "config_version": first.config_version,
             "app_version": first.app_version,
         }
-        self.initialize()
-        with self.connect() as connection:
-            with connection:
-                snapshot_id = self._insert_snapshot(
-                    connection,
-                    batch.trace_payload(),
-                    metadata,
-                )
-                for rank, candidate in enumerate(batch.candidates, start=1):
-                    connection.execute(
-                        "INSERT INTO candidate_items "
-                        "(snapshot_id, rank, code, name, level, is_formal, is_supplement, "
-                        "price, change_pct, sector_code, sector_name, fund_label, explanation, "
-                        "payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            snapshot_id,
-                            rank,
-                            candidate.code,
-                            candidate.name,
-                            candidate.level,
-                            int(candidate.is_formal),
-                            int(candidate.is_supplement),
-                            candidate.price,
-                            candidate.change_pct,
-                            candidate.sector_code,
-                            candidate.sector,
-                            candidate.fund_label,
-                            "；".join(candidate.reasons[:5]),
-                            json.dumps(
-                                asdict(candidate),
-                                ensure_ascii=False,
-                                default=str,
-                                sort_keys=True,
-                            ),
-                        ),
-                    )
-                return snapshot_id
+        snapshot_id = self._insert_snapshot(
+            connection,
+            batch.trace_payload(),
+            metadata,
+        )
+        for rank, candidate in enumerate(batch.candidates, start=1):
+            connection.execute(
+                "INSERT INTO candidate_items "
+                "(snapshot_id, rank, code, name, level, is_formal, is_supplement, "
+                "price, change_pct, sector_code, sector_name, fund_label, explanation, "
+                "payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot_id,
+                    rank,
+                    candidate.code,
+                    candidate.name,
+                    candidate.level,
+                    int(candidate.is_formal),
+                    int(candidate.is_supplement),
+                    candidate.price,
+                    candidate.change_pct,
+                    candidate.sector_code,
+                    candidate.sector,
+                    candidate.fund_label,
+                    "；".join(candidate.reasons[:5]),
+                    json.dumps(
+                        asdict(candidate),
+                        ensure_ascii=False,
+                        default=str,
+                        sort_keys=True,
+                    ),
+                ),
+            )
+        return snapshot_id
 
     def get_app_setting(self, key: str) -> Any:
         with self.connect() as connection:
@@ -851,24 +1095,53 @@ class SQLiteStore:
         channel: str,
         trigger_type: str = "intraday",
         detail: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> int:
+        """Persist one alert event and return its id."""
         if any(word in channel.lower() for word in ("token", "secret", "password", "account")):
             raise ValueError("alert channel must not contain credentials or account information")
         self.initialize()
         with self.connect() as connection:
-            connection.execute(
-                "INSERT INTO alert_events "
-                "(snapshot_id, displayed_at, decision, channel, trigger_type, detail_json) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    snapshot_id,
-                    displayed_at,
-                    decision,
-                    channel,
-                    trigger_type,
-                    json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
-                ),
-            )
+            with connection:
+                return self.record_alert_event_in(
+                    connection,
+                    snapshot_id=snapshot_id,
+                    displayed_at=displayed_at,
+                    decision=decision,
+                    channel=channel,
+                    trigger_type=trigger_type,
+                    detail=detail,
+                )
+
+    @staticmethod
+    def record_alert_event_in(
+        connection: sqlite3.Connection,
+        *,
+        snapshot_id: int,
+        displayed_at: str,
+        decision: str,
+        channel: str,
+        trigger_type: str = "intraday",
+        detail: dict[str, Any] | None = None,
+    ) -> int:
+        """Insert an alert event inside the caller's open transaction."""
+        if any(word in channel.lower() for word in ("token", "secret", "password", "account")):
+            raise ValueError("alert channel must not contain credentials or account information")
+        cursor = connection.execute(
+            "INSERT INTO alert_events "
+            "(snapshot_id, displayed_at, decision, channel, trigger_type, detail_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                snapshot_id,
+                displayed_at,
+                decision,
+                channel,
+                trigger_type,
+                json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("alert event insert did not return an id")
+        return int(cursor.lastrowid)
 
     def record_health_metric(self, metadata: dict[str, str]) -> None:
         self.initialize()
@@ -1308,3 +1581,243 @@ class SQLiteStore:
                 (before.isoformat(),),
             )
         return max(cursor.rowcount, 0)
+
+    # ------------------------------------------------------------------
+    # Schema v7 web projection queries (read-only, paginated, bounded).
+    # ------------------------------------------------------------------
+
+    def query_snapshots(
+        self,
+        *,
+        limit: int,
+        cursor: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        code: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Page candidate snapshots newest-first with optional date/code filters.
+
+        ``cursor`` is the last seen snapshot id; rows are returned strictly
+        below it so clients can page without duplication.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        clauses: list[str] = []
+        values: list[Any] = []
+        if cursor is not None:
+            clauses.append("s.id < ?")
+            values.append(int(cursor))
+        if from_date is not None:
+            clauses.append("substr(s.source_ts, 1, 10) >= ?")
+            values.append(from_date)
+        if to_date is not None:
+            clauses.append("substr(s.source_ts, 1, 10) <= ?")
+            values.append(to_date)
+        if code is not None:
+            clauses.append(
+                "s.id IN (SELECT DISTINCT snapshot_id FROM candidate_items "
+                "WHERE code = ?)"
+            )
+            values.append(code)
+        query = (
+            "SELECT s.id, s.source_ts, s.generated_at, s.health, s.overall_weak, "
+            "s.provider_version, s.config_version, s.app_version, s.payload_json "
+            "FROM candidate_snapshots s"
+        )
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY s.id DESC LIMIT ?"
+        values.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(values)).fetchall()
+        return [
+            {
+                "id": row[0],
+                "source_ts": row[1],
+                "generated_at": row[2],
+                "health": row[3],
+                "overall_weak": row[4],
+                "provider_version": row[5],
+                "config_version": row[6],
+                "app_version": row[7],
+                "payload_json": row[8],
+            }
+            for row in rows
+        ]
+
+    def get_snapshot_detail(self, snapshot_id: int, code: str) -> dict[str, Any] | None:
+        """Return one immutable snapshot plus the requested candidate row."""
+        with self.connect() as connection:
+            snapshot = connection.execute(
+                "SELECT id, source_ts, generated_at, health, overall_weak, "
+                "provider_version, config_version, app_version, payload_json "
+                "FROM candidate_snapshots WHERE id = ?",
+                (snapshot_id,),
+            ).fetchone()
+            if snapshot is None:
+                return None
+            item = connection.execute(
+                "SELECT rank, code, name, level, is_formal, is_supplement, price, "
+                "change_pct, sector_code, sector_name, fund_label, explanation, "
+                "payload_json FROM candidate_items "
+                "WHERE snapshot_id = ? AND code = ?",
+                (snapshot_id, code),
+            ).fetchone()
+        keys = (
+            "id",
+            "source_ts",
+            "generated_at",
+            "health",
+            "overall_weak",
+            "provider_version",
+            "config_version",
+            "app_version",
+            "payload_json",
+        )
+        output: dict[str, Any] = dict(zip(keys, snapshot))
+        output["candidate"] = None
+        if item is not None:
+            item_keys = (
+                "rank",
+                "code",
+                "name",
+                "level",
+                "is_formal",
+                "is_supplement",
+                "price",
+                "change_pct",
+                "sector_code",
+                "sector_name",
+                "fund_label",
+                "explanation",
+                "payload_json",
+            )
+            output["candidate"] = dict(zip(item_keys, item))
+        return output
+
+    def query_alert_events(
+        self,
+        *,
+        limit: int,
+        cursor: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        trigger_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Page alert history newest-first; joined with its immutable snapshot."""
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        clauses: list[str] = []
+        values: list[Any] = []
+        if cursor is not None:
+            clauses.append("e.id < ?")
+            values.append(int(cursor))
+        if from_date is not None:
+            clauses.append("substr(e.displayed_at, 1, 10) >= ?")
+            values.append(from_date)
+        if to_date is not None:
+            clauses.append("substr(e.displayed_at, 1, 10) <= ?")
+            values.append(to_date)
+        if trigger_type is not None:
+            clauses.append("e.trigger_type = ?")
+            values.append(trigger_type)
+        query = (
+            "SELECT e.id, e.snapshot_id, e.displayed_at, e.decision, e.channel, "
+            "e.trigger_type, e.detail_json, s.source_ts, s.overall_weak, s.payload_json "
+            "FROM alert_events e JOIN candidate_snapshots s ON s.id = e.snapshot_id"
+        )
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY e.id DESC LIMIT ?"
+        values.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(values)).fetchall()
+        return [
+            {
+                "alert_id": row[0],
+                "snapshot_id": row[1],
+                "displayed_at": row[2],
+                "decision": row[3],
+                "channel": row[4],
+                "trigger_type": row[5],
+                "detail_json": row[6],
+                "source_ts": row[7],
+                "overall_weak": row[8],
+                "payload_json": row[9],
+            }
+            for row in rows
+        ]
+
+    def get_scan_run(self, scan_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT id, started_at, completed_at, trigger_type, task_key, health, "
+                "source_ts, coverage_ratio, elapsed_seconds, source_age_seconds, detail, "
+                "raw_batch_json, stable_batch_json, audit_json "
+                "FROM scan_runs WHERE id = ?",
+                (scan_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "id",
+            "started_at",
+            "completed_at",
+            "trigger_type",
+            "task_key",
+            "health",
+            "source_ts",
+            "coverage_ratio",
+            "elapsed_seconds",
+            "source_age_seconds",
+            "detail",
+            "raw_batch_json",
+            "stable_batch_json",
+            "audit_json",
+        )
+        return dict(zip(keys, row))
+
+    def read_public_state(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT state_version, snapshot_id, source_ts, updated_at, payload_json "
+                "FROM web_public_state WHERE state_key = 'current'"
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "state_version": row[0],
+            "snapshot_id": row[1],
+            "source_ts": row[2],
+            "updated_at": row[3],
+            "payload_json": row[4],
+        }
+
+    @staticmethod
+    def upsert_public_state(
+        connection: sqlite3.Connection,
+        *,
+        state_version: int,
+        snapshot_id: int | None,
+        source_ts: str | None,
+        payload: dict[str, Any],
+    ) -> None:
+        """Write the shared dashboard projection inside the caller's transaction."""
+        connection.execute(
+            "INSERT INTO web_public_state "
+            "(state_key, state_version, snapshot_id, source_ts, updated_at, payload_json) "
+            "VALUES ('current', ?, ?, ?, ?, ?) "
+            "ON CONFLICT(state_key) DO UPDATE SET "
+            "state_version = excluded.state_version, "
+            "snapshot_id = excluded.snapshot_id, "
+            "source_ts = excluded.source_ts, "
+            "updated_at = excluded.updated_at, "
+            "payload_json = excluded.payload_json",
+            (
+                int(state_version),
+                snapshot_id,
+                source_ts,
+                datetime.now().isoformat(),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            ),
+        )

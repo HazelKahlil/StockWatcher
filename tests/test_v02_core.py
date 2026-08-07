@@ -308,7 +308,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
     empty_store.initialize()
     with empty_store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
 
     path = tmp_path / "watcher.sqlite3"
     with sqlite3.connect(path) as connection:
@@ -325,7 +325,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
     store.initialize()
     store.initialize()
     with store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(runtime_sessions)")
@@ -851,7 +851,7 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     assert recovered.last_recovery is not None
     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
     with recovered.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'probe'"
         ).fetchone() == ("kept",)
