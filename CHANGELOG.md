@@ -94,6 +94,11 @@
 
 ### Fixed
 
+- RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
+- A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
+- Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.
+- Intraday strong-movement popups now name the triggering stock (or trigger count) while preserving the existing readiness, cooldown and daily-limit rules.
+
 - 稳定替换现在只保留席位，不再保留上一轮候选对象；被保留股票的价格、涨幅、评分、等级、
   原因和源时间全部从本轮新鲜合规扫描刷新，本轮缺失、过期或被排除的股票立即退出。
 - 全市场扫描逐股排除旧时间或不可用行情，并继续要求新鲜覆盖率不低于99%；少量停牌或久未

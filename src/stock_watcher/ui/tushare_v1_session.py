@@ -69,6 +69,10 @@ from stock_watcher.runtime import (
     write_pdf_manifest,
     write_post_close_report,
 )
+from stock_watcher.runtime.continuity import (
+    analyze_scan_gaps,
+    continuity_gap_summary_parts,
+)
 from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
 from stock_watcher.runtime.post_close_report_model import LocalFallbackReport
 from stock_watcher.runtime.post_close_review import PostCloseDataProvider
@@ -773,11 +777,6 @@ class TushareV1Session:
             event_strength=strong_event.strength,
         )
         if decision.should_alert:
-            subtitle = (
-                "个股与板块同步增强｜资金未确认"
-                if strong_event.funds_unconfirmed
-                else "个股、板块与资金同步增强"
-            )
             detail = self._build_strong_alert_detail(
                 now,
                 strong_event,
@@ -785,6 +784,21 @@ class TushareV1Session:
                 decision.reason,
                 readiness,
                 scan_run_id,
+            )
+            trigger_name = str(
+                detail.get("trigger_name") or detail.get("trigger_symbol") or ""
+            ).strip()
+            trigger_prefix = ""
+            if trigger_name:
+                trigger_prefix = (
+                    f"{trigger_name}等{len(strong_event.triggering_codes)}只触发｜"
+                    if len(strong_event.triggering_codes) > 1
+                    else f"{trigger_name}触发｜"
+                )
+            subtitle = trigger_prefix + (
+                "个股与板块同步增强｜资金未确认"
+                if strong_event.funds_unconfirmed
+                else "个股、板块与资金同步增强"
             )
             return self._record_alert(
                 now,
@@ -1247,42 +1261,37 @@ class TushareV1Session:
         return True
 
     def _collect_continuity_evidence(self, trade_date: str) -> str:
-        """Report real continuity facts; never assume an uneventful day."""
+        """Report real continuity facts; never let lunch hide a trading gap."""
         runs = [
             row
             for row in self.store.list_scan_runs(trade_date)
             if row.get("completed_at") and row.get("health") == HealthState.HEALTHY.value
         ]
-        timestamps: list[datetime] = []
-        for row in runs:
-            parsed = _parsed_datetime(str(row["completed_at"]))
-            if parsed is not None:
-                timestamps.append(parsed)
-        timestamps.sort()
-        gaps: list[tuple[float, datetime, datetime]] = []
-        for previous, current in zip(timestamps, timestamps[1:]):
-            delta = (current - previous).total_seconds()
-            if delta > 0:
-                gaps.append((delta, previous, current))
-        parts: list[str] = []
-        if gaps:
-            longest, gap_start, gap_end = max(gaps)
-            trading = _trading_block(gap_start) == _trading_block(gap_end) > 0
-            parts.append(
-                f"最长无扫描间隔{_format_duration(longest)}（{gap_start:%H:%M}→{gap_end:%H:%M}"
-                f"{'，位于交易时段内' if trading else '，位于非交易时段'}）"
-            )
+        timestamps = [
+            parsed
+            for row in runs
+            if (parsed := _parsed_datetime(str(row["completed_at"]))) is not None
+        ]
         sessions = self.store.list_runtime_sessions(trade_date)
-        if len(sessions) > 1:
-            parts.append(f"进程重启{len(sessions) - 1}次")
+        runtime_events: list[dict[str, object]] = []
         event_counts: dict[str, int] = {}
         for session in sessions:
             for event in self.store.list_runtime_events(str(session["session_id"])):
                 occurred = str(event.get("occurred_at", ""))
                 if not occurred.startswith(trade_date):
                     continue
+                runtime_events.append(event)
                 event_type = str(event.get("event_type", ""))
                 event_counts[event_type] = event_counts.get(event_type, 0) + 1
+
+        gaps = analyze_scan_gaps(
+            timestamps,
+            runtime_sessions=sessions,
+            runtime_events=runtime_events,
+        )
+        parts = list(continuity_gap_summary_parts(gaps))
+        if len(sessions) > 1:
+            parts.append(f"进程重启{len(sessions) - 1}次")
         if event_counts.get("sleep_detected"):
             parts.append(f"睡眠{event_counts['sleep_detected']}次")
         if event_counts.get("scan_stalled"):
@@ -1573,13 +1582,20 @@ class TushareV1Session:
         if runtime is not self._runtime:
             return
         self._prepared_date = now.date() if now.date() in prepared.open_dates else None
-        if prepared.concept_loaded:
+        reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
+        preserved = bool(getattr(runtime, "concept_cache_preserved", False))
+        if prepared.concept_loaded and not preserved:
             self._universe_retry_at = None
             self._universe_refresh_issue = None
+        elif prepared.concept_loaded and preserved:
+            self._universe_retry_at = now + timedelta(minutes=5)
+            self._universe_refresh_issue = (
+                "概念刷新失败，当前进程继续使用上次成功概念缓存；"
+                "行业筛选与概念筛选均保持可用，5分钟后重试"
+                + (f"（{reason}）" if reason else "。")
+            )
         else:
             self._universe_retry_at = now + timedelta(minutes=5)
-            reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
-            preserved = bool(getattr(runtime, "concept_cache_preserved", False))
             self._universe_refresh_issue = (
                 "概念刷新失败，已保留上次成功概念缓存；行业筛选继续运行，5分钟后重试"
                 + (f"（{reason}）" if reason else "。")
@@ -2265,9 +2281,3 @@ def _trading_block(ts: datetime) -> int:
     if time(13, 0) <= current <= time(15, 0):
         return 2
     return 0
-
-
-def _format_duration(seconds: float) -> str:
-    if seconds >= 60:
-        return f"{int(seconds // 60)}分{int(seconds % 60)}秒"
-    return f"{int(seconds)}秒"

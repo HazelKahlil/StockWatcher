@@ -103,6 +103,7 @@ class CandidateAuditRow:
     core_score: float
     level: str
     is_formal: bool
+    is_supplement: bool
     velocity_available: bool
     selected_raw: bool
     selected_stable: bool
@@ -228,6 +229,7 @@ class CandidateEngine:
                     core_score=candidate.core_score,
                     level=candidate.level,
                     is_formal=candidate.is_formal,
+                    is_supplement=candidate.is_supplement,
                     velocity_available=candidate.velocity_available,
                     velocity_1m_pct=candidate.velocity_1m_pct,
                     velocity_3m_pct=candidate.velocity_3m_pct,

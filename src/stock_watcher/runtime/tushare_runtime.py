@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import RLock
@@ -609,15 +609,22 @@ class TushareV1Runtime:
         The provider work happens before the state swap. A failed refresh therefore
         preserves the previous verified universe and its on-disk cache.
         """
-        cold_start = self.universe is None
+        previous = self.universe
+        cold_start = previous is None
         fresh = self.loader.load()
+        effective = _merge_last_known_good_concepts(fresh, previous)
+        self.concept_cache_preserved = effective is not fresh
         if self.universe_cache is not None:
-            self.concept_cache_preserved = (
+            if self.concept_cache_preserved:
+                # Persist refreshed industry/trend context together with the
+                # previous verified concept memberships.  This protects both
+                # the current process and the next launch.
+                self.universe_cache.save(effective)
+            else:
                 self.universe_cache.save_preserving_last_known_good(
                     fresh,
-                    self.universe,
+                    previous,
                 )
-            )
         with self._state_lock:
             if cold_start:
                 self.buffer.clear()
@@ -633,9 +640,9 @@ class TushareV1Runtime:
                 # applies the new industry/concept/trend context to the retained
                 # realtime series.
                 self.pipeline.reset()
-            self.universe = fresh
+            self.universe = effective
             self.universe_cache_failure = None
-        return fresh
+        return effective
 
     def universe_is_current(self, now: datetime) -> bool:
         with self._state_lock:
@@ -888,6 +895,47 @@ def _stock_basic_industry_memberships(
                 )
             )
     return tuple(output)
+
+
+def _merge_last_known_good_concepts(
+    fresh: RuntimeUniverse,
+    previous: RuntimeUniverse | None,
+) -> RuntimeUniverse:
+    """Keep verified concepts in the live process when a refresh loses them.
+
+    ``RuntimeUniverseCache.save_preserving_last_known_good`` protects the file,
+    but the running process must also keep those memberships.  The non-concept
+    context (profiles, industry memberships, trends, calendar and generation
+    time) comes from ``fresh``; only concept memberships come from the previous
+    verified universe.  Security objects are rebound to the refreshed profiles
+    so names/markets cannot become stale when a listing changes.
+    """
+    if fresh.concept_loaded or previous is None or not previous.concept_loaded:
+        return fresh
+    refreshed_securities = {
+        profile.security.code: profile.security for profile in fresh.profiles
+    }
+    previous_concepts = tuple(
+        replace(
+            membership,
+            security=refreshed_securities[membership.security.code],
+        )
+        for membership in previous.memberships
+        if membership.sector_type == "concept"
+        and membership.security.code in refreshed_securities
+    )
+    if not previous_concepts:
+        return fresh
+    non_concepts = tuple(
+        membership
+        for membership in fresh.memberships
+        if membership.sector_type != "concept"
+    )
+    return replace(
+        fresh,
+        memberships=(*non_concepts, *previous_concepts),
+        concept_loaded=True,
+    )
 
 
 def _safe_scan_failure(error: Exception) -> str:
