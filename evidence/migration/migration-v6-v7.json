@@ -1,0 +1,11 @@
+{
+  "result": "PASS",
+  "before": 6,
+  "after": 7,
+  "integrity_check": "ok",
+  "foreign_key_issues": 0,
+  "sentinel_preserved": true,
+  "required_v7_tables_present": true,
+  "pre_v7_backup_created": true,
+  "total_tables": 24
+}

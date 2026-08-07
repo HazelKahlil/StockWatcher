@@ -1,0 +1,71 @@
+{
+  "passed": 13,
+  "total": 13,
+  "results": [
+    {
+      "name": "login page loads",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "login redirects to dashboard",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "dashboard status bar renders",
+      "ok": true,
+      "extra": "预热"
+    },
+    {
+      "name": "websocket connected",
+      "ok": true,
+      "extra": "实时连接在线"
+    },
+    {
+      "name": "manual refresh queued with command id",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "alerts page renders",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "history page renders",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "summary page renders",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "admin page renders token form",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "admin diagnostics renders",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "token input never pre-filled",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "360px no horizontal overflow",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "logout returns to login",
+      "ok": true,
+      "extra": ""
+    }
+  ]
+}

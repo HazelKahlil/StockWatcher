@@ -1,5 +1,27 @@
 # Changelog
 
+## [web-internal-test-v1] - 2026-08-07
+
+### Added
+- Web 内部试用版：FastAPI 单进程 + 唯一 Worker + SQLite v7（依赖拆分 core/desktop/server/dev）。
+- 无 Qt `StockWatcherService` 编排（扫描/自动化/提醒/总结/命令），与 Mac 桌面共用 engine/runtime/storage。
+- schema v7：users/sessions/user_state/lease/commands/secret_requests/encrypted_secrets/events/public_state/audit。
+- 认证：Argon2id、opaque session、CSRF、RBAC、登录/命令限速；AES-256-GCM Token（先测后激活）。
+- REST API（contracts/openapi.yaml）、WebSocket 事件泵（after_id/resync/backpressure）。
+- 运维 CLI：migrate/create-user/backup/restore/provider-preflight/healthcheck。
+- Docker Compose + Caddy（digest 锁定）、运维脚本、VPS preflight 脚本。
+- 修复 legacy exporter：`raw-top20` 输出真 20 行 + 显式 `raw-top3`。
+
+### Fixed
+- SQLite WAL 双进程并发损坏：每线程常驻连接（-shm/-wal 生命周期竞争）。
+
+### Testing
+- 391 passed / 20 skipped / 2 deselected；Ruff、Mypy strict、no-Qt gate、
+  fixture parity、浏览器 E2E 13/13、容器双 worker、备份/恢复演练。
+
+### Pending
+- VPS 数据源 preflight 与完整交易日 18 条 Live 验收（需 Owner 提供 VPS/域名/Token）。
+
 本项目采用 [Semantic Versioning](https://semver.org/)；所有值得用户或维护者关注的变化记录在这里。
 
 ## [Unreleased]

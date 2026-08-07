@@ -1,0 +1,28 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+}
+
+{$DOMAIN} {
+    encode zstd gzip
+
+    request_body {
+        max_size 1MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; font-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        -Server
+    }
+
+    reverse_proxy web:8000
+
+    log {
+        output stdout
+        format json
+    }
+}

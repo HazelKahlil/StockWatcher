@@ -1,0 +1,20 @@
+{
+  "result": "PASS_WITH_DOCUMENTED_LEGACY_EXPORT_DEFECT",
+  "scan_runs": 415,
+  "candidate_audit_rows": 8301,
+  "reconstructed_top20_rows": 8300,
+  "legacy_raw_top3_rows": 1245,
+  "csv_json_pair_counts": {
+    "alert-events": 5,
+    "automation-tasks": 3,
+    "cache-status": 3,
+    "candidate-audit": 8301,
+    "excluded-candidates": 7056,
+    "raw-top20": 1245,
+    "raw-top20-reconstructed": 8300,
+    "runtime-sessions": 7,
+    "scan-runs": 415,
+    "scheduler-events": 18,
+    "stable-top3-timeline": 1245
+  }
+}
