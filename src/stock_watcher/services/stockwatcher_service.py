@@ -1675,7 +1675,7 @@ class StockWatcherService:
     def _public_payload(self, now: datetime, *, event_id: int | None = None) -> dict[str, Any]:
         batch = self.batch
         return {
-            "service_state": self.state.value,
+            "service_state": self.state.value.casefold(),
             "market_state": self._market_state_label(now),
             "state_version": self._state_version,
             "snapshot_id": None,

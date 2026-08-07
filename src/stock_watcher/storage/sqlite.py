@@ -4,9 +4,10 @@ import json
 import re
 import shutil
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -24,18 +25,32 @@ class SQLiteStore:
 
     _SQLITE_MAGIC = b"SQLite format 3\x00"
     last_recovery: dict[str, object] | None = None
+    _integrity_verified_version: int | None = None
+    _wal_configured: bool = False
+    _thread_local: threading.local = field(default_factory=threading.local)
 
     def connect(self) -> sqlite3.Connection:
-        connection = (
-            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
-            if self.read_only
-            else sqlite3.connect(self.path)
-        )
-        if not self.read_only:
+        """Return one connection with the shared SQLite runtime settings.
+
+        Read-write stores keep ONE persistent connection per thread. Rapidly
+        opening and closing many short connections from two processes makes
+        SQLite delete and recreate the shared ``-shm``/``-wal`` files when the
+        last connection closes; a stale view then breaks cross-process write
+        locking and can mix pages between tables. A live per-thread connection
+        keeps the shared files in place. Read-only stores stay ephemeral.
+        """
+        if self.read_only:
+            connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            connection.execute("PRAGMA foreign_keys=ON")
+            return connection
+        connection = getattr(self._thread_local, "connection", None)
+        if connection is None:
+            connection = sqlite3.connect(self.path)
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute("PRAGMA busy_timeout=5000")
-        connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA foreign_keys=ON")
+            self._thread_local.connection = connection
         return connection
 
     @contextmanager
@@ -58,15 +73,35 @@ class SQLiteStore:
             self._restore_from_backup()
         try:
             with self.connect() as connection:
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS schema_version "
-                    "(version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
-                )
-                self._assert_integrity(connection)
+                has_schema_table = connection.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'schema_version'"
+                ).fetchone() is not None
+                if not has_schema_table:
+                    # CREATE TABLE writes the schema cookie in the database
+                    # header; with multiple writer processes it must happen
+                    # exactly once, never on every connection.
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS schema_version "
+                        "(version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+                    )
+                if not self._wal_configured and not self.read_only:
+                    # Switch to WAL exactly once per process. Re-running the
+                    # pragma from many short connections while another process
+                    # writes can tear the journal-mode header handoff.
+                    connection.execute("PRAGMA journal_mode=WAL")
+                    self._wal_configured = True
                 version = self._schema_version(connection)
                 if version < self.CURRENT_SCHEMA_VERSION:
                     self._backup_before_migration(version)
                     self._migrate_to_current(connection, version)
+                if self._integrity_verified_version != self.CURRENT_SCHEMA_VERSION:
+                    # Full-database integrity scans are expensive and lock
+                    # sensitive on shared filesystems; verify once per process
+                    # after reaching the current schema instead of on every
+                    # store call. SQLite still protects every transaction.
+                    self._assert_integrity(connection)
+                    self._integrity_verified_version = self.CURRENT_SCHEMA_VERSION
                 self._assert_current_schema(connection)
         except (sqlite3.DatabaseError, RuntimeError):
             if self.path.exists():
@@ -541,6 +576,8 @@ class SQLiteStore:
             raise RuntimeError("database integrity check failed")
 
     def _assert_current_schema(self, connection: sqlite3.Connection) -> None:
+        if self._integrity_verified_version == self.CURRENT_SCHEMA_VERSION:
+            return
         required_tables = {
             "schema_version",
             "notes",

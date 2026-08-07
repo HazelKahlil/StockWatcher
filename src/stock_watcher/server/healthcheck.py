@@ -51,7 +51,7 @@ def check_worker(settings: ServerSettings) -> int:
         print("worker not ready: no lease", file=sys.stderr)
         return 1
     holder_id, heartbeat_at, expires_at = row
-    now = datetime.now()
+    now = datetime.now().astimezone()
     try:
         heartbeat = datetime.fromisoformat(heartbeat_at)
         expires = datetime.fromisoformat(expires_at)

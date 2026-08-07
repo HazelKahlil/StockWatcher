@@ -11,6 +11,24 @@ from typing import Any
 
 from stock_watcher.storage import SQLiteStore
 
+SERVICE_STATE_ALIASES = {
+    "WARMING": "warming",
+    "HEALTHY": "healthy",
+    "STALE": "stale",
+    "STOPPED": "stopped",
+    "starting": "starting",
+    "warming": "warming",
+    "healthy": "healthy",
+    "stale": "stale",
+    "stopped": "stopped",
+}
+
+
+def normalize_service_state(value: object) -> str:
+    """Map the baseline HealthState enum (uppercase) to the WS/REST contract
+    lowercase service-state vocabulary."""
+    return SERVICE_STATE_ALIASES.get(str(value), str(value) or "starting")
+
 
 def _parsed_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
@@ -50,7 +68,9 @@ class PublicStateBuilder:
             stored = json.loads(str(public["payload_json"]))
             payload = {
                 "state_version": int(public["state_version"]),
-                "service_state": stored.get("service_state", "starting"),
+                "service_state": normalize_service_state(
+                    stored.get("service_state", "starting")
+                ),
                 "market_state": stored.get("market_state", "unknown"),
                 "snapshot_id": public["snapshot_id"],
                 "candidates": stored.get("candidates", []),
