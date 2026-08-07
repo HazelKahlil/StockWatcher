@@ -16,8 +16,8 @@
 ## 权威事实
 
 - 唯一开发目录：`~/Documents/700-AI-Workspace/20-Projects/StockWatcher`。
-- 唯一共享/App 基线：本地 `main` 的 `88ccf49f91fa814af83a004232315286feca3fb7`。
-- 已安装 App 的 `SOURCE_COMMIT` 与该 main HEAD 一致；不要覆盖、重装或删除它。
+- 唯一共享/App **应用代码基线**：`88ccf49f91fa814af83a004232315286feca3fb7`。
+- App 的 `SOURCE_COMMIT` 与应用代码基线一致；治理文档提交不改变 App 二进制，不覆盖、重装或删除它。
 - Web 是独立 `web/internal-test-v1` 线，HEAD `87a8b85609f57504861e09f416694582556b736e`，不合入 main。
 - Windows 是规划/历史线，不是当前开发 worktree。
 

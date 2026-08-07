@@ -6,9 +6,9 @@
 
 - 路径：`~/Documents/700-AI-Workspace/20-Projects/StockWatcher`
 - 分支：本地 `main`
-- 当前 HEAD：`88ccf49f91fa814af83a004232315286feca3fb7`
-- 远端：未访问；本地 `main` 领先 `origin/main`，GitHub 不代表当前本地事实。
-- Shared Core 与 Desktop App Mac 以本目录和该 HEAD 为权威；不从 ZIP、Finder 副本或旧 worktree 开发。
+- 应用代码基线 / 审计冻结 HEAD：`88ccf49f91fa814af83a004232315286feca3fb7`。
+- 收口治理文档在该代码基线之上提交；最终 Git HEAD 以审计报告和 `git rev-parse HEAD` 为准。治理提交不改变 App 二进制，不为追平 HEAD 覆盖安装 App。
+- Shared Core 与 Desktop App Mac 以该代码基线及本目录为权威；不从 ZIP、Finder 副本或旧 worktree 开发。
 
 ## 三条轨道
 
