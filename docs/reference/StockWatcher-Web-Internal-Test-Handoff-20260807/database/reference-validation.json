@@ -1,0 +1,29 @@
+{
+  "reference_only": true,
+  "validated_against": "fresh database initialized by baseline SQLiteStore schema v6",
+  "baseline_commit": "502a447d7e593d638ea45518f2a5e4d4827f683f",
+  "sql_sha256": "5c559fed923241109ea1cb0ac59485a517c4c9dfda0e1dcd41f24fd254ae92d8",
+  "before_schema_version": 6,
+  "after_schema_version": 7,
+  "integrity_check": [
+    "ok"
+  ],
+  "foreign_key_check_rows": 0,
+  "sentinel_preserved": true,
+  "existing_tables_preserved": true,
+  "required_tables_present": [
+    "encrypted_secrets",
+    "secret_requests",
+    "service_leases",
+    "web_audit_log",
+    "web_commands",
+    "web_events",
+    "web_public_state",
+    "web_sessions",
+    "web_user_state",
+    "web_users"
+  ],
+  "required_tables_missing": [],
+  "result": "PASS",
+  "boundary": "The implementing Agent must integrate this migration into the Python migration runner, add backup/rollback/idempotency tests, and rerun on the final implementation."
+}

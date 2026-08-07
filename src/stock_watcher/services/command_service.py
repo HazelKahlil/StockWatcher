@@ -318,11 +318,17 @@ class CommandService:
                         (current.isoformat(), command["command_id"]),
                     )
                 else:
+                    timeout = COMMAND_TIMEOUT_SECONDS.get(
+                        str(command["command_type"]), 300.0
+                    )
                     connection.execute(
                         "UPDATE web_commands SET status = 'queued', claimed_by = NULL, "
-                        "fencing_token = NULL, started_at = NULL "
+                        "fencing_token = NULL, started_at = NULL, expires_at = ? "
                         "WHERE command_id = ?",
-                        (command["command_id"],),
+                        (
+                            (current + timedelta(seconds=timeout)).isoformat(),
+                            command["command_id"],
+                        ),
                     )
                 updated = connection.execute(
                     "SELECT * FROM web_commands WHERE command_id = ?",

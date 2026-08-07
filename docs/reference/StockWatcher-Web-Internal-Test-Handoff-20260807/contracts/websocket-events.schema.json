@@ -1,0 +1,703 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockwatcher.invalid/schemas/websocket-events.schema.json",
+  "title": "StockWatcher WebSocket event",
+  "oneOf": [
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "server.hello"
+            },
+            "payload": {
+              "$ref": "#/$defs/helloPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "server.heartbeat"
+            },
+            "payload": {
+              "$ref": "#/$defs/heartbeatPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "server.resync_required"
+            },
+            "payload": {
+              "$ref": "#/$defs/resyncPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "state.snapshot"
+            },
+            "payload": {
+              "$ref": "#/$defs/statePayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "state.changed"
+            },
+            "payload": {
+              "$ref": "#/$defs/stateChangedPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "candidates.updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/candidatesPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "alert.created"
+            },
+            "payload": {
+              "$ref": "#/$defs/alertPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "automation.updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/automationPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "command.updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/commandPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "summary.ready"
+            },
+            "payload": {
+              "$ref": "#/$defs/summaryPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "diagnostics.updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/diagnosticsPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
+              "const": "auth.session_expiring"
+            },
+            "payload": {
+              "$ref": "#/$defs/sessionExpiringPayload"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "source_commit",
+        "correlation_id",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "event_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "correlation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "helloPayload": {
+      "type": "object",
+      "required": [
+        "business_timezone",
+        "heartbeat_seconds",
+        "latest_event_id"
+      ],
+      "properties": {
+        "business_timezone": {
+          "const": "Asia/Shanghai"
+        },
+        "heartbeat_seconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 120
+        },
+        "latest_event_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "user_role": {
+          "type": "string",
+          "enum": [
+            "tester",
+            "admin"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "heartbeatPayload": {
+      "type": "object",
+      "required": [
+        "server_time"
+      ],
+      "properties": {
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "worker_heartbeat_age_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "resyncPayload": {
+      "type": "object",
+      "required": [
+        "reason",
+        "minimum_event_id",
+        "latest_event_id"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "cursor_expired",
+            "gap_detected",
+            "server_restart"
+          ]
+        },
+        "minimum_event_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latest_event_id": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "rank",
+        "code",
+        "name",
+        "level",
+        "is_formal",
+        "price",
+        "change_pct",
+        "sector_name",
+        "total_score"
+      ],
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "code": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "强",
+            "中",
+            "近"
+          ]
+        },
+        "is_formal": {
+          "type": "boolean"
+        },
+        "is_supplement": {
+          "type": "boolean"
+        },
+        "price": {
+          "type": "number"
+        },
+        "change_pct": {
+          "type": "number"
+        },
+        "sector_name": {
+          "type": "string"
+        },
+        "sector_type": {
+          "type": "string",
+          "enum": [
+            "industry",
+            "concept"
+          ]
+        },
+        "total_score": {
+          "type": "number"
+        },
+        "source_ts": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    },
+    "statePayload": {
+      "type": "object",
+      "required": [
+        "state_version",
+        "service_state",
+        "market_state",
+        "snapshot_id",
+        "candidates"
+      ],
+      "properties": {
+        "state_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "service_state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "warming",
+            "healthy",
+            "stale",
+            "stopped"
+          ]
+        },
+        "market_state": {
+          "type": "string"
+        },
+        "snapshot_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "overall_weak": {
+          "type": "boolean"
+        },
+        "source_ts": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    },
+    "stateChangedPayload": {
+      "type": "object",
+      "required": [
+        "state_version",
+        "changed_fields"
+      ],
+      "properties": {
+        "state_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "candidatesPayload": {
+      "type": "object",
+      "required": [
+        "snapshot_id",
+        "state_version",
+        "source_ts",
+        "overall_weak",
+        "candidates"
+      ],
+      "properties": {
+        "snapshot_id": {
+          "type": "integer"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "overall_weak": {
+          "type": "boolean"
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "alertPayload": {
+      "type": "object",
+      "required": [
+        "alert_id",
+        "snapshot_id",
+        "trigger_type",
+        "displayed_at"
+      ],
+      "properties": {
+        "alert_id": {
+          "type": "integer"
+        },
+        "snapshot_id": {
+          "type": "integer"
+        },
+        "trigger_type": {
+          "type": "string",
+          "enum": [
+            "scheduled-09:45",
+            "scheduled-14:45",
+            "intraday"
+          ]
+        },
+        "displayed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "triggering_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "strength": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "funds_unconfirmed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "automationPayload": {
+      "type": "object",
+      "required": [
+        "task_key",
+        "task_type",
+        "state",
+        "updated_at"
+      ],
+      "properties": {
+        "task_key": {
+          "type": "string"
+        },
+        "task_type": {
+          "type": "string",
+          "enum": [
+            "scheduled-09:45",
+            "scheduled-14:45",
+            "summary-15:30"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "running",
+            "succeeded",
+            "failed"
+          ]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "commandPayload": {
+      "type": "object",
+      "required": [
+        "command_id",
+        "command_type",
+        "status"
+      ],
+      "properties": {
+        "command_id": {
+          "type": "string"
+        },
+        "command_type": {
+          "type": "string",
+          "enum": [
+            "manual_refresh",
+            "universe_refresh",
+            "token_test",
+            "token_update",
+            "summary_generate"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "expired"
+          ]
+        },
+        "coalesced": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "summaryPayload": {
+      "type": "object",
+      "required": [
+        "trade_date",
+        "report_mode",
+        "pdf_available",
+        "source_commit"
+      ],
+      "properties": {
+        "trade_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "report_mode": {
+          "type": "string",
+          "enum": [
+            "full_market",
+            "local_fallback"
+          ]
+        },
+        "pdf_available": {
+          "type": "boolean"
+        },
+        "catch_up": {
+          "type": "boolean"
+        },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "diagnosticsPayload": {
+      "type": "object",
+      "properties": {
+        "worker": {
+          "type": "object"
+        },
+        "database": {
+          "type": "object"
+        },
+        "data_sources": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "sessionExpiringPayload": {
+      "type": "object",
+      "required": [
+        "expires_at",
+        "seconds_remaining"
+      ],
+      "properties": {
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "seconds_remaining": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

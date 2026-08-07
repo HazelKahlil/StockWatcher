@@ -1,0 +1,1537 @@
+openapi: 3.1.0
+info:
+  title: StockWatcher Web Internal Test API
+  version: 1.0.0-draft
+  description: Contract for the headless StockWatcher worker and authenticated internal Web UI. Business time is
+    Asia/Shanghai. This API never exposes credentials.
+servers:
+- url: https://{domain}
+  variables:
+    domain:
+      default: stock.example.com
+tags:
+- name: health
+- name: auth
+- name: state
+- name: history
+- name: commands
+- name: admin
+paths:
+  /health/live:
+    get:
+      tags:
+      - health
+      security: []
+      summary: Process liveness
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    const: ok
+                required:
+                - status
+  /health/ready:
+    get:
+      tags:
+      - health
+      security: []
+      summary: Minimal readiness
+      responses:
+        '200':
+          description: Ready or degraded
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/auth/login:
+    post:
+      tags:
+      - auth
+      security: []
+      summary: Create a server-side session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in; also sets sw_session cookie
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      security:
+      - SessionCookie: []
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      summary: Revoke current session
+      responses:
+        '204':
+          description: Logged out
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/me:
+    get:
+      tags:
+      - auth
+      security:
+      - SessionCookie: []
+      summary: Current user and a rotated CSRF value when required
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/state:
+    get:
+      tags:
+      - state
+      security:
+      - SessionCookie: []
+      summary: Current public state projection
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/candidates/current:
+    get:
+      tags:
+      - state
+      security:
+      - SessionCookie: []
+      summary: Current shared stable Top3
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/candidates/{code}:
+    get:
+      tags:
+      - state
+      security:
+      - SessionCookie: []
+      summary: Candidate detail bound to an immutable snapshot
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: snapshot_id
+        in: query
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Candidate not in snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/history:
+    get:
+      tags:
+      - history
+      security:
+      - SessionCookie: []
+      summary: Candidate snapshot history
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: code
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedHistory'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/alerts:
+    get:
+      tags:
+      - history
+      security:
+      - SessionCookie: []
+      summary: Alert history
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: trigger_type
+        in: query
+        schema:
+          type: string
+          enum:
+          - scheduled-09:45
+          - scheduled-14:45
+          - intraday
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedAlerts'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/summaries:
+    get:
+      tags:
+      - history
+      security:
+      - SessionCookie: []
+      summary: Daily summary headers
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedSummaries'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/summaries/{trade_date}:
+    get:
+      tags:
+      - history
+      security:
+      - SessionCookie: []
+      summary: Daily summary detail
+      parameters:
+      - name: trade_date
+        in: path
+        required: true
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummaryDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/summaries/{trade_date}/pdf:
+    get:
+      tags:
+      - history
+      security:
+      - SessionCookie: []
+      summary: Authenticated PDF download
+      parameters:
+      - name: trade_date
+        in: path
+        required: true
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: PDF
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/pdf:
+              schema:
+                type: string
+                contentEncoding: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/commands/manual-refresh:
+    post:
+      tags:
+      - commands
+      security:
+      - SessionCookie: []
+      summary: Queue or coalesce a global manual refresh
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Queued or coalesced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /api/v1/commands/{command_id}:
+    get:
+      tags:
+      - commands
+      security:
+      - SessionCookie: []
+      summary: Get command state
+      parameters:
+      - name: command_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Command
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/admin/diagnostics:
+    get:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Admin diagnostics (redacted)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diagnostics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/scan-runs:
+    get:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Paginated scan runs
+      parameters:
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedScanRuns'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/scan-runs/{scan_id}/audit:
+    get:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Raw Top20, Top3 and exclusion audit
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Audit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/admin/token/test:
+    post:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Encrypt and queue a non-activating token test
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenInput'
+      responses:
+        '202':
+          description: Test queued; token is never echoed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCommandResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /api/v1/admin/token:
+    put:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Encrypt, validate and atomically activate a token
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenInput'
+      responses:
+        '202':
+          description: Update queued; current token remains active until validation succeeds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCommandResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /api/v1/admin/cache/refresh:
+    post:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Queue a universe/concept cache refresh
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/users:
+    get:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: List users
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Create a user
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/users/{user_id}:
+    patch:
+      tags:
+      - admin
+      security:
+      - SessionCookie: []
+      summary: Change role/password/active state and optionally revoke sessions
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPatch'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: sw_session
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 32
+      description: Required for authenticated state-changing requests.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type:
+        - string
+        - 'null'
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+  responses:
+    Unauthorized:
+      description: Authentication required or session expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Role or CSRF check failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: State version or idempotency conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          - request_id
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+            details:
+              type:
+              - object
+              - 'null'
+              additionalProperties: true
+      additionalProperties: false
+    User:
+      type: object
+      required:
+      - user_id
+      - username
+      - role
+      - active
+      properties:
+        user_id:
+          type: integer
+        username:
+          type: string
+        role:
+          type: string
+          enum:
+          - tester
+          - admin
+        active:
+          type: boolean
+        created_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_login_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      additionalProperties: false
+    LoginRequest:
+      type: object
+      required:
+      - username
+      - password
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          minLength: 1
+          writeOnly: true
+      additionalProperties: false
+    LoginResponse:
+      type: object
+      required:
+      - user
+      - csrf_token
+      - session_expires_at
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        csrf_token:
+          type: string
+          writeOnly: true
+        session_expires_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    ServiceState:
+      type: string
+      enum:
+      - starting
+      - warming
+      - healthy
+      - stale
+      - stopped
+    TaskState:
+      type: string
+      enum:
+      - planned
+      - running
+      - succeeded
+      - failed
+    AutomationTask:
+      type: object
+      required:
+      - task_key
+      - task_type
+      - trade_date
+      - target_at
+      - deadline_at
+      - state
+      - attempts
+      properties:
+        task_key:
+          type: string
+        task_type:
+          type: string
+          enum:
+          - scheduled-09:45
+          - scheduled-14:45
+          - summary-15:30
+        trade_date:
+          type: string
+          format: date
+        target_at:
+          type: string
+          format: date-time
+        deadline_at:
+          type: string
+          format: date-time
+        state:
+          $ref: '#/components/schemas/TaskState'
+        attempts:
+          type: integer
+          minimum: 0
+        updated_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        detail:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    Candidate:
+      type: object
+      required:
+      - rank
+      - code
+      - name
+      - level
+      - is_formal
+      - is_supplement
+      - price
+      - change_pct
+      - sector_name
+      - sector_type
+      - total_score
+      - source_ts
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+          maximum: 3
+        code:
+          type: string
+        name:
+          type: string
+        level:
+          type: string
+          enum:
+          - 强
+          - 中
+          - 近
+        is_formal:
+          type: boolean
+        is_supplement:
+          type: boolean
+        price:
+          type: number
+        change_pct:
+          type: number
+        velocity_pct:
+          type: number
+        velocity_available:
+          type: boolean
+        velocity_1m_pct:
+          type:
+          - number
+          - 'null'
+        velocity_3m_pct:
+          type:
+          - number
+          - 'null'
+        velocity_5m_pct:
+          type:
+          - number
+          - 'null'
+        sector_code:
+          type: string
+        sector_name:
+          type: string
+        sector_type:
+          type: string
+          enum:
+          - industry
+          - concept
+        price_score:
+          type: number
+        sector_score:
+          type: number
+        trend_score:
+          type: number
+        fund_score:
+          type: number
+        core_score:
+          type: number
+        total_score:
+          type: number
+        penalty:
+          type: number
+        fund_label:
+          type: string
+        trend_label:
+          type: string
+        data_completeness:
+          type: number
+          minimum: 0
+          maximum: 1
+        sector_gate_passed:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        source_ts:
+          type: string
+          format: date-time
+      additionalProperties: false
+    CandidateSnapshot:
+      type: object
+      required:
+      - snapshot_id
+      - state_version
+      - source_ts
+      - generated_at
+      - health
+      - overall_weak
+      - formal_count
+      - candidates
+      properties:
+        snapshot_id:
+          type: integer
+        state_version:
+          type: integer
+        source_ts:
+          type: string
+          format: date-time
+        generated_at:
+          type: string
+          format: date-time
+        health:
+          $ref: '#/components/schemas/ServiceState'
+        overall_weak:
+          type: boolean
+        formal_count:
+          type: integer
+          minimum: 0
+        fund_module:
+          type: string
+        candidates:
+          type: array
+          minItems: 0
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/Candidate'
+      additionalProperties: false
+    ScanStatus:
+      type: object
+      required:
+      - last_success_at
+      - source_ts
+      - source_age_seconds
+      - coverage_ratio
+      - elapsed_seconds
+      properties:
+        last_success_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        source_ts:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        source_age_seconds:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        coverage_ratio:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+          maximum: 1
+        elapsed_seconds:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        source_span_seconds:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+      additionalProperties: false
+    LeaseStatus:
+      type: object
+      required:
+      - healthy
+      - heartbeat_age_seconds
+      properties:
+        healthy:
+          type: boolean
+        heartbeat_age_seconds:
+          type:
+          - number
+          - 'null'
+        holder_hint:
+          type:
+          - string
+          - 'null'
+        source_commit:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    StateResponse:
+      type: object
+      required:
+      - business_timezone
+      - service_state
+      - market_state
+      - worker
+      - scan
+      - automation
+      - current
+      properties:
+        business_timezone:
+          type: string
+          const: Asia/Shanghai
+        service_state:
+          $ref: '#/components/schemas/ServiceState'
+        market_state:
+          type: string
+          enum:
+          - pre_market
+          - morning
+          - lunch_break
+          - afternoon
+          - post_close
+          - closed
+        worker:
+          $ref: '#/components/schemas/LeaseStatus'
+        scan:
+          $ref: '#/components/schemas/ScanStatus'
+        automation:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationTask'
+        current:
+          oneOf:
+          - $ref: '#/components/schemas/CandidateSnapshot'
+          - type: 'null'
+        active_command:
+          oneOf:
+          - $ref: '#/components/schemas/Command'
+          - type: 'null'
+        last_alert:
+          oneOf:
+          - $ref: '#/components/schemas/Alert'
+          - type: 'null'
+        last_summary:
+          oneOf:
+          - $ref: '#/components/schemas/SummaryHeader'
+          - type: 'null'
+        websocket_event_id:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    CandidateDetail:
+      type: object
+      required:
+      - snapshot_id
+      - candidate
+      - selection_decision
+      - audit
+      properties:
+        snapshot_id:
+          type: integer
+        candidate:
+          $ref: '#/components/schemas/Candidate'
+        selection_decision:
+          type: string
+        audit:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    HistoryItem:
+      type: object
+      required:
+      - snapshot_id
+      - generated_at
+      - health
+      - overall_weak
+      - candidates
+      properties:
+        snapshot_id:
+          type: integer
+        generated_at:
+          type: string
+          format: date-time
+        health:
+          type: string
+        overall_weak:
+          type: boolean
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/Candidate'
+      additionalProperties: false
+    Alert:
+      type: object
+      required:
+      - alert_id
+      - snapshot_id
+      - displayed_at
+      - trigger_type
+      - decision
+      - channel
+      properties:
+        alert_id:
+          type: integer
+        snapshot_id:
+          type: integer
+        displayed_at:
+          type: string
+          format: date-time
+        trigger_type:
+          type: string
+          enum:
+          - scheduled-09:45
+          - scheduled-14:45
+          - intraday
+        decision:
+          type: string
+        channel:
+          type: string
+        triggering_codes:
+          type: array
+          items:
+            type: string
+        strength:
+          type:
+          - number
+          - 'null'
+        funds_unconfirmed:
+          type:
+          - boolean
+          - 'null'
+      additionalProperties: false
+    SummaryHeader:
+      type: object
+      required:
+      - trade_date
+      - generated_at
+      - version
+      - catch_up
+      - report_mode
+      - pdf_available
+      properties:
+        trade_date:
+          type: string
+          format: date
+        generated_at:
+          type: string
+          format: date-time
+        version:
+          type: string
+        catch_up:
+          type: boolean
+        report_mode:
+          type: string
+          enum:
+          - full_market
+          - local_fallback
+        pdf_available:
+          type: boolean
+        source_commit:
+          type: string
+      additionalProperties: false
+    SummaryDetail:
+      allOf:
+      - $ref: '#/components/schemas/SummaryHeader'
+      - type: object
+        properties:
+          summary_text:
+            type: string
+          top_sectors:
+            type: array
+            items:
+              type: object
+              additionalProperties: true
+          repeated_candidates:
+            type: array
+            items:
+              type: object
+              additionalProperties: true
+          closing_performance:
+            type: array
+            items:
+              type: object
+              additionalProperties: true
+          manifest:
+            type: object
+            additionalProperties: true
+    Command:
+      type: object
+      required:
+      - command_id
+      - command_type
+      - status
+      - requested_at
+      - attempts
+      - coalesced
+      properties:
+        command_id:
+          type: string
+        command_type:
+          type: string
+          enum:
+          - manual_refresh
+          - universe_refresh
+          - token_test
+          - token_update
+          - summary_generate
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - cancelled
+          - expired
+        requested_at:
+          type: string
+          format: date-time
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        completed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        attempts:
+          type: integer
+          minimum: 0
+        coalesced:
+          type: boolean
+        result:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+        error:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+      additionalProperties: false
+    PagedHistory:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryItem'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    PagedAlerts:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    PagedSummaries:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SummaryHeader'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    TokenInput:
+      type: object
+      required:
+      - token
+      properties:
+        token:
+          type: string
+          minLength: 8
+          maxLength: 4096
+          writeOnly: true
+      additionalProperties: false
+    TokenCommandResponse:
+      type: object
+      required:
+      - command
+      - fingerprint
+      properties:
+        command:
+          $ref: '#/components/schemas/Command'
+        fingerprint:
+          type: string
+          pattern: ^[a-f0-9]{8}$
+      additionalProperties: false
+    UserCreate:
+      type: object
+      required:
+      - username
+      - password
+      - role
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          minLength: 12
+          writeOnly: true
+        role:
+          type: string
+          enum:
+          - tester
+          - admin
+      additionalProperties: false
+    UserPatch:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+          - tester
+          - admin
+        active:
+          type: boolean
+        password:
+          type: string
+          minLength: 12
+          writeOnly: true
+        revoke_sessions:
+          type: boolean
+      minProperties: 1
+      additionalProperties: false
+    Diagnostics:
+      type: object
+      required:
+      - source_commit
+      - schema_version
+      - worker
+      - database
+      - data_sources
+      properties:
+        source_commit:
+          type: string
+        image_digest:
+          type:
+          - string
+          - 'null'
+        schema_version:
+          type: integer
+        worker:
+          type: object
+          additionalProperties: true
+        database:
+          type: object
+          additionalProperties: true
+        data_sources:
+          type: object
+          additionalProperties: true
+        automation:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationTask'
+        cache:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    ScanRun:
+      type: object
+      required:
+      - scan_id
+      - started_at
+      - completed_at
+      - trigger_type
+      - health
+      properties:
+        scan_id:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        trigger_type:
+          type: string
+        health:
+          type: string
+        coverage_ratio:
+          type:
+          - number
+          - 'null'
+        elapsed_seconds:
+          type:
+          - number
+          - 'null'
+        source_age_seconds:
+          type:
+          - number
+          - 'null'
+      additionalProperties: false
+    PagedScanRuns:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScanRun'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    AuditDetail:
+      type: object
+      required:
+      - scan_id
+      - audit
+      properties:
+        scan_id:
+          type: integer
+        raw_top20:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        raw_top3:
+          type: array
+          items:
+            $ref: '#/components/schemas/Candidate'
+        stable_top3:
+          type: array
+          items:
+            $ref: '#/components/schemas/Candidate'
+        excluded_counts:
+          type: object
+          additionalProperties:
+            type: integer
+        audit:
+          type: object
+          additionalProperties: true
+      additionalProperties: false

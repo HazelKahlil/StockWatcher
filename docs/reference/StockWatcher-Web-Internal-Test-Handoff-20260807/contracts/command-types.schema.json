@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockwatcher.invalid/schemas/command-types.schema.json",
+  "title": "StockWatcher durable command creation",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/manualRefresh"
+    },
+    {
+      "$ref": "#/$defs/universeRefresh"
+    },
+    {
+      "$ref": "#/$defs/tokenTest"
+    },
+    {
+      "$ref": "#/$defs/tokenUpdate"
+    },
+    {
+      "$ref": "#/$defs/summaryGenerate"
+    }
+  ],
+  "$defs": {
+    "common": {
+      "type": "object",
+      "required": [
+        "command_id",
+        "command_type",
+        "requested_by",
+        "requested_at",
+        "idempotency_key",
+        "payload"
+      ],
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "command_type": {
+          "type": "string"
+        },
+        "requested_by": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        },
+        "payload": {
+          "type": "object"
+        },
+        "secret_request_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "manualRefresh": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "properties": {
+            "command_type": {
+              "const": "manual_refresh"
+            },
+            "payload": {
+              "type": "object",
+              "maxProperties": 0
+            },
+            "secret_request_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "universeRefresh": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "properties": {
+            "command_type": {
+              "const": "universe_refresh"
+            },
+            "payload": {
+              "type": "object",
+              "properties": {
+                "force": {
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "secret_request_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "tokenTest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "required": [
+            "secret_request_id"
+          ],
+          "properties": {
+            "command_type": {
+              "const": "token_test"
+            },
+            "payload": {
+              "type": "object",
+              "maxProperties": 0
+            },
+            "secret_request_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      ]
+    },
+    "tokenUpdate": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "required": [
+            "secret_request_id"
+          ],
+          "properties": {
+            "command_type": {
+              "const": "token_update"
+            },
+            "payload": {
+              "type": "object",
+              "maxProperties": 0
+            },
+            "secret_request_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      ]
+    },
+    "summaryGenerate": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "properties": {
+            "command_type": {
+              "const": "summary_generate"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "trade_date"
+              ],
+              "properties": {
+                "trade_date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "force": {
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "secret_request_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

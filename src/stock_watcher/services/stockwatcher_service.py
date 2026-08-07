@@ -3,7 +3,7 @@
 This service is the single shared business owner for the Web Worker (and, in
 the future, the Mac UI adapter). It reuses the exact engine/runtime/storage
 modules the desktop session uses — no copied scoring, selection or policy
-rules. It never imports stock_watcher.ui, PySide6, pyobjc or keyring.
+rules. It never imports the desktop UI package, PySide6, pyobjc or keyring.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import json
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from time import monotonic as monotonic_time
@@ -221,9 +221,7 @@ class StockWatcherService:
         self.store = store
         self.config = config or ServiceConfig()
         if source_commit is not None:
-            self.config = ServiceConfig(
-                **{**self.config.__dict__, "source_commit": source_commit}
-            )
+            self.config = replace(self.config, source_commit=source_commit)
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._outbox = outbox or EventOutbox(
             store,

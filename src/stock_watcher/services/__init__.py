@@ -1,8 +1,8 @@
 """Headless services shared by the Web Worker and (future) Mac UI adapter.
 
 Dependency direction: server/ui -> services -> runtime/engine/providers/storage/domain.
-Nothing in this package imports stock_watcher.ui, PySide6, pyobjc, AppKit,
-Foundation or the macOS keyring backend.
+Nothing in this package imports the desktop UI package, PySide6,
+pyobjc, AppKit, Foundation or the macOS keyring backend.
 """
 from __future__ import annotations
 

@@ -61,10 +61,13 @@ class RateLimiter:
             backoff = min(300.0, 5.0 * (2 ** (len(events) - self.max_attempts)))
             self._blocked_until[key] = now + backoff
             raise AuthError("too many attempts; retry later", status_code=429)
-        events.append(now)
 
     def record_failure(self, key: str) -> None:
-        self.check(key)
+        now = time.monotonic()
+        events = self._events.setdefault(key, deque())
+        while events and now - events[0] > self.window_seconds:
+            events.popleft()
+        events.append(now)
 
     def retry_after(self, key: str) -> int:
         return max(0, int(self._blocked_until.get(key, 0.0) - time.monotonic()) + 1)
@@ -261,7 +264,7 @@ class AuthService:
             if now >= expires:
                 self.sessions.revoke(token)
                 return None
-        if not session["active"]:
+        if not session["active"] or session.get("revoked_at") is not None:
             self.sessions.revoke(token)
             return None
         self.sessions.touch(token, idle_minutes=self.idle_minutes)
