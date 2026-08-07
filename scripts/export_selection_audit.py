@@ -36,6 +36,14 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]])
             writer.writerow({key: row.get(key) for key in fieldnames})
 
 
+def _rank_value(row: dict[str, object]) -> int:
+    value = row.get("raw_rank")
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 10**9
+
+
 def _audits(rows: list[dict[str, object]]) -> list[tuple[dict[str, object], dict[str, object]]]:
     """Yield (scan, audit) pairs with parsed audit_json."""
     output: list[tuple[dict[str, object], dict[str, object]]] = []
@@ -118,21 +126,94 @@ def main() -> int:
             )
     _write_csv(args.output / "candidate-audit.csv", list(AUDIT_FIELDS), audit_rows)
 
-    # 3. raw-top20.csv
-    raw_fields = ["scan_id", "completed_at", "rank", "code", "name", "sector", "level"]
+    # 3. raw-top20.csv/json — true score-order Top20, one row per rank 1..20.
+    #    The legacy export wrote audit.raw_codes (the displayed Raw Top3) into
+    #    this file; that defect is fixed here and the displayed batch now has
+    #    its own explicit raw-top3.csv/json export below.
+    raw_fields = [
+        "scan_id",
+        "completed_at",
+        "rank",
+        "code",
+        "name",
+        "sector",
+        "sector_type",
+        "level",
+        "total_score",
+        "is_formal",
+        "velocity_available",
+        "selected_raw",
+        "selected_stable",
+        "decision",
+    ]
     raw_rows: list[dict[str, object]] = []
     for scan, audit in pairs:
-        raw_codes = audit.get("raw_codes", [])
-        for index, code in enumerate(raw_codes[:20], start=1):
+        candidates = sorted(
+            (row for row in audit.get("rows", []) if isinstance(row, dict)),
+            key=_rank_value,
+        )
+        for index, candidate in enumerate(candidates[:20], start=1):
             raw_rows.append(
                 {
                     "scan_id": scan["id"],
                     "completed_at": scan["completed_at"],
                     "rank": index,
-                    "code": code,
+                    **{
+                        key: candidate.get(key)
+                        for key in raw_fields
+                        if key not in {"scan_id", "completed_at", "rank"}
+                    },
                 }
             )
     _write_csv(args.output / "raw-top20.csv", raw_fields, raw_rows)
+    (args.output / "raw-top20.json").write_text(
+        json.dumps(raw_rows, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    # 3b. raw-top3.csv/json — the displayed Raw Top3 batch (audit.raw_codes),
+    #     enriched from the audit rows. This is the honest Raw Top3 export.
+    top3_fields = [
+        "scan_id",
+        "completed_at",
+        "rank",
+        "code",
+        "name",
+        "sector",
+        "sector_type",
+        "level",
+        "total_score",
+        "is_formal",
+        "velocity_available",
+        "decision",
+    ]
+    top3_rows: list[dict[str, object]] = []
+    for scan, audit in pairs:
+        indexed = {
+            str(row.get("code")): row
+            for row in audit.get("rows", [])
+            if isinstance(row, dict)
+        }
+        for index, code in enumerate(audit.get("raw_codes", [])[:3], start=1):
+            candidate = indexed.get(str(code), {})
+            top3_rows.append(
+                {
+                    "scan_id": scan["id"],
+                    "completed_at": scan["completed_at"],
+                    "rank": index,
+                    "code": code,
+                    **{
+                        key: candidate.get(key)
+                        for key in top3_fields
+                        if key not in {"scan_id", "completed_at", "rank", "code"}
+                    },
+                }
+            )
+    _write_csv(args.output / "raw-top3.csv", top3_fields, top3_rows)
+    (args.output / "raw-top3.json").write_text(
+        json.dumps(top3_rows, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
     # 4. stable-top3-timeline.csv
     stable_fields = ["scan_id", "completed_at", "rank", "code", "name", "decision"]

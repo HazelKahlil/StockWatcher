@@ -809,6 +809,9 @@ def test_export_selection_audit_generates_full_machine_readable_set(
         "scan-runs.csv",
         "candidate-audit.csv",
         "raw-top20.csv",
+        "raw-top20.json",
+        "raw-top3.csv",
+        "raw-top3.json",
         "stable-top3-timeline.csv",
         "excluded-candidates.csv",
         "automation-tasks.csv",
@@ -819,6 +822,15 @@ def test_export_selection_audit_generates_full_machine_readable_set(
     ]
     for name in expected:
         assert (output / name).is_file(), name
+    # The final exporter must emit a true 20-row Top20 and an explicit 3-row
+    # Raw Top3 instead of the legacy raw_codes[:20] (3-row) defect.
+    import csv as _csv
+
+    top20_rows = list(_csv.DictReader((output / "raw-top20.csv").open()))
+    top3_rows = list(_csv.DictReader((output / "raw-top3.csv").open()))
+    assert len(top20_rows) >= 20
+    assert len(top3_rows) == 3
+    assert [row["rank"] for row in top3_rows] == ["1", "2", "3"]
     alert_csv = (output / "alert-events.csv").read_text(encoding="utf-8")
     assert "600001" in alert_csv
     assert (output / "stable-top3-timeline.csv").read_text(encoding="utf-8").count("600001") >= 1
