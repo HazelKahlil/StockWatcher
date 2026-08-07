@@ -43,10 +43,11 @@ class SQLiteStore:
             connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
             connection.execute("PRAGMA foreign_keys=ON")
             return connection
-        connection = getattr(self._thread_local, "connection", None)
-        if connection is None:
-            connection = sqlite3.connect(self.path)  # type: ignore[assignment]
-            connection.execute("PRAGMA journal_mode=WAL")
+        existing = getattr(self._thread_local, "connection", None)
+        if existing is not None:
+            return existing
+        connection = sqlite3.connect(self.path)
+        connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA foreign_keys=ON")
