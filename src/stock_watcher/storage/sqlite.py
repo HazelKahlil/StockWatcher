@@ -48,10 +48,10 @@ class SQLiteStore:
             return existing
         connection = sqlite3.connect(self.path)
         connection.execute("PRAGMA journal_mode=WAL")
-            connection.execute("PRAGMA synchronous=NORMAL")
-            connection.execute("PRAGMA busy_timeout=5000")
-            connection.execute("PRAGMA foreign_keys=ON")
-            self._thread_local.connection = connection
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA foreign_keys=ON")
+        self._thread_local.connection = connection
         return connection
 
     @contextmanager
