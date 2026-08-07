@@ -5,13 +5,16 @@
   "shared_core": {
     "commit": "88ccf49f91fa814af83a004232315286feca3fb7",
     "status": "accepted",
-    "scope": "shared provider, runtime, engine, storage and deterministic replay baseline"
+    "scope": "shared provider, runtime, engine, storage and deterministic replay baseline",
+    "commit_role": "application_code_baseline"
   },
   "app_mac": {
     "commit": "88ccf49f91fa814af83a004232315286feca3fb7",
     "installed_path": "~/Applications/StockWatcher.app",
     "status": "internal_trial",
-    "source_commit_match": true,
+    "source_commit_match_main_governance_head": false,
+    "source_commit_matches_application_code_baseline": true,
+    "provenance_note": "governance-only consolidation commits are on top of the App code baseline; App was not overwritten",
     "architecture": "arm64",
     "signature": "ad-hoc",
     "executable_sha256": "b601b4584867f4c5acef5a6f164e4b0ef458e2ef7416cfd598e93a0a667552ed"

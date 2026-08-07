@@ -2,10 +2,10 @@
 
 ## Provenance
 
-- 权威 main：`88ccf49f91fa814af83a004232315286feca3fb7`。
+- 应用代码基线：`88ccf49f91fa814af83a004232315286feca3fb7`。
 - 安装路径：`~/Applications/StockWatcher.app`。
 - App 内 `Contents/Resources/stock_watcher/SOURCE_COMMIT`：`88ccf49f91fa814af83a004232315286feca3fb7`。
-- 结论：App 与 main 一致；没有覆盖或重装 App。
+- 结论：App 与应用代码基线一致；收口治理提交不改变 App，未覆盖或重装 App。
 - 可执行文件：arm64 Mach-O；SHA-256 `b601b4584867f4c5acef5a6f164e4b0ef458e2ef7416cfd598e93a0a667552ed`。
 - 签名：ad-hoc；`codesign --verify --deep --strict` 返回 0；不是 Developer ID/公证发布。
 - 当前 App 归档：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/app-mac/`。

@@ -15,7 +15,7 @@
 | 轨道 | 当前事实 | 状态 | 下一步 |
 | --- | --- | --- | --- |
 | Shared Core | Provider/Transport、全市场扫描、股票池/缓存、板块、1/3/5 分钟特征、CandidateEngine、StableTop3、StrongMovementDetector、固定时点、历史/总结、Selection Audit、SQLite/迁移均在 main | `accepted`（内部试用基线） | 继续 Mac 真实交易窗口验收，不改业务口径 |
-| Desktop App / Mac | `~/Applications/StockWatcher.app`；`SOURCE_COMMIT`=`88ccf49f...`，与 main 一致；arm64、ad-hoc 签名验证通过；可执行文件 SHA-256 见 `docs/tracks/app-mac.md` | `internal_trial` | 新鲜 09:45/14:45、15:30 准点、冷启动/睡眠/网络恢复补验 |
+| Desktop App / Mac | `~/Applications/StockWatcher.app`；`SOURCE_COMMIT`=`88ccf49f...`，与应用代码基线一致；治理文档提交不改 App；arm64、ad-hoc 签名验证通过；可执行文件 SHA-256 见 `docs/tracks/app-mac.md` | `internal_trial` | 新鲜 09:45/14:45、15:30 准点、冷启动/睡眠/网络恢复补验 |
 | Web 内部测试 | 分支 `web/internal-test-v1`，HEAD=`87a8b856...`，基线=`502a447...`；独立 worktree 在 `90-Archive/StockWatcher/00-current/web/` | `blocked / not_accepted` | 修复 validator 环境门，取得 VPS/域名授权后再做 Linux 与完整交易日验收；不得合入 main |
 | Windows | 只保留历史交接、现有 packaging/scripts 与规划文档；未创建未来活跃分支 | `planned` | 真正开始时从已验证 main HEAD 创建 `windows/internal-test-v1`，只做 Windows 平台适配和独立 Live 验收 |
 
