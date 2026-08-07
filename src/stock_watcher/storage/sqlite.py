@@ -45,7 +45,7 @@ class SQLiteStore:
             return connection
         existing = getattr(self._thread_local, "connection", None)
         if existing is not None:
-            return existing
+            return existing  # type: ignore[no-any-return]
         connection = sqlite3.connect(self.path)
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA synchronous=NORMAL")
