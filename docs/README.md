@@ -20,6 +20,11 @@
 交接基线的导入取舍、源哈希、阅读顺序和冲突优先级见 [reference/v2.0/README.md](reference/v2.0/README.md)。长期事实和版本 README 应引用原始基线，不复制整段需求。
 
 ## 当前导航
+- 收口总索引：[../PROJECT_INDEX.md](../PROJECT_INDEX.md) 与 [../CURRENT_RELEASES.json](../CURRENT_RELEASES.json)
+- 起始指南：[00-START-HERE.md](00-START-HERE.md)
+- 当前状态：[01-CURRENT-STATUS.md](01-CURRENT-STATUS.md)
+- 轨道状态：[tracks/app-mac.md](tracks/app-mac.md)、[tracks/web.md](tracks/web.md)、[tracks/windows.md](tracks/windows.md)
+- 归档与 worktree 规则：[operations/artifact-locations.md](operations/artifact-locations.md)、[operations/branch-and-worktree-policy.md](operations/branch-and-worktree-policy.md)
 
 - 长期事实：[project/index.md](project/index.md)
 - 规则入口：[process/index.md](process/index.md)

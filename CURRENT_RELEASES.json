@@ -1,0 +1,46 @@
+{
+  "generated_at": "2026-08-07",
+  "environment": "macOS arm64",
+  "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
+  "shared_core": {
+    "commit": "88ccf49f91fa814af83a004232315286feca3fb7",
+    "status": "accepted",
+    "scope": "shared provider, runtime, engine, storage and deterministic replay baseline"
+  },
+  "app_mac": {
+    "commit": "88ccf49f91fa814af83a004232315286feca3fb7",
+    "installed_path": "~/Applications/StockWatcher.app",
+    "status": "internal_trial",
+    "source_commit_match": true,
+    "architecture": "arm64",
+    "signature": "ad-hoc",
+    "executable_sha256": "b601b4584867f4c5acef5a6f164e4b0ef458e2ef7416cfd598e93a0a667552ed"
+  },
+  "web": {
+    "branch": "web/internal-test-v1",
+    "commit": "87a8b85609f57504861e09f416694582556b736e",
+    "base_commit": "502a447d7e593d638ea45518f2a5e4d4827f683f",
+    "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
+    "status": "blocked",
+    "release_status": "not_accepted",
+    "reason": "current macOS workspace validator failed on a broken .venv Playwright example link; VPS preflight and complete trading-day acceptance remain pending",
+    "pytest_full": {
+      "status": "pass_on_current_macos_worktree",
+      "passed": 391,
+      "skipped": 20,
+      "deselected": 2
+    },
+    "ruff": "pass",
+    "mypy": "pass",
+    "docker_compose_config": "pass_with_non_secret_audit_env",
+    "can_merge_main": false,
+    "deployed": false
+  },
+  "windows": {
+    "commit": null,
+    "status": "planned",
+    "future_branch": "windows/internal-test-v1",
+    "baseline_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
+    "acceptance": "not_started; historical result remains FAIL"
+  }
+}

@@ -15,6 +15,8 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
   稳定三只真实 A 股，并完成固定时点与强异动提醒、详情、30 天历史和收盘总结的真实验证。
 - Windows 真实验收仍为 `FAIL`：冻结基线在统一 Token 连接校验阶段收到 `rate_limited`，
   因而完整实时扫描轮次和真实 Top3 均为 0；Mac 结果不能替代 Windows 验收。
+- Web 独立内部测试线位于 `web/internal-test-v1`，当前 HEAD 为 `87a8b856...`，状态为 `BLOCKED / NOT_ACCEPTED`，不得合入 main 或称为已上线。
+- Web 当前 pytest 现场通过，但 workspace validator、VPS preflight 和完整交易日验收仍是阻塞门；详见 [Web 轨道](docs/tracks/web.md)。
 - 普通/历史数据使用内置 Tushare Pro 代理；主实时入口使用
   `tushare.realtime_quote(..., src="sina")`。两者共用系统安全存储中的一个 Token；Mac
   使用系统钥匙串，Windows 使用 Credential Manager。
@@ -30,12 +32,15 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 
 ## 从这里开始
 
-1. 阅读 [AGENTS.md](AGENTS.md)。
-2. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
-3. 阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
-   [共享连接门返修](docs/visions/v0.4.1-shared-connection-gate/README.md)；2026-07-30
-   Human Owner 的 Mac-first 交接包高于较早 Windows 排期中的冲突表述。
-4. 阅读 [数据规则](docs/process/rules/data.md) 和安全边界。
+1. 先阅读 [PROJECT_INDEX.md](PROJECT_INDEX.md) 和 [CURRENT_RELEASES.json](CURRENT_RELEASES.json)。
+2. 阅读 [AGENTS.md](AGENTS.md) 与 [docs/00-START-HERE.md](docs/00-START-HERE.md)。
+3. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
+4. 阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
+   [共享连接门返修](docs/visions/v0.4.1-shared-connection-gate/README.md)；Human Owner 的
+   Mac-first 决策高于较早 Windows 排期中的冲突表述。
+5. 需要 Web 时先读 [Web 轨道](docs/tracks/web.md)，需要 Windows 时先读
+   [Windows 轨道](docs/tracks/windows.md)。
+6. 开始真实数据工作前，读取 [数据规则](docs/process/rules/data.md) 和安全边界。
 
 ## 项目基线
 
