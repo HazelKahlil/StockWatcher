@@ -3,11 +3,6 @@ import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotification
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '健康', stale: '陈旧', stopped: '停止' };
 const marketLabels = { preopen: '盘前', morning: '上午盘', lunch: '午休', afternoon: '下午盘', closed: '休市' };
 
-function pillFor(state) {
-  const cls = ({ healthy: 'healthy', warming: 'warming', stale: 'stale', stopped: 'stopped' })[state] || 'warming';
-  return `<span class="pill pill-${cls}">${stateLabels[state] || state}</span>`;
-}
-
 function cardFor(candidate, state) {
   const formal = candidate.is_formal ? '' : ' <span class="weak-note">补位</span>';
   const weak = state.overall_weak ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '';
@@ -27,7 +22,11 @@ function cardFor(candidate, state) {
 
 function renderState(state) {
   const svc = document.getElementById('svc-state');
-  if (svc) svc.outerHTML = pillFor(state.service_state);
+  if (svc) {
+    const cls = ({ healthy: 'healthy', warming: 'warming', stale: 'stale', stopped: 'stopped' })[state.service_state] || 'warming';
+    svc.textContent = stateLabels[state.service_state] || state.service_state || '启动中';
+    svc.className = `pill pill-${cls}`;
+  }
   const market = document.getElementById('market-state');
   if (market) market.textContent = `市场：${marketLabels[state.market_state] || state.market_state || '—'}`;
   const lastScan = document.getElementById('last-scan');
