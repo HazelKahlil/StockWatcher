@@ -233,7 +233,6 @@ def state_router() -> APIRouter:
         # Rotate and return the plaintext CSRF value; only its hash is stored.
         from hashlib import sha256
 
-        token = request.cookies.get(SESSION_COOKIE_NAME)
         csrf = generate_opaque_token()
         with auth.sessions.store.transaction() as connection:
             connection.execute(
