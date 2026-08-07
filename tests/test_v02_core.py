@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,6 +22,10 @@ from stock_watcher.engine import (
 from stock_watcher.engine.candidates import CandidateBatch
 from stock_watcher.providers.tushare import Tushare15000Provider
 from stock_watcher.runtime import TushareV1Runtime
+from stock_watcher.runtime.continuity import (
+    analyze_scan_gaps,
+    continuity_gap_summary_parts,
+)
 from stock_watcher.security import MemoryCredentialStore
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
@@ -557,6 +563,70 @@ def _seed_healthy_scan_run(
         )
 
 
+def test_continuity_reports_lunch_and_hidden_afternoon_gap_independently() -> None:
+    """A long lunch must not hide a shorter but critical trading-session gap."""
+    lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
+    timestamps = [datetime.fromisoformat("2026-08-06T11:30:17+08:00")]
+    timestamps.extend(
+        lunch_end + timedelta(seconds=30 * index)
+        for index in range(112)
+    )
+    timestamps.extend(
+        [
+            datetime.fromisoformat("2026-08-06T13:55:58+08:00"),
+            datetime.fromisoformat("2026-08-06T14:38:11+08:00"),
+        ]
+    )
+
+    gaps = analyze_scan_gaps(timestamps)
+    rendered = "；".join(continuity_gap_summary_parts(gaps))
+
+    assert "最长无扫描间隔1小时29分48秒" in rendered
+    assert "午休" in rendered
+    assert "最长交易时段无扫描间隔42分13秒" in rendered
+    assert "13:55:58→14:38:11" in rendered
+    assert "交易时段超90秒空窗1段" in rendered
+
+
+def test_session_continuity_evidence_includes_every_reportable_trading_gap(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 8, 6, 15, 30, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "continuity.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
+        continuous = [
+            (lunch_end + timedelta(seconds=30 * index)).isoformat()
+            for index in range(112)
+        ]
+        _seed_healthy_scan_run(
+            session.store,
+            "2026-08-06",
+            [
+                "2026-08-06T11:30:17+08:00",
+                *continuous,
+                "2026-08-06T13:55:58+08:00",
+                "2026-08-06T14:38:11+08:00",
+            ],
+        )
+
+        evidence = session._collect_continuity_evidence("2026-08-06")
+
+        assert "最长交易时段无扫描间隔42分13秒" in evidence
+        assert "交易时段超90秒空窗1段" in evidence
+        assert "13:55:58→14:38:11" in evidence
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
 def test_summary_scheduler_runs_decoupled_from_scan_loop(tmp_path: Path) -> None:
     """check_automation_tasks reaches a terminal state without any scan."""
     now = datetime(2026, 8, 6, 15, 30, 0, tzinfo=SHANGHAI)
@@ -702,7 +772,19 @@ def test_strong_alert_fires_with_full_detail_when_ready(tmp_path: Path) -> None:
             strength=1.5,
             funds_unconfirmed=True,
         )
-        audit = SimpleNamespace(warmup_state="ready", display_velocity_ready=True, rows=())
+        audit = SimpleNamespace(
+            warmup_state="ready",
+            display_velocity_ready=True,
+            rows=(
+                SimpleNamespace(
+                    code="600001",
+                    name="触发样本",
+                    raw_rank=4,
+                    sector="测试概念",
+                    sector_type="concept",
+                ),
+            ),
+        )
         snapshot_id = session._evaluate_alerts(
             now, event, selection_audit=audit, scan_run_id=7
         )
@@ -715,6 +797,10 @@ def test_strong_alert_fires_with_full_detail_when_ready(tmp_path: Path) -> None:
         assert detail["feature_readiness"] == "ready"
         assert detail["source_scan_id"] == 7
         assert detail["cooldown_decision"] == "strong-movement"
+        pending = session.consume_pending_alert()
+        assert pending is not None
+        assert pending.title == "盘中强异动"
+        assert pending.subtitle.startswith("触发样本触发｜")
     finally:
         session.shutdown(exit_reason="menu_quit")
 
@@ -749,15 +835,38 @@ def test_export_selection_audit_generates_full_machine_readable_set(
             "task_key": None,
             "health": HealthState.HEALTHY.value,
             "detail": "正常",
-            "stable_batch_json": '{"candidates": []}',
+            "raw_batch_json": base.trace_payload(),
+            "stable_batch_json": base.trace_payload(),
             "audit_json": (
                 '{"warmup_state": "ready", "raw_codes": ["600001", "600002", "600003"], '
                 '"stable_codes": ["600001", "600002", "600003"], '
                 '"rows": [{"raw_rank": 1, "code": "600001", "name": "样本600001", '
-                '"sector": "模拟板块", "sector_type": "industry", "total_score": 50.0, '
-                '"level": "强", "is_formal": true, "velocity_available": true, '
+                '"sector": "模拟板块", "sector_code": "industry:模拟板块", '
+                '"sector_type": "industry", "total_score": 50.0, "core_score": 45.0, '
+                '"level": "强", "is_formal": true, "is_supplement": false, '
+                '"velocity_available": true, '
                 '"velocity_1m_pct": 1.2, "selected_raw": true, "selected_stable": true, '
-                '"decision": "displayed"}]}'
+                '"decision": "displayed"}, '
+                '{"raw_rank": 2, "code": "600002", "name": "样本600002", '
+                '"sector": "模拟板块2", "sector_code": "industry:模拟板块2", '
+                '"sector_type": "industry", "total_score": 49.0, "core_score": 44.0, '
+                '"level": "中", "is_formal": true, "is_supplement": false, '
+                '"velocity_available": true, "velocity_1m_pct": 1.0, '
+                '"selected_raw": true, "selected_stable": true, '
+                '"decision": "displayed"}, '
+                '{"raw_rank": 3, "code": "600003", "name": "样本600003", '
+                '"sector": "模拟板块3", "sector_code": "concept:模拟板块3", '
+                '"sector_type": "concept", "total_score": 48.0, "core_score": 43.0, '
+                '"level": "中", "is_formal": true, "is_supplement": false, '
+                '"velocity_available": true, "velocity_1m_pct": 0.9, '
+                '"selected_raw": true, "selected_stable": true, '
+                '"decision": "retained_by_stability"}, '
+                '{"raw_rank": 4, "code": "600004", "name": "样本600004", '
+                '"sector": "模拟板块4", "sector_code": "industry:模拟板块4", '
+                '"sector_type": "industry", "total_score": 47.0, "core_score": 42.0, '
+                '"level": "近", "is_formal": false, "is_supplement": true, '
+                '"velocity_available": false, "selected_raw": false, '
+                '"selected_stable": false, "decision": "supplement_below_cutoff"}]}'
             ),
         }
     )
@@ -787,6 +896,24 @@ def test_export_selection_audit_generates_full_machine_readable_set(
             "detail": "等待目标时间。",
         }
     )
+    (db.parent / "runtime-universe-v1.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-08-06T09:00:00+08:00",
+                "trend_through_date": "2026-08-05",
+                "universe": {
+                    "concept_loaded": True,
+                    "memberships": [
+                        {"sector_type": "industry"},
+                        {"sector_type": "concept"},
+                        {"sector_type": "concept"},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     script = ROOT / "scripts" / "export_selection_audit.py"
     module_name = "stockwatcher_test_export_audit"
@@ -808,20 +935,51 @@ def test_export_selection_audit_generates_full_machine_readable_set(
         "scan-runs.json",
         "scan-runs.csv",
         "candidate-audit.csv",
+        "candidate-audit.json",
         "raw-top20.csv",
+        "raw-top20.json",
         "stable-top3-timeline.csv",
+        "stable-top3-timeline.json",
         "excluded-candidates.csv",
+        "excluded-candidates.json",
         "automation-tasks.csv",
+        "automation-tasks.json",
         "runtime-sessions.csv",
+        "runtime-sessions.json",
         "scheduler-events.csv",
+        "scheduler-events.json",
         "cache-status.csv",
+        "cache-status.json",
         "alert-events.csv",
+        "alert-events.json",
     ]
     for name in expected:
         assert (output / name).is_file(), name
     alert_csv = (output / "alert-events.csv").read_text(encoding="utf-8")
     assert "600001" in alert_csv
-    assert (output / "stable-top3-timeline.csv").read_text(encoding="utf-8").count("600001") >= 1
+    raw_rows = list(csv.DictReader((output / "raw-top20.csv").open(encoding="utf-8")))
+    stable_rows = list(
+        csv.DictReader((output / "stable-top3-timeline.csv").open(encoding="utf-8"))
+    )
+    assert [row["code"] for row in raw_rows] == [
+        "600001",
+        "600002",
+        "600003",
+        "600004",
+    ]
+    assert all(row["name"] for row in raw_rows)
+    assert all(row["sector"] for row in raw_rows)
+    assert all(row["level"] for row in raw_rows)
+    assert [row["code"] for row in stable_rows] == ["600001", "600002", "600003"]
+    assert all(row["name"] for row in stable_rows)
+    assert all(row["decision"] for row in stable_rows)
+    cache_status = json.loads((output / "cache-status.json").read_text(encoding="utf-8"))
+    concept = next(row for row in cache_status if row["aspect"] == "concept_loaded")
+    assert concept["status"] is True
+    concept_memberships = next(
+        row for row in cache_status if row["aspect"] == "membership_count_concept"
+    )
+    assert concept_memberships["status"] == 2
 
 
 def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:

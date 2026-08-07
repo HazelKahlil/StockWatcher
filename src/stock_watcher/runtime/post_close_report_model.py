@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from stock_watcher.build_info import source_commit
+from stock_watcher.runtime.continuity import (
+    analyze_scan_gaps,
+    continuity_gap_summary_parts,
+)
 
 if TYPE_CHECKING:
     from stock_watcher.storage import SQLiteStore
@@ -195,16 +199,25 @@ def build_local_fallback_report(
     sessions = store.list_runtime_sessions(trade_date)
     sleep_count = 0
     wake_count = 0
+    runtime_events: list[dict[str, Any]] = []
     for session in sessions:
         for event in store.list_runtime_events(str(session.get("session_id", ""))):
             if not str(event.get("occurred_at", "")).startswith(trade_date):
                 continue
+            runtime_events.append(event)
             if event.get("event_type") == "sleep_detected":
                 sleep_count += 1
             elif event.get("event_type") == "wake_detected":
                 wake_count += 1
 
-    continuity = _continuity_text(summary, runs, sessions, sleep_count, wake_count)
+    continuity = _continuity_text(
+        summary,
+        runs,
+        sessions,
+        runtime_events,
+        sleep_count,
+        wake_count,
+    )
     report = LocalFallbackReport(
         trade_date=trade_date,
         generated_at=now.isoformat(),
@@ -235,9 +248,7 @@ def build_local_fallback_report(
                 "资金未确认，本日未把资金状态作为盘中增强依据。",
             )
         ),
-        summary_text=_without_summary_task_status(
-            str(summary.get("summary_text", ""))
-        ),
+        summary_text=_summary_text_with_current_continuity(summary, continuity),
     )
     validate_local_fallback_report(report)
     return report
@@ -360,12 +371,8 @@ def write_local_fallback_artifacts(
     md_path = reports_dir / f"{trade_date}-local-summary.md"
     pdf_path = reports_dir / f"{trade_date}-A股盘后回顾.pdf"
     source_record = dict(summary)
-    source_record["summary_text"] = _without_summary_task_status(
-        str(source_record.get("summary_text", ""))
-    )
-    source_record["health_summary"] = _without_summary_task_status(
-        str(source_record.get("health_summary", ""))
-    )
+    source_record["summary_text"] = report.summary_text
+    source_record["health_summary"] = report.continuity
     source_record.update(
         {
             "report_mode": "local_fallback",
@@ -615,23 +622,73 @@ def _continuity_text(
     summary: Mapping[str, Any],
     runs: list[dict[str, Any]],
     sessions: list[dict[str, Any]],
+    runtime_events: list[dict[str, Any]],
     sleep_count: int,
     wake_count: int,
 ) -> str:
-    saved = _without_summary_task_status(str(summary.get("health_summary", "")))
+    timestamps = [
+        parsed
+        for row in runs
+        if str(row.get("health", "")) == "HEALTHY"
+        and (parsed := _parse_datetime(row.get("completed_at"))) is not None
+    ]
+    gaps = analyze_scan_gaps(
+        timestamps,
+        runtime_sessions=sessions,
+        runtime_events=runtime_events,
+    )
     facts = [f"扫描轮数{len(runs)}轮"]
     if runs:
         healthy = sum(str(row.get("health")) == "HEALTHY" for row in runs)
         facts.append(f"成功扫描{healthy}轮")
+    facts.extend(continuity_gap_summary_parts(gaps))
     if sessions:
         facts.append(f"运行会话{len(sessions)}个")
+    if len(sessions) > 1:
+        facts.append(f"进程重启{len(sessions) - 1}次")
     if sleep_count:
         facts.append(f"睡眠{sleep_count}次")
     if wake_count:
         facts.append(f"唤醒{wake_count}次")
-    if saved:
-        facts.append(saved)
+    facts.extend(_saved_continuity_parts(str(summary.get("health_summary", ""))))
     return "；".join(dict.fromkeys(facts))
+
+
+def _summary_text_with_current_continuity(
+    summary: Mapping[str, Any],
+    continuity: str,
+) -> str:
+    """Replace stale embedded health facts with the recomputed continuity record."""
+
+    text = _without_summary_task_status(str(summary.get("summary_text", "")))
+    saved_health = _without_summary_task_status(str(summary.get("health_summary", "")))
+    if saved_health and text.endswith(saved_health):
+        text = text[: -len(saved_health)].rstrip("；。 ")
+    if not continuity:
+        return text
+    if not text:
+        return continuity
+    return f"{text}。{continuity}"
+
+
+def _saved_continuity_parts(value: str) -> list[str]:
+    cleaned = _without_summary_task_status(value)
+    prefixes = (
+        "最长无扫描间隔",
+        "最长交易时段无扫描间隔",
+        "交易时段超90秒空窗",
+        "扫描轮数",
+        "成功扫描",
+        "运行会话",
+        "进程重启",
+        "睡眠",
+        "唤醒",
+    )
+    return [
+        part.strip()
+        for part in cleaned.split("；")
+        if part.strip() and not part.strip().startswith(prefixes)
+    ]
 
 
 def _without_summary_task_status(value: str) -> str:
