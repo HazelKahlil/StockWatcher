@@ -360,6 +360,12 @@ def write_local_fallback_artifacts(
     md_path = reports_dir / f"{trade_date}-local-summary.md"
     pdf_path = reports_dir / f"{trade_date}-A股盘后回顾.pdf"
     source_record = dict(summary)
+    source_record["summary_text"] = _without_summary_task_status(
+        str(source_record.get("summary_text", ""))
+    )
+    source_record["health_summary"] = _without_summary_task_status(
+        str(source_record.get("health_summary", ""))
+    )
     source_record.update(
         {
             "report_mode": "local_fallback",

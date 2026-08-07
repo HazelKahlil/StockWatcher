@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -81,6 +82,10 @@ def test_local_fallback_real_fixture_uses_1445_top3_and_successful_timeline(
     assert "未分类" not in " ".join(candidate.sector or "" for candidate in report.top3)
 
     pdf = tmp_path / "reports/2026-08-06-A股盘后回顾.pdf"
+    source = tmp_path / "reports/2026-08-06-local-summary.json"
+    source_record = json.loads(source.read_text(encoding="utf-8"))
+    assert "15:30总结running" not in source_record["summary_text"]
+    assert "15:30总结running" not in source_record["health_summary"]
     assert pdf.read_bytes().count(b"/Type /Page\n") == 2
     if shutil.which("pdftotext") is None:
         pytest.skip("pdftotext is unavailable; semantic PDF text extraction is skipped")
