@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
+
+import pytest
 
 from stock_watcher.config import DataSourceConfigRepository
 from stock_watcher.security import (
+    PRIMARY_CREDENTIAL,
     SUPER_CREDENTIAL,
+    KeyringCredentialStore,
     MemoryCredentialStore,
     credential_fingerprint,
 )
@@ -36,6 +41,38 @@ def test_fingerprint_is_short_and_does_not_reveal_secret() -> None:
     fingerprint = credential_fingerprint(secret)
     assert len(fingerprint) == 8
     assert secret not in fingerprint
+
+
+def test_keyring_cache_reads_without_entering_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = KeyringCredentialStore(platform="darwin")
+    secret = "cache-only-secret"
+    store._cache(PRIMARY_CREDENTIAL, secret)
+
+    import stock_watcher.security.credential_store as credential_module
+
+    keyring_module = cast(Any, getattr(credential_module, "keyring"))
+    monkeypatch.setattr(
+        keyring_module,
+        "get_password",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("backend read")),
+    )
+
+    assert store.get(PRIMARY_CREDENTIAL) == secret
+    assert store.get_cached(PRIMARY_CREDENTIAL) == (True, secret)
+
+
+def test_keyring_cache_updates_on_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = KeyringCredentialStore(platform="darwin")
+    native_backend = type("Keyring", (), {"__module__": "keyring.backends.macOS"})()
+    import stock_watcher.security.credential_store as credential_module
+
+    keyring_module = cast(Any, getattr(credential_module, "keyring"))
+    monkeypatch.setattr(keyring_module, "get_keyring", lambda: native_backend)
+    monkeypatch.setattr(keyring_module, "delete_password", lambda *_args: None)
+    store._cache(PRIMARY_CREDENTIAL, "cache-only-secret")
+
+    assert store.delete(PRIMARY_CREDENTIAL)
+    assert store.get_cached(PRIMARY_CREDENTIAL) == (True, None)
 
 
 def test_failed_candidate_test_preserves_existing_credential() -> None:

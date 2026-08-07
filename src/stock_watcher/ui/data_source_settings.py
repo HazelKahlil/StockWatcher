@@ -103,9 +103,26 @@ class DataSourceSettingsController:
 
     def credential_present(self, name: str) -> bool:
         try:
-            return bool(self.store.get(self.reference(name)))
+            reference = self.reference(name)
+            if isinstance(self.store, KeyringCredentialStore):
+                cached, secret = self.store.get_cached(reference)
+                return cached and bool(secret)
+            return bool(self.store.get(reference))
         except Exception:
             return False
+
+    def credential_presence(self, name: str) -> str:
+        """Read credential presence without prompting the native Keychain."""
+        try:
+            reference = self.reference(name)
+            if isinstance(self.store, KeyringCredentialStore):
+                cached, secret = self.store.get_cached(reference)
+                if not cached:
+                    return "unknown"
+                return "present" if secret else "missing"
+            return "present" if self.store.get(reference) else "missing"
+        except Exception:
+            return "error"
 
     @property
     def credential_storage_label(self) -> str:
@@ -116,6 +133,15 @@ class DataSourceSettingsController:
         status = getattr(self.store, "backend_status", None)
         if not callable(status):
             return f"{self.credential_storage_label}已就绪"
+        if isinstance(self.store, KeyringCredentialStore):
+            # Status polling must never enter SecItemCopyMatching.  The actual
+            # backend validation happens only during an explicit save/delete.
+            cached, _ = self.store.get_cached(PRIMARY_CREDENTIAL)
+            return (
+                f"{self.credential_storage_label}已就绪"
+                if cached
+                else f"{self.credential_storage_label}等待后台检测"
+            )
         try:
             status()
         except Exception:

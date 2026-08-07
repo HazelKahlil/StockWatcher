@@ -9,10 +9,12 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from threading import Lock, current_thread
+from threading import Lock, Thread, current_thread
 from time import monotonic as monotonic_time
 from time import sleep as sleep_seconds
 from typing import cast
+
+from PySide6.QtCore import QTimer
 
 from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
@@ -133,6 +135,16 @@ class TushareV1Session:
         self.store.initialize()
         self.credential_store = credential_store or KeyringCredentialStore()
         self.settings = settings or DataSourceSettings()
+        self._credential_state = "unknown"
+        self._credential_error: str | None = None
+        self._primary_secret_snapshot: str | None = None
+        self._legacy_credential_present = False
+        self._credential_refresh_lock = Lock()
+        self._credential_refresh_in_flight = False
+        self._credential_refresh_generation = 0
+        self._credential_state_result: tuple[int, str, bool, bool, str | None] | None = None
+        self._credential_poll_timer: QTimer | None = None
+        self._credential_callback: Callable[[], None] | None = None
         self._request_budget = ApplicationRequestBudget(
             self.settings.request_budget_interval_seconds
         )
@@ -215,7 +227,11 @@ class TushareV1Session:
             "macos-desktop" if sys.platform == "darwin" else "windows-desktop"
         )
         self._start_runtime_session()
-        self._refresh_credential_state()
+        if not isinstance(self.credential_store, KeyringCredentialStore):
+            # In-memory stores are deterministic test/local stores; keep their
+            # existing synchronous behavior while native Keychain reads stay
+            # off the GUI startup path.
+            self._refresh_credential_state()
 
     def provider_changed(self, mode: DataSourceMode) -> None:
         self.settings = self.settings.model_copy(update={"mode": mode})
@@ -239,8 +255,103 @@ class TushareV1Session:
 
     @property
     def requires_data_source_setup(self) -> bool:
-        """Open the simple Token page on first macOS launch without a Token."""
-        return self.settings.mode is DataSourceMode.TUSHARE_15000 and not self._primary_present()
+        """Open setup only after the asynchronous native credential read finishes."""
+        if self.settings.mode is not DataSourceMode.TUSHARE_15000:
+            return False
+        if isinstance(self.credential_store, KeyringCredentialStore):
+            return self._credential_state == "missing"
+        # MemoryCredentialStore is synchronous and is used by deterministic
+        # local/replay tests; preserve its historical live presence semantics.
+        return not self._primary_present()
+
+    @property
+    def credential_state_ready(self) -> bool:
+        """Whether startup credential I/O has completed."""
+        return self._credential_state in {"present", "missing", "error"}
+
+    @property
+    def credential_state(self) -> str:
+        """Return the credential status without entering the native backend."""
+        return self._credential_state
+
+    @property
+    def credential_error(self) -> str | None:
+        """Return only a safe exception class name for diagnostics."""
+        return self._credential_error
+
+    def refresh_credential_state_async(self, callback: Callable[[], None] | None = None) -> None:
+        """Read native Keychain off the GUI thread and publish a memory snapshot."""
+        if not isinstance(self.credential_store, KeyringCredentialStore):
+            self._refresh_credential_state()
+            if callback is not None:
+                callback()
+            return
+
+        with self._credential_refresh_lock:
+            if self._credential_refresh_in_flight:
+                if callback is not None:
+                    self._credential_callback = callback
+                return
+            self._credential_refresh_in_flight = True
+            self._credential_refresh_generation += 1
+            generation = self._credential_refresh_generation
+            self._credential_state_result = None
+            self._credential_callback = callback
+            poll_timer = self._credential_poll_timer
+            if poll_timer is None:
+                poll_timer = QTimer()
+                poll_timer.setInterval(10)
+                poll_timer.timeout.connect(self._poll_credential_state)
+                self._credential_poll_timer = poll_timer
+            poll_timer.start()
+
+        def read() -> None:
+            primary_present = False
+            legacy_present = False
+            state = "missing"
+            error_name: str | None = None
+            try:
+                primary = self.credential_store.get(PRIMARY_CREDENTIAL)
+                legacy = None if primary else self.credential_store.get(FAST_CREDENTIAL)
+            except Exception as error:
+                state = "error"
+                error_name = type(error).__name__
+            else:
+                primary_present = bool(primary)
+                legacy_present = bool(legacy)
+                # A legacy value still requires explicit migration; it cannot
+                # silently become the production primary credential.
+                state = "present" if primary_present else "missing"
+            with self._credential_refresh_lock:
+                if generation != self._credential_refresh_generation:
+                    return
+                self._credential_state_result = (
+                    generation,
+                    state,
+                    primary_present,
+                    legacy_present,
+                    error_name,
+                )
+
+        Thread(target=read, name="stockwatcher-keychain", daemon=True).start()
+
+    def _poll_credential_state(self) -> None:
+        with self._credential_refresh_lock:
+            result = self._credential_state_result
+            if result is None:
+                return
+            self._credential_state_result = None
+            poll_timer = self._credential_poll_timer
+            if poll_timer is not None:
+                poll_timer.stop()
+        generation, state, primary_present, legacy_present, error_name = result
+        self._publish_credential_state(
+            generation,
+            state,
+            primary_present=primary_present,
+            legacy_present=legacy_present,
+            error_name=error_name,
+        )
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
@@ -449,6 +560,27 @@ class TushareV1Session:
             self.candidate_gate_label = "保留上次结果" if self.batch else "暂停"
             self.health_detail = self.connection_detail
             self.status_issues = (self.connection_detail,)
+            self._fail_fixed_task(fixed_task, now, self.connection_detail)
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail=self.connection_detail,
+                health=HealthState.WARMING,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
+            return None
+        if not self.credential_state_ready:
+            self._set_credential_pending()
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail=self.connection_detail,
+                health=HealthState.WARMING,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
+            return None
+        if self._credential_state == "error":
+            self._set_credential_error()
             self._fail_fixed_task(fixed_task, now, self.connection_detail)
             self._record_scan_skip(
                 now,
@@ -1435,7 +1567,22 @@ class TushareV1Session:
         )
 
     def _refresh_credential_state(self) -> None:
-        if self._primary_present():
+        if isinstance(self.credential_store, KeyringCredentialStore):
+            cached, secret = self.credential_store.get_cached(PRIMARY_CREDENTIAL)
+            if not cached:
+                self._credential_state = "unknown"
+                self._credential_error = None
+                self._primary_secret_snapshot = None
+                self._set_credential_pending()
+                return
+            self._primary_secret_snapshot = secret
+            self._credential_state = "present" if secret else "missing"
+        elif self._primary_present():
+            self._credential_state = "present"
+        else:
+            self._credential_state = "missing"
+        self._credential_error = None
+        if self._credential_state == "present":
             self.connection_state = TqConnectionState.CHECKING
             self.connection_detail = "Token已配置，等待实时检测。"
             self.status_issues = ()
@@ -1443,6 +1590,8 @@ class TushareV1Session:
             self._set_missing_credential()
 
     def _primary_secret(self) -> str | None:
+        if isinstance(self.credential_store, KeyringCredentialStore):
+            return self._primary_secret_snapshot
         try:
             return self.credential_store.get(PRIMARY_CREDENTIAL)
         except Exception:
@@ -1450,6 +1599,65 @@ class TushareV1Session:
 
     def _primary_present(self) -> bool:
         return bool(self._primary_secret())
+
+    def _set_credential_pending(self) -> None:
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.connection_detail = "正在读取系统钥匙串；读取完成前不会发起实时请求。"
+        self.data_gate_label = "正在读取凭据"
+        self.candidate_gate_label = "等待凭据检测"
+        self.health_detail = self.connection_detail
+        self.status_issues = ("Keychain 检查在后台执行，窗口保持可用。",)
+
+    def _set_credential_error(self) -> None:
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.DISCONNECTED
+        self.connection_detail = "系统钥匙串暂时不可用；未发起实时请求。"
+        self.data_gate_label = "钥匙串不可用"
+        self.candidate_gate_label = "等待钥匙串恢复"
+        self.health_detail = self.connection_detail
+        self.status_issues = (
+            "请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",
+        )
+
+    def _publish_credential_state(
+        self,
+        generation: int,
+        state: str,
+        *,
+        primary_present: bool,
+        legacy_present: bool,
+        error_name: str | None,
+    ) -> None:
+        with self._credential_refresh_lock:
+            if generation != self._credential_refresh_generation:
+                return
+            self._credential_refresh_in_flight = False
+            callback = self._credential_callback
+            self._credential_callback = None
+        self._credential_state = state
+        self._credential_error = error_name
+        self._legacy_credential_present = legacy_present
+        if primary_present:
+            cached, secret = cast(KeyringCredentialStore, self.credential_store).get_cached(
+                PRIMARY_CREDENTIAL
+            )
+            self._primary_secret_snapshot = secret if cached else None
+        else:
+            self._primary_secret_snapshot = None
+        if state == "present":
+            self.connection_state = TqConnectionState.CHECKING
+            self.connection_detail = "Token已配置，等待实时检测。"
+            self.data_gate_label = "等待检测"
+            self.candidate_gate_label = "等待实时扫描"
+            self.health_detail = "凭据读取完成，正在等待实时检测。"
+            self.status_issues = ()
+        elif state == "missing":
+            self._set_missing_credential()
+        else:
+            self._set_credential_error()
+        if callback is not None:
+            callback()
 
     def _apply_pending_platform_recovery(self) -> bool:
         with self._platform_recovery_lock:
@@ -1958,6 +2166,13 @@ class TushareV1Session:
                 self._active_scan_attempt_id = None
 
     def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+        with self._credential_refresh_lock:
+            self._credential_refresh_generation += 1
+            self._credential_refresh_in_flight = False
+            self._credential_state_result = None
+            self._credential_callback = None
+        if self._credential_poll_timer is not None:
+            self._credential_poll_timer.stop()
         if self._runtime_session_active:
             try:
                 self.store.end_runtime_session(
@@ -1974,10 +2189,12 @@ class TushareV1Session:
         self._universe_executor.shutdown(wait=False, cancel_futures=True)
 
     def _set_missing_credential(self) -> None:
-        try:
-            legacy_present = bool(self.credential_store.get(FAST_CREDENTIAL))
-        except Exception:
-            legacy_present = False
+        legacy_present = self._legacy_credential_present
+        if not isinstance(self.credential_store, KeyringCredentialStore):
+            try:
+                legacy_present = bool(self.credential_store.get(FAST_CREDENTIAL))
+            except Exception:
+                legacy_present = False
         self.state = HealthState.WARMING
         self.connection_state = TqConnectionState.DISCONNECTED
         self.connection_detail = "尚未设置统一 Tushare Token。"
@@ -2059,18 +2276,24 @@ def _runtime_factory(
     request_budget: ApplicationRequestBudget | None = None,
     universe_cache_path: Path | None = None,
 ) -> tuple[TushareV1Runtime, Tushare15000Provider]:
-    def secret_getter() -> str | None:
-        return credential_store.get(PRIMARY_CREDENTIAL)
+    def read_primary_secret() -> str | None:
+        if isinstance(credential_store, KeyringCredentialStore):
+            cached, secret = credential_store.get_cached(PRIMARY_CREDENTIAL)
+            return secret if cached else None
+        try:
+            return credential_store.get(PRIMARY_CREDENTIAL)
+        except Exception:
+            return None
 
     budget = request_budget or ApplicationRequestBudget(settings.request_budget_interval_seconds)
     pro = TushareSdkProTransport(
         settings.primary_profile,
-        secret_getter,
+        read_primary_secret,
         request_budget=budget,
     )
     realtime = NativeRealtimeTransport(
         settings.native_realtime_profile,
-        secret_getter,
+        read_primary_secret,
         request_budget=budget,
     )
     provider = Tushare15000Provider(pro, realtime)
