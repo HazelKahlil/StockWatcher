@@ -77,6 +77,22 @@ class PublicStateBuilder:
                 "overall_weak": bool(stored.get("overall_weak", False)),
                 "source_ts": public["source_ts"],
             }
+        if not payload["candidates"]:
+            latest = self.store.read_latest_snapshot_state()
+            if latest is not None:
+                payload.update(
+                    {
+                        "snapshot_id": latest["id"],
+                        "candidates": latest["candidates"],
+                        "overall_weak": latest["overall_weak"],
+                        "source_ts": latest["source_ts"],
+                        "candidates_source": "last_realtime_snapshot",
+                        "candidate_snapshot_generated_at": latest["generated_at"],
+                    }
+                )
+                stored.setdefault("fund_module", latest["fund_module"])
+                stored.setdefault("formal_count", latest["formal_count"])
+        payload.setdefault("candidates_source", "current_public_state")
         payload["updated_at"] = public["updated_at"] if public else None
         payload["worker_heartbeat_age_seconds"] = self._worker_heartbeat_age(
             worker_lease, now=now

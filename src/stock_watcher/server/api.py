@@ -178,7 +178,12 @@ def auth_router() -> APIRouter:
             status_code=200,
             content={"user": result["user"]},
         )
-        _set_session_cookie(response, str(result["token"]))
+        _set_session_cookie(
+            response,
+            str(result["token"]),
+            secure=_cookie_secure(request),
+            max_age_seconds=_session_cookie_max_age(request),
+        )
         return response
 
     @router.post("/logout")
@@ -203,16 +208,30 @@ def auth_router() -> APIRouter:
 
 
 def _cookie_secure(request: Request) -> bool:
-    return request.url.scheme == "https"
+    settings = getattr(request.app.state, "settings", None)
+    public_origin = str(getattr(settings, "public_origin", ""))
+    return request.url.scheme == "https" or public_origin.lower().startswith("https://")
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _session_cookie_max_age(request: Request) -> int:
+    settings = getattr(request.app.state, "settings", None)
+    absolute_hours = float(getattr(settings, "session_absolute_hours", 12.0))
+    return max(1, int(absolute_hours * 3600))
+
+
+def _set_session_cookie(
+    response: Response,
+    token: str,
+    *,
+    secure: bool,
+    max_age_seconds: int,
+) -> None:
     response.set_cookie(
         SESSION_COOKIE_NAME,
         token,
-        max_age=12 * 3600,
+        max_age=max_age_seconds,
         path="/",
-        secure=False,  # flipped to True when behind HTTPS (Caddy)
+        secure=secure,
         httponly=True,
         samesite="lax",
     )
@@ -764,11 +783,23 @@ def admin_router() -> APIRouter:
         password = payload.get("password")
         if role is not None and role not in {"tester", "admin"}:
             return error_response(request, "角色必须为 tester 或 admin", 400, "invalid_role")
+        if active is not None and not isinstance(active, bool):
+            return error_response(request, "active 必须为布尔值", 400, "invalid_active")
+        removes_active_admin = bool(target["active"]) and target["role"] == "admin" and (
+            role == "tester" or active is False
+        )
+        if removes_active_admin and users.count_active_admins() <= 1:
+            return error_response(
+                request,
+                "必须至少保留一个启用的管理员",
+                409,
+                "last_admin_required",
+            )
         updates: dict[str, Any] = {}
         if role is not None:
             updates["role"] = role
         if active is not None:
-            updates["active"] = bool(active)
+            updates["active"] = active
         if password:
             try:
                 updates["password_hash"] = auth.hash_password(str(password))

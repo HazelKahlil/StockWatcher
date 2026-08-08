@@ -1831,6 +1831,83 @@ class SQLiteStore:
             "payload_json": row[4],
         }
 
+    def read_latest_snapshot_state(self) -> dict[str, Any] | None:
+        """Read the newest persisted realtime snapshot and its three rows.
+
+        The worker may publish a transient empty public projection while it is
+        warming or restarting.  The dashboard must still be able to show the
+        last immutable realtime observation until a newer snapshot replaces it.
+        This query is deliberately read-only and does not initialize storage.
+        """
+        with self.connect() as connection:
+            snapshot = connection.execute(
+                "SELECT s.id, s.source_ts, s.generated_at, s.health, "
+                "s.overall_weak, s.payload_json "
+                "FROM candidate_snapshots AS s "
+                "WHERE EXISTS ("
+                "SELECT 1 FROM candidate_items AS i WHERE i.snapshot_id = s.id"
+                ") ORDER BY s.source_ts DESC, s.id DESC LIMIT 1"
+            ).fetchone()
+            if snapshot is None:
+                return None
+            rows = connection.execute(
+                "SELECT rank, code, name, level, is_formal, is_supplement, "
+                "price, change_pct, sector_code, sector_name, fund_label, "
+                "explanation, payload_json FROM candidate_items "
+                "WHERE snapshot_id = ? ORDER BY rank",
+                (snapshot[0],),
+            ).fetchall()
+
+        source_ts = str(snapshot[1])
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            item_payload: dict[str, Any] = {}
+            try:
+                parsed = json.loads(str(row[12]))
+                if isinstance(parsed, dict):
+                    item_payload = parsed
+            except json.JSONDecodeError:
+                pass
+            candidates.append(
+                {
+                    "rank": int(row[0]),
+                    "code": str(row[1]),
+                    "name": str(row[2]),
+                    "level": str(row[3]),
+                    "is_formal": bool(row[4]),
+                    "is_supplement": bool(row[5]),
+                    "price": row[6],
+                    "change_pct": row[7],
+                    "sector_code": str(row[8]),
+                    "sector_name": str(row[9]),
+                    "sector_type": str(item_payload.get("sector_type", "industry")),
+                    "fund_label": str(row[10]),
+                    "explanation": str(row[11]),
+                    "total_score": item_payload.get("total_score", 0.0),
+                    "source_ts": source_ts,
+                }
+            )
+
+        snapshot_payload: dict[str, Any] = {}
+        try:
+            parsed_snapshot = json.loads(str(snapshot[5]))
+            if isinstance(parsed_snapshot, dict):
+                snapshot_payload = parsed_snapshot
+        except json.JSONDecodeError:
+            pass
+        return {
+            "id": int(snapshot[0]),
+            "source_ts": source_ts,
+            "generated_at": snapshot[2],
+            "health": snapshot[3],
+            "overall_weak": bool(snapshot[4]),
+            "candidates": candidates,
+            "fund_module": snapshot_payload.get("fund_module", "unavailable"),
+            "formal_count": snapshot_payload.get(
+                "formal_count", sum(1 for candidate in candidates if candidate["is_formal"])
+            ),
+        }
+
     @staticmethod
     def upsert_public_state(
         connection: sqlite3.Connection,

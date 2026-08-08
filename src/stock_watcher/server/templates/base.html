@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}StockWatcher{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v=9">
 <meta name="color-scheme" content="light dark">
 {% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
 </head>
@@ -19,10 +19,9 @@
     <a href="/summary">盘后总结</a>
     {% if user.role == 'admin' %}<a href="/admin">管理</a>{% endif %}
   </nav>
-  <div class="account">
-    <span class="role-badge">{{ user.role }}</span>
-    <span>{{ user.username }}</span>
-    <button id="logout-btn" type="button" class="linklike">退出</button>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">{{ user.username }}</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
   </div>
   {% endif %}
 </header>
@@ -33,7 +32,7 @@
   只读观察 · 不连接交易账户 · 资金未确认不阻塞候选
 </footer>
 {% if user %}
-<script type="module" src="/static/app.js"></script>
+<script type="module" src="/static/app.js?v=5"></script>
 {% block scripts %}{% endblock %}
 {% endif %}
 </body>

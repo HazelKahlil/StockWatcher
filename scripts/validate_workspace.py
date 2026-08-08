@@ -43,6 +43,15 @@ EXPECTED_IMAGES = tuple(
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 
+# The vendored Playwright CLI guide includes a captured snapshot path from its
+# upstream example. The generated artifact is intentionally not part of this
+# workspace; keep the exception limited to that guide and its generated files.
+PLAYWRIGHT_CLI_EXAMPLE_GUIDE = (
+    ".venv/lib/python3.12/site-packages/playwright/driver/package/lib/tools/skills/"
+    "playwright-cli/SKILL.md"
+)
+PLAYWRIGHT_CLI_GENERATED_PREFIX = ".playwright-cli/"
+
 RETIRED_VERSION_PATHS = (
     ROOT / "docs" / "visions" / "v0.1-m0-data-gate",
     ROOT / "docs" / "visions" / "v0.2-alpha-core",
@@ -91,11 +100,17 @@ def main() -> int:
 
     for markdown_path in ROOT.rglob("*.md"):
         body = markdown_path.read_text(encoding="utf-8")
+        relative_markdown_path = markdown_path.relative_to(ROOT).as_posix()
         for raw_target in MARKDOWN_LINK.findall(body):
             target = raw_target.strip().strip("<>")
             if not target or target.startswith(("#", "http://", "https://", "mailto:")):
                 continue
             target = target.split("#", 1)[0]
+            if (
+                relative_markdown_path == PLAYWRIGHT_CLI_EXAMPLE_GUIDE
+                and target.startswith(PLAYWRIGHT_CLI_GENERATED_PREFIX)
+            ):
+                continue
             resolved = (markdown_path.parent / target).resolve()
             if not resolved.exists():
                 errors.append(

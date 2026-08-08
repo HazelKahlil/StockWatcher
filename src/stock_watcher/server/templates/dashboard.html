@@ -5,24 +5,82 @@
   <span id="svc-state" class="pill pill-warming">预热</span>
   <span id="market-state">—</span>
   <span id="last-scan" class="muted">尚未完成实时扫描</span>
-  <span id="ws-state" class="muted">连接中…</span>
+  <span id="ws-state" class="ws-status" data-state="connecting" role="status" aria-label="实时连接状态">
+    <span class="status-lamp" aria-hidden="true"></span>
+    <span class="status-label">连接中…</span>
+  </span>
   <span id="worker-age" class="muted"></span>
 </section>
 
 <section aria-label="今日自动任务" class="tasks" id="tasks"></section>
 
-<section aria-label="当前稳定 Top3" id="cards" class="cards" aria-live="polite">
-  <p class="muted">正在等待第一份健康快照…</p>
+<section class="hero-top3-section">
+  <div class="hero-header">
+    <div>
+      <h1 id="top3-title" class="hero-title">实时Top3</h1>
+      <p id="live-clock" class="live-clock" aria-live="off">当前时间同步中…</p>
+    </div>
+    <div class="hero-action-box">
+      <button id="manual-refresh" type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
+      <button id="notify-btn" type="button" class="btn-hero hero-action-button btn-notify" hidden>开启浏览器通知</button>
+      <div id="refresh-progress" class="refresh-progress" data-state="working" role="status" aria-live="polite" hidden>
+        <span class="refresh-spinner" aria-hidden="true"></span>
+        <span class="refresh-progress-copy">
+          <span id="refresh-progress-label" class="refresh-progress-label">准备刷新</span>
+          <span id="refresh-progress-elapsed" class="refresh-progress-elapsed">已用 0 秒</span>
+        </span>
+        <span class="refresh-progress-track" aria-hidden="true"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="cards" class="cards" aria-live="polite">
+    {% for rank in [1, 2, 3] %}
+    <article class="card placeholder-card" aria-label="等待抓取第 {{ rank }} 只候选">
+      <div class="card-top-tag">
+        <span class="rank rank-{{ rank }}-badge">0{{ rank }}</span>
+        <span class="level-tag level-placeholder">待抓取</span>
+        <span class="placeholder-state">
+          <span class="placeholder-state-label">等待数据</span>
+          <span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span>
+        </span>
+      </div>
+      <div class="card-stock-hero">
+        <div class="stock-display">
+          <div class="stock-name-row">
+            <h2 class="display-name placeholder-text">····</h2>
+            <span class="sector-tag placeholder-text">板块待抓取</span>
+          </div>
+          <div class="display-code-row">
+            <span class="display-code placeholder-text">······</span>
+          </div>
+        </div>
+      </div>
+      <div class="price-fund-block">
+        <div class="price-main">
+          <span class="ashare-price placeholder-text">--.--</span>
+          <span class="ashare-pct placeholder-text">--.--%</span>
+        </div>
+      </div>
+      <div class="card-footer">
+        <span class="placeholder-card-status">正在抓取</span>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
 </section>
 
-<section class="actions">
-  <button id="manual-refresh" type="button">立即获取最新3只</button>
-  <button id="notify-btn" type="button" hidden>开启浏览器通知</button>
-  <span id="command-state" class="muted" role="status"></span>
-</section>
-
-<section aria-label="详情" id="detail" hidden></section>
+<!-- Slide-out Candidate Inspection Drawer Overlay -->
+<div id="drawer-overlay" class="drawer-overlay" hidden>
+  <div class="drawer-content">
+    <div class="drawer-header">
+      <h3 class="drawer-title">候选因子审计</h3>
+      <button id="close-drawer-btn" type="button" class="drawer-close">关闭</button>
+    </div>
+    <div id="detail"></div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/dashboard.js"></script>
+<script type="module" src="/static/dashboard.js?v=7"></script>
 {% endblock %}

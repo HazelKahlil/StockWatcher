@@ -1,28 +1,32 @@
 {
-    email {$ACME_EMAIL}
-    admin off
+	email {$ACME_EMAIL}
+	admin off
 }
 
 {$DOMAIN} {
-    encode zstd gzip
+	encode zstd gzip
 
-    request_body {
-        max_size 1MB
-    }
+	request_body {
+		max_size 1MB
+	}
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; font-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'"
-        X-Content-Type-Options "nosniff"
-        Referrer-Policy "no-referrer"
-        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-        -Server
-    }
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; font-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		X-Permitted-Cross-Domain-Policies "none"
+		-Server
+	}
 
-    reverse_proxy web:8000
+	reverse_proxy web:8000
 
-    log {
-        output stdout
-        format json
-    }
+	log {
+		output stdout
+		format json
+	}
 }

@@ -1,7 +1,7 @@
 # web-internal-test-v1 — Web 内部试用版
 
 - 锚定提交：`502a447d7e593d638ea45518f2a5e4d4827f683f`（唯一业务基线，tag `mac-v1-reliability-rc3-20260806`）
-- 工作分支：`web/internal-test-v1-handoff`
+- 工作分支：`web/internal-test-v1`
 - 合同来源：交接包 `StockWatcher-Web-Internal-Test-Handoff-20260807`（00-17 文档 + contracts + database + deploy + tests + fixtures）
 - 拓扑冻结：`Browser -> Caddy -> FastAPI Web(1 进程) -> SQLite WAL <- 唯一 Worker`
 - 目标：2–5 名内部测试者、单域名、单实例、无自动交易
@@ -20,3 +20,28 @@
 - Live：VPS preflight 与完整交易日 18 条验收 pending（无 VPS/Token，不伪造）；
   通过等级 A。
 - 最终交付包：`../StockWatcher-Web-Internal-Test-Final-Handoff-20260807/`
+
+## 2026-08-08 本地部署前硬化
+
+- 托管路线复核：OpenAI Sites 使用 Cloudflare Worker/D1，无法原样运行本项目的 Python
+  FastAPI、Tushare SDK、常驻唯一 Worker 与 SQLite WAL 双进程拓扑；未创建只具备静态页面、
+  却不能真实扫描的 Sites 项目。保持冻结的专用 VPS Docker + Caddy 路线。
+- 安全修复：生产登录 Cookie 强制 `Secure + HttpOnly + SameSite=Lax`；生产环境关闭公开
+  OpenAPI；阻止停用或降权最后一个启用管理员；严格校验用户启用状态布尔值；补齐应用层
+  与 Caddy 安全响应头；移除会被 CSP 拦截的内联样式。
+- 镜像减面：一次性 `pip-audit` 只命中基础镜像自带 `pip 25.0.1`；生产运行阶段已移除全局
+  pip，重建后确认 `pip_present=false`，Web/Worker 模块仍可导入。Docker Scout 因本机未登录
+  Docker ID 未执行，基础系统镜像完整 CVE 扫描仍为部署前待办。
+- 本地验证：Web 回归 `38 passed / 5 skipped`；Ruff 全绿；Mypy `133 source files` 全绿；
+  全部原生 JS 语法、workspace validator 与 `git diff --check` 通过；Compose config 与 Caddy
+  validate 通过。
+- 双容器烟测：临时主密钥 + 临时 SQLite 下，Web ready、schema v7、唯一 Worker lease 与
+  心跳均正常；生产 Cookie 三项安全属性均为 true，应用安全头生效，生产 OpenAPI 返回 404。
+  临时容器、数据库和主密钥已销毁，仅保留本地预发布镜像
+  `sha256:040451e09ea42d3a3923ebe28ab48d67eb7eac27a78dad26d696178dae85dfcb`
+  （UID/GID `10001:10001`，dirty/preflight，不是发布镜像）。
+- 已生成本地不可变源码提交，并验证可用完整 40 位提交标签快速重建 UID/GID
+  `10001:10001` 的部署候选镜像；候选镜像未上传到任何远端仓库，最终摘要在部署交接中记录。
+- 仍未完成：VPS/DNS/TLS、首个管理员和 2–5 个测试者、
+  HTTPS 管理页加密录入 Token、VPS 出口 IP 数据源 preflight、完整交易日 18 条验收。
+  当前交付状态继续保持 `BLOCKED / NOT_ACCEPTED`。

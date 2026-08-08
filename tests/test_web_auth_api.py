@@ -67,6 +67,35 @@ def test_login_bad_credentials_and_rate_limit(
     assert response.status_code == 429
 
 
+def test_production_login_cookie_and_http_headers(tmp_path: Path) -> None:
+    settings = ServerSettings(
+        environment="production",
+        db_path=tmp_path / "db" / "production.db",
+        report_dir=tmp_path / "reports",
+        public_origin="https://stock.example.com",
+    )
+    app = create_app(settings)
+    app.state.auth.create_user(
+        username="secure-admin",
+        password="secure-admin-password",
+        role="admin",
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"username": "secure-admin", "password": "secure-admin-password"},
+    )
+    assert response.status_code == 200
+    cookie = response.headers["set-cookie"]
+    assert "Secure" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=lax" in cookie
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Cross-Origin-Opener-Policy"] == "same-origin"
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert client.get("/api/v1/openapi.json").status_code == 404
+
+
 def test_rbac_matrix(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
     app, _, _, admin, tester = app_env
     admin_client = TestClient(app)
@@ -153,6 +182,38 @@ def test_admin_user_management(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) 
         headers={"X-CSRF-Token": csrf},
     )
     assert bad.status_code == 400
+
+
+def test_last_active_admin_cannot_be_removed(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, _, admin, tester = app_env
+    client = TestClient(app)
+    csrf = login(client, "admin one", "admin-pass-12345")
+    for payload in ({"role": "tester"}, {"active": False}):
+        response = client.patch(
+            f"/api/v1/admin/users/{admin['user_id']}",
+            json=payload,
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "last_admin_required"
+    invalid = client.patch(
+        f"/api/v1/admin/users/{tester['user_id']}",
+        json={"active": "false"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert invalid.status_code == 400
+
+
+def test_dashboard_assets_have_no_inline_styles() -> None:
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "src/stock_watcher/server/templates/dashboard.html",
+        "src/stock_watcher/server/static/dashboard.js",
+    ):
+        content = (root / relative).read_text(encoding="utf-8")
+        assert 'style="' not in content
 
 
 def test_snapshot_bound_detail_race(

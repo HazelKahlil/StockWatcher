@@ -108,11 +108,31 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
-        openapi_url="/api/v1/openapi.json",
+        openapi_url=(
+            None
+            if app_settings.environment == "production"
+            else "/api/v1/openapi.json"
+        ),
     )
     for key, value in services.items():
         setattr(app.state, key, value)
     app.state.ws_manager = ws_manager
+
+    @app.middleware("http")
+    async def harden_http_responses(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        )
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        if not request.url.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "private, no-store")
+        return response
 
     for router in (
         auth_router(),

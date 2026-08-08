@@ -64,11 +64,17 @@ export function connectEvents() {
   ws = new WebSocket(`${protocol}://${window.location.host}/ws/v1/events?after_id=${lastEventId}`);
   const stateEl = document.getElementById('ws-state');
   const setState = (label, cls) => {
-    if (stateEl) { stateEl.textContent = label; stateEl.className = cls || 'muted'; }
+    if (!stateEl) return;
+    const state = cls === 'healthy' ? 'online' : cls === 'stale' ? 'stale' : 'connecting';
+    stateEl.dataset.state = state;
+    stateEl.setAttribute('aria-label', label);
+    const labelEl = stateEl.querySelector('.status-label');
+    if (labelEl) labelEl.textContent = label;
+    else stateEl.textContent = label;
   };
-  ws.addEventListener('open', () => setState('实时连接在线', 'pill pill-healthy'));
+  ws.addEventListener('open', () => setState('实时连接在线', 'healthy'));
   ws.addEventListener('close', () => {
-    setState('实时连接断开，重连中…', 'pill pill-stale');
+    setState('实时连接断开，重连中…', 'stale');
     setTimeout(connectEvents, 3000);
   });
   ws.addEventListener('message', (message) => {
@@ -106,7 +112,18 @@ export function esc(value) {
 
 export function fmtTime(value) {
   if (!value) return '—';
-  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
 // Logout (CSRF protected)

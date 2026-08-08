@@ -1,23 +1,184 @@
-import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js';
+import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=5';
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '健康', stale: '陈旧', stopped: '停止' };
 const marketLabels = { preopen: '盘前', morning: '上午盘', lunch: '午休', afternoon: '下午盘', closed: '休市' };
+const refreshStages = [
+  { maxSeconds: 2, label: '连接行情数据' },
+  { maxSeconds: 6, label: '扫描全市场候选' },
+  { maxSeconds: Infinity, label: '整理实时 Top3' },
+];
+let refreshProgressTimer = null;
+let refreshProgressHideTimer = null;
+
+function clearRefreshProgressTimers() {
+  if (refreshProgressTimer) {
+    clearInterval(refreshProgressTimer);
+    refreshProgressTimer = null;
+  }
+  if (refreshProgressHideTimer) {
+    clearTimeout(refreshProgressHideTimer);
+    refreshProgressHideTimer = null;
+  }
+}
+
+function updateRefreshProgress(startedAt, state = 'working', labelOverride = '') {
+  const progress = document.getElementById('refresh-progress');
+  if (!progress) return;
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const stage = refreshStages.find((item) => elapsedSeconds < item.maxSeconds) || refreshStages.at(-1);
+  progress.hidden = false;
+  progress.dataset.state = state;
+  const label = document.getElementById('refresh-progress-label');
+  const elapsed = document.getElementById('refresh-progress-elapsed');
+  if (label) label.textContent = labelOverride || stage.label;
+  if (elapsed) elapsed.textContent = `已用 ${elapsedSeconds} 秒`;
+}
+
+function beginRefreshProgress() {
+  clearRefreshProgressTimers();
+  const startedAt = Date.now();
+  updateRefreshProgress(startedAt);
+  refreshProgressTimer = setInterval(() => updateRefreshProgress(startedAt), 1000);
+  return startedAt;
+}
+
+function finishRefreshProgress(startedAt, state, label) {
+  if (!startedAt) return;
+  if (refreshProgressTimer) {
+    clearInterval(refreshProgressTimer);
+    refreshProgressTimer = null;
+  }
+  updateRefreshProgress(startedAt, state, label);
+  refreshProgressHideTimer = setTimeout(() => {
+    const progress = document.getElementById('refresh-progress');
+    if (progress) {
+      progress.hidden = true;
+      progress.dataset.state = 'idle';
+    }
+  }, 2200);
+}
+
+function resetRefreshButton(button) {
+  button.disabled = false;
+  button.classList.remove('is-working');
+  button.textContent = '立即获取最新 3 只';
+}
+
+function levelMeta(candidate) {
+  const raw = String(candidate.level || '');
+  if (raw.includes('强')) return { label: '强级', tone: 'strong' };
+  if (raw.includes('中')) return { label: '中级', tone: 'medium' };
+  return { label: candidate.is_formal ? '近级' : '近级补位', tone: 'near' };
+}
+
+function placeholderCard(rank) {
+  const rankStr = String(rank).padStart(2, '0');
+  return `
+  <article class="card placeholder-card" aria-label="等待抓取第 ${rank} 只候选">
+    <div class="card-top-tag">
+      <span class="rank rank-${rank}-badge">${rankStr}</span>
+      <span class="level-tag level-placeholder">待抓取</span>
+    <span class="placeholder-state">
+      <span class="placeholder-state-label">等待数据</span>
+      <span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span>
+    </span>
+    </div>
+
+    <div class="card-stock-hero">
+      <div class="stock-display">
+        <div class="stock-name-row">
+          <h2 class="display-name placeholder-text">····</h2>
+          <span class="sector-tag placeholder-text">板块待抓取</span>
+        </div>
+        <div class="display-code-row">
+          <span class="display-code placeholder-text">······</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="price-fund-block">
+      <div class="price-main">
+        <span class="ashare-price placeholder-text">--.--</span>
+        <span class="ashare-pct placeholder-text">--.--%</span>
+      </div>
+    </div>
+
+    <div class="card-footer">
+      <span class="placeholder-card-status">正在抓取</span>
+    </div>
+  </article>`;
+}
 
 function cardFor(candidate, state) {
-  const formal = candidate.is_formal ? '' : ' <span class="weak-note">补位</span>';
-  const weak = state.overall_weak ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '';
+  const isRank1 = candidate.rank === 1;
+  const level = levelMeta(candidate);
+  const formal = candidate.is_formal ? '<span class="formal-pill">正式候选</span>' : '<span class="weak-note">补位</span>';
+  const price = Number(candidate.price).toFixed(2);
+  const changePct = Number(candidate.change_pct);
+  const pctStr = (changePct > 0 ? '+' : '') + changePct.toFixed(2) + '%';
+  const rankStr = String(candidate.rank).padStart(2, '0');
+
   return `
-  <article class="card">
-    <h3><span class="rank">${candidate.rank}</span>${esc(candidate.code)} · ${esc(candidate.name)}${formal}
-      <span class="level-${esc(candidate.level)}">${esc(candidate.level)}</span></h3>
-    <dl class="kv">
-      <dt>价格</dt><dd>${Number(candidate.price).toFixed(2)}（${Number(candidate.change_pct).toFixed(2)}%）</dd>
-      <dt>板块</dt><dd>${esc(candidate.sector_name || '—')}${candidate.sector_type ? `（${esc(candidate.sector_type)}）` : ''}</dd>
-      <dt>综合分</dt><dd>${Number(candidate.total_score).toFixed(2)}</dd>
-      <dt>资金</dt><dd>${esc(candidate.fund_label || '未确认')}</dd>
-    </dl>
-    <button type="button" data-detail="${esc(candidate.code)}">查看详情</button>
+  <article class="card ${isRank1 ? 'rank-1-card' : ''}">
+    <div class="card-top-tag">
+      <span class="rank rank-${candidate.rank}-badge">${rankStr}</span>
+      <span class="level-tag level-${level.tone}">${esc(level.label)}</span>
+      ${formal}
+    </div>
+
+    <div class="card-stock-hero">
+      <div class="stock-display">
+        <div class="stock-name-row">
+          <h2 class="display-name">${esc(candidate.name)}</h2>
+          ${candidate.sector_name ? `<span class="sector-tag">${esc(candidate.sector_name)}</span>` : ''}
+        </div>
+        <div class="display-code-row">
+          <span class="display-code">${esc(candidate.code)}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="price-fund-block">
+      <div class="price-main">
+        <span class="ashare-price">¥${price}</span>
+        <span class="ashare-pct">${pctStr}</span>
+      </div>
+    </div>
+
+    <div class="card-footer">
+      <div class="metric-row">
+        <span>得分 <strong>${Number(candidate.total_score).toFixed(1)}</strong></span>
+        <span>阶段 <strong>${esc(level.label)}</strong></span>
+      </div>
+      <button type="button" class="btn-detail" data-detail="${esc(candidate.code)}">因子审计</button>
+    </div>
   </article>`;
+}
+
+function liveDateTimeLabel() {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return {
+    date: `${values.year}年${values.month}月${values.day}日`,
+    dateTime: `${values.year}年${values.month}月${values.day}日 ${values.hour}:${values.minute}:${values.second}`,
+  };
+}
+
+function updateLiveClock() {
+  const { date, dateTime } = liveDateTimeLabel();
+  const title = document.getElementById('top3-title');
+  if (title) title.textContent = `${date} 实时Top3`;
+  const clock = document.getElementById('live-clock');
+  if (clock) clock.textContent = `当前时间 ${dateTime}`;
 }
 
 function renderState(state) {
@@ -32,11 +193,16 @@ function renderState(state) {
   const lastScan = document.getElementById('last-scan');
   if (lastScan && state.last_scan) {
     lastScan.textContent = `最后扫描 ${fmtTime(state.last_scan.completed_at)} · 覆盖 ${(state.last_scan.coverage_ratio * 100).toFixed(1)}% · 耗时 ${Number(state.last_scan.elapsed_seconds).toFixed(1)}s`;
+  } else if (lastScan && state.source_ts) {
+    lastScan.textContent = `最后扫描 ${fmtTime(state.source_ts)} · 使用上一份实时结果`;
+  } else if (lastScan) {
+    lastScan.textContent = '尚未完成实时扫描';
   }
   const workerAge = document.getElementById('worker-age');
   if (workerAge && state.worker_heartbeat_age_seconds != null) {
     workerAge.textContent = `Worker心跳 ${Math.round(state.worker_heartbeat_age_seconds)}s 前`;
   }
+  updateLiveClock();
   const tasks = document.getElementById('tasks');
   if (tasks) {
     const list = state.tasks || [];
@@ -46,36 +212,54 @@ function renderState(state) {
   }
   const cards = document.getElementById('cards');
   if (cards) {
-    const candidates = state.candidates || [];
-    cards.innerHTML = candidates.length
-      ? candidates.map((candidate) => cardFor(candidate, state)).join('') + (state.overall_weak ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '')
-      : '<p class="muted">尚未形成合规三只；请等待健康快照或执行人工刷新。</p>';
+    const candidates = Array.isArray(state.candidates) ? state.candidates : [];
+    const candidatesByRank = new Map(candidates.map((candidate) => [Number(candidate.rank), candidate]));
+    const cardsMarkup = [1, 2, 3].map((rank) => {
+      const candidate = candidatesByRank.get(rank);
+      return candidate ? cardFor(candidate, state) : placeholderCard(rank);
+    }).join('');
+    cards.innerHTML = cardsMarkup + (state.overall_weak && candidates.length ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '');
   }
 }
 
 function showDetail(code, state) {
   const snapshotId = state.snapshot_id;
-  if (snapshotId == null) { return; }
+
+  function renderDetailPayload(candidate, snapId, srcTs) {
+    const detailLevel = levelMeta(candidate);
+    const overlay = document.getElementById('drawer-overlay');
+    const box = document.getElementById('detail');
+    if (overlay) overlay.hidden = false;
+    if (box) {
+      box.hidden = false;
+      box.innerHTML = `
+        <h2 class="display-name detail-stock-name">${esc(candidate.name)}</h2>
+        <div class="display-code detail-stock-code">${esc(candidate.code)} · ${esc(candidate.sector_name || '—')}</div>
+        <dl class="kv">
+          <dt>快照</dt><dd>#${snapId || 'DEMO'} @ ${srcTs ? fmtTime(srcTs) : '样板时间'}</dd>
+          <dt>级别</dt><dd>${esc(detailLevel.label)}${candidate.is_formal ? ' · 正式' : ' · 补位'}</dd>
+          <dt>板块</dt><dd>${esc(candidate.sector_name || '—')}</dd>
+          <dt>核心得因</dt><dd>${esc(candidate.explanation || '—')}</dd>
+          <dt>因子 JSON</dt><dd><pre class="table-wrap detail-factor-json">${esc(candidate.payload_json || '')}</pre></dd>
+        </dl>`;
+    }
+  }
+
+  if (snapshotId == null) return;
+
   apiJson(`/api/v1/candidates/${encodeURIComponent(code)}?snapshot_id=${snapshotId}`)
     .then((detail) => {
-      const box = document.getElementById('detail');
-      box.hidden = false;
-      const candidate = detail.candidate || {};
-      box.innerHTML = `
-        <h2>详情 · ${esc(candidate.code)} ${esc(candidate.name)}</h2>
-        <dl class="kv">
-          <dt>快照</dt><dd>#${detail.snapshot_id} @ ${fmtTime(detail.source_ts)}</dd>
-          <dt>级别</dt><dd>${esc(candidate.level)}${candidate.is_formal ? ' · 正式' : ' · 补位'}</dd>
-          <dt>板块</dt><dd>${esc(candidate.sector_name || '—')}（${esc(candidate.sector_code || '—')}）</dd>
-          <dt>解释</dt><dd>${esc(candidate.explanation || '—')}</dd>
-          <dt>原始数据</dt><dd><pre class="table-wrap">${esc(candidate.payload_json || '')}</pre></dd>
-        </dl>`;
+      renderDetailPayload(detail.candidate || {}, detail.snapshot_id, detail.source_ts);
     })
     .catch((error) => {
-      if (error.status === 409) {
-        const box = document.getElementById('detail');
+      const overlay = document.getElementById('drawer-overlay');
+      const box = document.getElementById('detail');
+      if (overlay) overlay.hidden = false;
+      if (box) {
         box.hidden = false;
-        box.innerHTML = '<p class="weak-note">当前列表已更新：该详情绑定的是旧快照，请重新打开。</p>';
+        box.innerHTML = error.status === 409
+          ? '<p class="weak-note">当前列表已更新：该详情绑定的是旧快照，请重新打开。</p>'
+          : `<p class="error">加载详情失败：${esc(error.message)}</p>`;
       }
     });
 }
@@ -88,6 +272,8 @@ async function loadState() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  updateLiveClock();
+  setInterval(updateLiveClock, 1000);
   await loadState();
   connectEvents();
   onEvent((event) => {
@@ -99,39 +285,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   const refreshButton = document.getElementById('manual-refresh');
-  const commandState = document.getElementById('command-state');
   refreshButton.addEventListener('click', async () => {
+    const startedAt = beginRefreshProgress();
     refreshButton.disabled = true;
-    commandState.textContent = '正在排队…';
+    refreshButton.classList.add('is-working');
+    refreshButton.textContent = '正在获取最新 3 只';
+    let pollTimer = null;
+    const stopPolling = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+    const finish = async (state, label, shouldLoadState = false) => {
+      stopPolling();
+      finishRefreshProgress(startedAt, state, label);
+      resetRefreshButton(refreshButton);
+      if (shouldLoadState) await loadState();
+    };
     try {
       const result = await apiJson('/api/v1/commands/manual-refresh', {
         method: 'POST',
         headers: { 'Idempotency-Key': `manual-${Date.now()}` },
         body: '{}',
       });
-      commandState.textContent = `命令 ${result.command_id}：${result.status}${result.coalesced ? '（已合并到进行中的刷新）' : ''}，目标 60 秒`;
       const commandId = result.command_id;
-      const started = Date.now();
-      const timer = setInterval(async () => {
+      const poll = async () => {
         try {
           const command = await apiJson(`/api/v1/commands/${commandId}`);
-          commandState.textContent = `命令 ${commandId}：${command.status}`;
-          if (command.status === 'succeeded' || command.status === 'failed') {
-            clearInterval(timer);
-            refreshButton.disabled = false;
-            await loadState();
-          } else if (Date.now() - started > 75000) {
-            clearInterval(timer);
-            refreshButton.disabled = false;
+          if (command.status === 'succeeded') {
+            await finish('done', '实时 Top3 已更新', true);
+          } else if (command.status === 'failed') {
+            await finish('failed', '刷新未完成，请稍后重试');
+          } else if (Date.now() - startedAt > 75000) {
+            await finish('timeout', '仍在处理，请稍后查看');
           }
         } catch {
-          clearInterval(timer);
-          refreshButton.disabled = false;
+          await finish('failed', '刷新连接中断，请稍后重试');
         }
-      }, 2000);
-    } catch (error) {
-      commandState.textContent = error.message;
-      refreshButton.disabled = false;
+      };
+      pollTimer = setInterval(poll, 2000);
+      await poll();
+    } catch {
+      await finishRefreshProgress(startedAt, 'failed', '刷新请求未开始');
+      resetRefreshButton(refreshButton);
     }
   });
   const notifyButton = document.getElementById('notify-btn');
@@ -145,5 +342,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!button) return;
     apiJson('/api/v1/state').then((state) => showDetail(button.dataset.detail, state));
   });
+  const closeBtn = document.getElementById('close-drawer-btn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      const overlay = document.getElementById('drawer-overlay');
+      if (overlay) overlay.hidden = true;
+    });
+  }
   setInterval(loadState, 30000);
 });
