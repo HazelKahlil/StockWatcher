@@ -2,8 +2,7 @@
 {% block title %}登录 · StockWatcher{% endblock %}
 {% block content %}
 <section class="login-card" aria-labelledby="login-title">
-  <h1 id="login-title">StockWatcher 内部试用</h1>
-  <p class="muted">仅限受邀测试者；凭据只经 HTTPS 提交。</p>
+  <h1 id="login-title">StockWatcher Login</h1>
   <form id="login-form" method="post" action="/api/v1/auth/login" novalidate>
     <label for="username">用户名</label>
     <input id="username" name="username" autocomplete="username" required autofocus>
