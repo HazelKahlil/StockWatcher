@@ -27,6 +27,7 @@ class SQLiteStore:
     last_recovery: dict[str, object] | None = None
     _integrity_verified_version: int | None = None
     _wal_configured: bool = False
+    _wal_lock: threading.Lock = field(default_factory=threading.Lock)
     _thread_local: threading.local = field(default_factory=threading.local)
 
     def connect(self) -> sqlite3.Connection:
@@ -47,7 +48,11 @@ class SQLiteStore:
         if existing is not None:
             return existing  # type: ignore[no-any-return]
         connection = sqlite3.connect(self.path)
-        connection.execute("PRAGMA journal_mode=WAL")
+        if not self.read_only:
+            with self._wal_lock:
+                if not self._wal_configured:
+                    connection.execute("PRAGMA journal_mode=WAL")
+                    self._wal_configured = True
         connection.execute("PRAGMA synchronous=NORMAL")
         connection.execute("PRAGMA busy_timeout=5000")
         connection.execute("PRAGMA foreign_keys=ON")
@@ -86,12 +91,6 @@ class SQLiteStore:
                         "CREATE TABLE IF NOT EXISTS schema_version "
                         "(version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
                     )
-                if not self._wal_configured and not self.read_only:
-                    # Switch to WAL exactly once per process. Re-running the
-                    # pragma from many short connections while another process
-                    # writes can tear the journal-mode header handoff.
-                    connection.execute("PRAGMA journal_mode=WAL")
-                    self._wal_configured = True
                 version = self._schema_version(connection)
                 if version < self.CURRENT_SCHEMA_VERSION:
                     self._backup_before_migration(version)

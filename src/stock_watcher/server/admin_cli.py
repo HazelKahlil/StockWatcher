@@ -180,7 +180,10 @@ def cmd_restore(settings: ServerSettings, args: argparse.Namespace) -> int:
     if not db_backup.is_file():
         print(f"backup database missing: {db_backup}", file=sys.stderr)
         return 1
-    store = _store(settings)
+    # Do not call _store() here: initialize() intentionally fails closed on a
+    # malformed current database, while restore is the recovery path that must
+    # still be able to replace that database from a verified backup.
+    store = SQLiteStore(settings.db_path)
     store.rollback(db_backup)
     reports_backup = backup_dir / "reports"
     if reports_backup.is_dir():
