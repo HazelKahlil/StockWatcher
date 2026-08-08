@@ -15,10 +15,15 @@ dist/
 .env
 .env.*
 !.env.example
+!deploy/.env.tunnel.example
 config/user.yaml
 data/
 backup/
 logs/
+deploy/secrets/
+deploy/state/
+deploy/reports/
+deploy/backups/
 *.db
 *.db-*
 *.sqlite

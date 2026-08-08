@@ -1,0 +1,9 @@
+ingress:
+  - hostname: stock.hazelkahlil.com
+    service: http://tunnel-gateway:8080
+    originRequest:
+      httpHostHeader: stock.hazelkahlil.com
+      connectTimeout: 10s
+      keepAliveTimeout: 90s
+      keepAliveConnections: 100
+  - service: http_status:404

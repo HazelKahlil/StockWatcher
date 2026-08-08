@@ -58,3 +58,20 @@ sudo docker compose --env-file .env ps
 ```
 
 Never delete the database or caches as a first response to failure. Preserve evidence and follow the rollback runbook.
+
+## macOS internal test through Cloudflare Tunnel
+
+This route keeps FastAPI, the single Worker and SQLite on the owner Mac while exposing only an
+outbound Cloudflare Tunnel. It is for the 2–5 person internal test lane; the Mac and Docker Desktop
+must remain awake and online. It does not replace VPS or full trading-day acceptance evidence.
+
+1. Create a named, locally managed tunnel and route `stock.hazelkahlil.com` to it. Keep the generated
+   credential JSON outside Git.
+2. Copy `.env.tunnel.example` to `.env.tunnel`, set the final image/commit metadata, tunnel UUID,
+   credential path and local UID/GID. Never put the Tushare Token or any password in this file.
+3. Generate `secrets/stockwatcher_master_key` locally without displaying its contents, then run
+   `scripts/tunnel-up.sh`. The production Web and Worker use Docker named volumes; the local gateway
+   is bound only to `127.0.0.1`, and `cloudflared` makes outbound connections to Cloudflare.
+4. Run `scripts/tunnel-healthcheck.sh`, create the first admin through stdin, then enter the Tushare
+   Token only through the HTTPS Admin page. Stop containers with `scripts/tunnel-down.sh`; named
+   volumes are deliberately preserved.
