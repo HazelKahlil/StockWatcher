@@ -161,22 +161,24 @@ function liveDateTimeLabel() {
     year: 'numeric',
     month: 'numeric',
     day: 'numeric',
+    weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  const date = `${values.year}年${values.month}月${values.day}日`;
   return {
-    date: `${values.year}年${values.month}月${values.day}日`,
-    dateTime: `${values.year}年${values.month}月${values.day}日 ${values.hour}:${values.minute}:${values.second}`,
+    titleDate: `${date}（${values.weekday}）`,
+    dateTime: `${date} ${values.hour}:${values.minute}:${values.second}`,
   };
 }
 
 function updateLiveClock() {
-  const { date, dateTime } = liveDateTimeLabel();
+  const { titleDate, dateTime } = liveDateTimeLabel();
   const title = document.getElementById('top3-title');
-  if (title) title.textContent = `${date} 实时Top3`;
+  if (title) title.textContent = `${titleDate} 实时Top3`;
   const clock = document.getElementById('live-clock');
   if (clock) clock.textContent = `当前时间 ${dateTime}`;
 }

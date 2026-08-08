@@ -45,3 +45,14 @@
 - 仍未完成：VPS/DNS/TLS、首个管理员和 2–5 个测试者、
   HTTPS 管理页加密录入 Token、VPS 出口 IP 数据源 preflight、完整交易日 18 条验收。
   当前交付状态继续保持 `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-08 最新界面批注与托管确认
+
+- 标题改为上海时区实时日期、星期与 `实时Top3`，在 1146px 宽视口按批注呈现 51.6px，
+  手机断点回落至 36px；页面底部说明栏已删除，静态资源缓存版本同步递增。
+- Human Owner 明确要求网页端必须同时具备 FastAPI、Tushare SDK、常驻唯一 Worker 与
+  SQLite WAL 的真实扫描能力；OpenAI Sites 不能承载该 Python 双进程拓扑，正式路线确认使用
+  专用 VPS Docker + Caddy，并由 Cloudflare 将 `stock.hazelkahlil.com` 指向唯一公网入口。
+- 本地浏览器已核对动态星期、标题计算字号与页脚不存在；Web 定向回归、Ruff、Mypy、原生 JS
+  语法、workspace validator 与 `git diff --check` 通过。VPS 主机访问、DNS/TLS、秘密注入与
+  VPS 数据源 preflight 仍未产生现场证据，状态保持 `BLOCKED / NOT_ACCEPTED`。

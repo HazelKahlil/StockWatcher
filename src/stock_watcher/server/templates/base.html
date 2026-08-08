@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}StockWatcher{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css?v=9">
+<link rel="stylesheet" href="/static/app.css?v=10">
 <meta name="color-scheme" content="light dark">
 {% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
 </head>
@@ -28,9 +28,6 @@
 <main id="main">
 {% block content %}{% endblock %}
 </main>
-<footer class="footer">
-  只读观察 · 不连接交易账户 · 资金未确认不阻塞候选
-</footer>
 {% if user %}
 <script type="module" src="/static/app.js?v=5"></script>
 {% block scripts %}{% endblock %}
