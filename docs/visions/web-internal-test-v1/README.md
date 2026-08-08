@@ -53,6 +53,9 @@
 - Human Owner 明确要求网页端必须同时具备 FastAPI、Tushare SDK、常驻唯一 Worker 与
   SQLite WAL 的真实扫描能力；OpenAI Sites 不能承载该 Python 双进程拓扑，正式路线确认使用
   专用 VPS Docker + Caddy，并由 Cloudflare 将 `stock.hazelkahlil.com` 指向唯一公网入口。
+- 部署安全复核补齐 Docker 构建上下文排除：Git 元数据、虚拟环境、`.env`、Docker secret、
+  SQLite、日志、报告、备份与运行证据均不会发送到构建器；镜像复制白名单仍只包含依赖清单、
+  README 与 `src/`。
 - 本地浏览器已核对动态星期、标题计算字号与页脚不存在；Web 定向回归、Ruff、Mypy、原生 JS
   语法、workspace validator 与 `git diff --check` 通过。VPS 主机访问、DNS/TLS、秘密注入与
   VPS 数据源 preflight 仍未产生现场证据，状态保持 `BLOCKED / NOT_ACCEPTED`。
