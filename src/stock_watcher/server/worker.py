@@ -142,6 +142,13 @@ class WorkerRuntime:
             self._heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1.0)
         if self._runtime_heartbeat_thread is not None:
             self._runtime_heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1.0)
+        if self._lease_lost.is_set():
+            # Do not enter a potentially blocked SQLite cleanup path after
+            # fencing has failed.  The container restart policy will launch a
+            # fresh Worker, and its next session will preserve the unclean
+            # exit evidence before reacquiring the lease.
+            logger.error("lease lost; exiting without blocking cleanup")
+            return 1
         self.service.stop(exit_reason="worker_shutdown", graceful=True)
         try:
             self.lease.release()

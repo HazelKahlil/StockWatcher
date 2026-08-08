@@ -6,8 +6,10 @@ renewed inside ``BEGIN IMMEDIATE`` transactions so a Compose
 """
 from __future__ import annotations
 
+import sqlite3
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -52,6 +54,29 @@ class WorkerLease:
         self.fencing_token: int = 0
         self.acquired_at: datetime | None = None
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Use a short-lived connection for fencing writes.
+
+        Lease renewal is liveness infrastructure. It must not share a
+        persistent per-thread SQLite connection with business writes: a
+        stalled scan, Web request or WAL handoff must never leave the lease
+        heartbeat waiting behind that connection indefinitely. The database
+        is already configured for WAL by ``SQLiteStore``; this connection
+        intentionally does not run ``PRAGMA journal_mode`` again.
+        """
+        connection = sqlite3.connect(self.store.path, timeout=2.0)
+        try:
+            connection.execute("PRAGMA busy_timeout=2000")
+            connection.execute("PRAGMA foreign_keys=ON")
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     @property
     def held(self) -> bool:
         return self.acquired_at is not None
@@ -63,7 +88,7 @@ class WorkerLease:
         """
         now = _shanghai(self._clock())
         expires_at = now + timedelta(seconds=self.config.ttl_seconds)
-        with self.store.transaction() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT holder_id, expires_at, fencing_token "
                 "FROM service_leases WHERE lease_name = ?",
@@ -130,7 +155,7 @@ class WorkerLease:
             raise LeaseLostError("lease was never acquired")
         now = _shanghai(self._clock())
         expires_at = now + timedelta(seconds=self.config.ttl_seconds)
-        with self.store.transaction() as connection:
+        with self._connection() as connection:
             cursor = connection.execute(
                 "UPDATE service_leases SET heartbeat_at = ?, expires_at = ? "
                 "WHERE lease_name = ? AND holder_id = ? AND fencing_token = ?",
@@ -148,7 +173,7 @@ class WorkerLease:
     def release(self) -> None:
         if not self.held:
             return
-        with self.store.transaction() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "DELETE FROM service_leases "
                 "WHERE lease_name = ? AND holder_id = ? AND fencing_token = ?",
@@ -157,7 +182,7 @@ class WorkerLease:
         self.acquired_at = None
 
     def status(self) -> dict[str, object]:
-        with self.store.connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT holder_id, source_commit, acquired_at, heartbeat_at, "
                 "expires_at, fencing_token FROM service_leases WHERE lease_name = ?",
