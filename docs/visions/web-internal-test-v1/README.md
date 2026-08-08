@@ -59,3 +59,15 @@
 - 本地浏览器已核对动态星期、标题计算字号与页脚不存在；Web 定向回归、Ruff、Mypy、原生 JS
   语法、workspace validator 与 `git diff --check` 通过。VPS 主机访问、DNS/TLS、秘密注入与
   VPS 数据源 preflight 仍未产生现场证据，状态保持 `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-08 Worker lease hardening and local tunnel redeploy
+
+- Web 分支新增提交 `b1ba8e36c69c959bdf95f34e218c0ba85b25ec6d`：Worker lease fencing 改用
+  独立短连接，不再与业务 SQLite 连接共享心跳路径；lease 丢失时快速退出，由 Compose
+  重启，避免 SQLite 异常等待把 Worker 留在 `unhealthy`。
+- 本地 Cloudflare Tunnel 已加载镜像 `stockwatcher-web:web-internal-test-v1-b1ba8e3`；
+  Web、Worker、Caddy、origin、HTTPS edge 和 Worker lease 健康检查均通过，已跨过此前约
+  4 分钟的 lease 过期窗口。运行容器 UID/GID 仍为 `10001:10001`。
+- 当前仍无活动 Tushare Token；Worker preflight 安全退出并报告 `no active token`，因此
+  尚未产生真实候选。管理员仍需通过 HTTPS Admin 页面输入 Token，随后再做 1/100/300/800/full
+  preflight 与完整交易日 18 轮验收；状态继续保持 `BLOCKED / NOT_ACCEPTED`。
