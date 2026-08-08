@@ -33,10 +33,12 @@ from stock_watcher.paths import (
     universe_cache_path_for_database,
 )
 from stock_watcher.providers.tushare import Tushare15000Provider, TushareSdkProTransport
+from stock_watcher.providers.tushare.errors import ProviderError
 from stock_watcher.providers.tushare.native_realtime_transport import (
     NativeRealtimeTransport,
 )
 from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
+from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 from stock_watcher.runtime import (
     AutomationPlanner,
     AutomationTaskSpec,
@@ -1507,9 +1509,16 @@ class StockWatcherService:
                 self._secrets.fail_request(request_id)
             except Exception:
                 pass
+            diagnostic = capability.get("diagnostic")
+            safe_result = (
+                {"diagnostic": diagnostic}
+                if isinstance(diagnostic, dict)
+                else None
+            )
             self._finish_command(
                 command_id,
                 CommandStatus.FAILED,
+                result=safe_result,
                 error_code=str(capability.get("error_code") or "probe-failed"),
                 error_detail=str(capability.get("error") or "分层探测失败"),
             )
@@ -1540,85 +1549,63 @@ class StockWatcherService:
         )
 
     def _probe_token(self, token: str) -> dict[str, Any]:
-        """Layered data-source probe: static Pro + realtime 1/100/300/800."""
+        """Run the same low-cost activation gate as the desktop App.
+
+        Token activation must not depend on stock-list, sector or native
+        realtime availability. Those are real product capabilities, but they
+        are checked by the normal Worker/runtime path after activation. Keeping
+        this gate to ``trade_cal`` lets a valid Token enter the encrypted
+        active slot even when one optional endpoint is rate-limited or not
+        enabled for the account; the scan remains fail-closed until its own
+        data gates pass.
+        """
         settings = self.config.settings
         budget = ApplicationRequestBudget(settings.request_budget_interval_seconds)
-        result: dict[str, Any] = {"ok": False, "layers": []}
+        now = _shanghai(self._clock())
+        result: dict[str, Any] = {
+            "ok": False,
+            "layers": [],
+            "realtime_route": "native_realtime",
+        }
         try:
             pro = TushareSdkProTransport(
                 settings.primary_profile,
                 lambda: token,
                 request_budget=budget,
             )
-            from stock_watcher.providers.tushare.transport_protocol import (
-                TransportRequest,
-            )
-
-            stocks = pro.execute(
+            calendar = pro.execute(
                 TransportRequest(
                     endpoint="/",
-                    api_name="stock_basic",
-                    params={"exchange": "", "list_status": "L"},
-                    fields=("ts_code", "name", "industry"),
+                    api_name="trade_cal",
+                    params={
+                        "exchange": "SSE",
+                        "start_date": (now - timedelta(days=7)).strftime("%Y%m%d"),
+                        "end_date": now.strftime("%Y%m%d"),
+                    },
+                    fields=("exchange", "cal_date", "is_open"),
+                    allow_empty=True,
                 )
             )
-            result["layers"].append(
-                {"layer": "static_pro", "ok": stocks.records is not None}
-            )
-            if stocks.records is None:
-                result["error_code"] = "static_pro"
-                result["error"] = "普通Pro接口不可用"
-                return result
+        except ProviderError as error:
+            result["error_code"] = f"trade_calendar:{error.reason.value}"
+            result["error"] = error.public_message
+            result["diagnostic"] = {
+                "reason": error.reason.value,
+                "http_status": error.http_status,
+            }
+            return result
         except Exception as error:
-            result["error_code"] = "static_pro"
+            result["error_code"] = "trade_calendar:unexpected_error"
             result["error"] = type(error).__name__
             return result
-        realtime = NativeRealtimeTransport(
-            settings.native_realtime_profile,
-            lambda: token,
-            request_budget=budget,
-        )
-        codes = [str(record.get("ts_code", "")) for record in (stocks.records or [])]
-        for size in (1, 100, 300, 800):
-            batch = [code for code in codes if code][:size]
-            if not batch:
-                result["layers"].append({"layer": f"realtime_{size}", "ok": False})
-                continue
-            try:
-                from stock_watcher.providers.tushare.transport_protocol import (
-                    TransportRequest,
-                )
 
-                transport_request = TransportRequest(
-                    endpoint="tushare.realtime_quote:sina",
-                    api_name="realtime_quote",
-                    params={"ts_code": ",".join(batch)},
-                    fields=(
-                        "ts_code",
-                        "name",
-                        "price",
-                        "source_ts",
-                        "received_ts",
-                    ),
-                    realtime=True,
-                    method="SDK",
-                )
-                response = realtime.execute(transport_request)
-                ok = response.records is not None and len(response.records) > 0
-                result["layers"].append(
-                    {"layer": f"realtime_{size}", "ok": ok, "rows": len(response.records or [])}
-                )
-                if not ok:
-                    result["error_code"] = f"realtime_{size}"
-                    result["error"] = "实时接口分层探测失败"
-                    return result
-            except Exception as error:
-                result["layers"].append(
-                    {"layer": f"realtime_{size}", "ok": False, "error": type(error).__name__}
-                )
-                result["error_code"] = f"realtime_{size}"
-                result["error"] = type(error).__name__
-                return result
+        result["layers"].append(
+            {
+                "layer": "trade_calendar",
+                "ok": True,
+                "rows": len(calendar.records),
+            }
+        )
         result["ok"] = True
         return result
 
