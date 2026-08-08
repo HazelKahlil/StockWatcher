@@ -177,3 +177,45 @@ def test_worker_lease_heartbeat_survives_slow_business_tick(tmp_path: Path) -> N
             process.wait(timeout=20)
         except subprocess.TimeoutExpired:
             process.kill()
+
+
+def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
+    """A blocked runtime evidence write must not stop lease renewal."""
+    db, _, env = _prepare(tmp_path)
+    code = (
+        "import time; import stock_watcher.server.worker as worker; "
+        "worker.StockWatcherService.heartbeat = lambda self: time.sleep(12); "
+        "import sys; sys.exit(worker.main())"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", code],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if _lease_holder(db):
+                break
+            time.sleep(0.5)
+        with sqlite3.connect(db) as connection:
+            heartbeat_a = connection.execute(
+                "SELECT heartbeat_at FROM service_leases "
+                "WHERE lease_name = 'stockwatcher-worker'"
+            ).fetchone()[0]
+        time.sleep(7)
+        with sqlite3.connect(db) as connection:
+            heartbeat_b = connection.execute(
+                "SELECT heartbeat_at FROM service_leases "
+                "WHERE lease_name = 'stockwatcher-worker'"
+            ).fetchone()[0]
+        assert heartbeat_b != heartbeat_a, "runtime heartbeat blocked lease renewal"
+        assert process.poll() is None, "worker exited during a slow runtime heartbeat"
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.kill()

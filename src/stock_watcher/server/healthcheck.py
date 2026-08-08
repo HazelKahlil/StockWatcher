@@ -29,7 +29,7 @@ def _schema_ok(store: SQLiteStore) -> bool:
 
 
 def check_web(settings: ServerSettings) -> int:
-    store = SQLiteStore(settings.db_path)
+    store = SQLiteStore(settings.db_path, read_only=True)
     if not store.path.is_file() or not _schema_ok(store):
         print("web not ready: database/schema invalid", file=sys.stderr)
         return 1
@@ -38,8 +38,8 @@ def check_web(settings: ServerSettings) -> int:
 
 
 def check_worker(settings: ServerSettings) -> int:
-    store = SQLiteStore(settings.db_path)
-    if not _schema_ok(store):
+    store = SQLiteStore(settings.db_path, read_only=True)
+    if not store.path.is_file() or not _schema_ok(store):
         print("worker not ready: database/schema invalid", file=sys.stderr)
         return 1
     with store.connect() as connection:

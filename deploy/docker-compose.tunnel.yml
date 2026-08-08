@@ -62,6 +62,10 @@ services:
       - --no-autoupdate
       - --loglevel
       - info
+      # This Mac/network path blocks QUIC/UDP 7844; use the verified TCP
+      # fallback so the public hostname remains reachable after restarts.
+      - --protocol
+      - http2
       - run
       - --credentials-file
       - /etc/cloudflared/credentials.json

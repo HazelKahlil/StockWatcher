@@ -216,6 +216,19 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
         assert 'style="' not in content
 
 
+def test_login_uses_external_script_compatible_with_csp() -> None:
+    root = Path(__file__).resolve().parents[1]
+    login_template = (root / "src/stock_watcher/server/templates/login.html").read_text(
+        encoding="utf-8"
+    )
+    login_script = (root / "src/stock_watcher/server/static/login.js").read_text(
+        encoding="utf-8"
+    )
+    assert '<script type="module" src="/static/login.js?v=1"></script>' in login_template
+    assert "fetch('/api/v1/auth/login'" in login_script
+    assert "<script type=\"module\">" not in login_template
+
+
 def test_snapshot_bound_detail_race(
     app_env: tuple[Any, SQLiteStore, Any, Any, Any],
     tmp_path: Path,

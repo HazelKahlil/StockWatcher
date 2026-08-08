@@ -84,6 +84,7 @@ class WorkerRuntime:
         self._stop = threading.Event()
         self._lease_lost = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
+        self._runtime_heartbeat_thread: threading.Thread | None = None
         self._scan_thread: threading.Thread | None = None
         self.service._holder_id = ""  # noqa: SLF001
         self.service._fencing_token = 0  # noqa: SLF001
@@ -110,9 +111,15 @@ class WorkerRuntime:
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
             daemon=True,
-            name="worker-heartbeat",
+            name="worker-lease-heartbeat",
         )
         self._heartbeat_thread.start()
+        self._runtime_heartbeat_thread = threading.Thread(
+            target=self._runtime_heartbeat_loop,
+            daemon=True,
+            name="worker-runtime-heartbeat",
+        )
+        self._runtime_heartbeat_thread.start()
         last_tick = 0.0
         last_maintenance = 0.0
         while not self._stop.is_set():
@@ -133,6 +140,8 @@ class WorkerRuntime:
         self._stop.set()
         if self._heartbeat_thread is not None:
             self._heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1.0)
+        if self._runtime_heartbeat_thread is not None:
+            self._runtime_heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1.0)
         self.service.stop(exit_reason="worker_shutdown", graceful=True)
         try:
             self.lease.release()
@@ -142,16 +151,28 @@ class WorkerRuntime:
         return 0
 
     def _heartbeat_loop(self) -> None:
-        """Renew the fencing lease independently of potentially slow business ticks."""
+        """Renew the fencing lease without any other potentially slow work."""
         while not self._stop.is_set():
             try:
                 self.lease.renew()
-                self.service.heartbeat()
             except Exception as error:
                 logger.error("worker heartbeat failed: %s", redact(str(error)))
                 self._lease_lost.set()
                 self._stop.set()
                 return
+            if self._stop.wait(HEARTBEAT_SECONDS):
+                return
+
+    def _runtime_heartbeat_loop(self) -> None:
+        """Persist runtime evidence without being able to starve lease renewal."""
+        while not self._stop.is_set():
+            try:
+                self.service.heartbeat()
+            except Exception as error:
+                logger.warning(
+                    "worker runtime heartbeat failed: %s",
+                    redact(str(error)),
+                )
             if self._stop.wait(HEARTBEAT_SECONDS):
                 return
 
