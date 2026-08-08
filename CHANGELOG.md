@@ -4,14 +4,81 @@
 
 ## [Unreleased]
 
+### Mainline
+
+- 2026-08-01：将 Mac V1 内部试用成果及其完整 Git 历史整合到唯一主目录的本地 `main`。
+  当前主线包含真实全市场扫描、行业/概念板块、稳定 Top3、候选池强异动、09:45/14:45
+  调度、30 天历史、15:30 盘后总结和 Mac arm64 App；`fix/macos-v1-internal-acceptance`、
+  `feat/macos-v1-port`、`fix/shared-v1-selection-completion` 与
+  `feat/windows-v1-real-candidates` 仅作为历史来源，不再是当前开发主线。
+- 当前状态为 Mac V1 内部试用主线，不是商业稳定发布版。新鲜 09:45/14:45、15:30 准点、
+  无旧缓存冷启动、睡眠/断网恢复和 Windows 独立验收继续在 `main` 推进。
+
+### Security
+
+- 普通 UI 收敛为一个 Tushare Token；Pro 代理与原生实时共用系统安全存储中的 Primary
+  凭据（Windows Credential Manager / macOS 系统钥匙串）。SDK 调用只临时注入内存并恢复，
+  不调用 `set_token()`，不把 Token 写入源码、配置、SQLite、日志、截图、fixture、命令行或安装包。
+
 ### Changed
 
+- V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
+  `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
+  TdxQuant 只留在高级诊断。
+- Human Owner 2026-07-30 改为 Mac-first：共享连接门返修先在 macOS 验证，再同步给
+  Windows；Windows 真实验收仍为 `FAIL`，不得由 Mac 结果覆盖。
+- Mac 首次无 Token 启动显示非阻塞的简单数据接口页；网络中断会停止定时扫描，恢复后清除
+  旧基线并等待连续三轮新鲜完整数据。
+- 固定提醒时间从历史规格的 14:50 改为 Human Owner 最终确认的 14:45；普通排名变化
+  只更新主界面，固定时点和强异动弹窗始终包含完整三只。
+- SQLite 升级为 v3，候选快照及三只明细原子保存，并提供 30 天提醒历史和每日总结。
+- Tushare 主界面启动后立即、随后每 60 秒自动区分基础连接与实时快照状态；
+  人工按钮改为“立即检测实时数据”；经授权的原生实时路线使用本机 Fast 凭据
+  执行单证券脱敏探测，空数据、超时、权限、频控和缺供应商时间均给出明确问题
+  位置，候选继续 fail-closed。
+- 原生 SDK 适配器不调用会写入用户目录 `tk.csv` 的 `tushare.set_token()`；
+  凭据只在受全局锁保护的单次 SDK 调用内注入内存，并在调用结束后恢复 SDK 全局状态。
+- Windows 构建复用锁定的 `uv` 环境，不再假设环境含 `pip` 或临时升级
+  PyInstaller；Inno Setup 不在 PATH 时只读查找官方默认安装目录。
+- 默认数据路线调整为跨平台 Tushare 兼容 HTTPS：超级接口作为主接口，快速接口仅在
+  同口径 M0 验证后按能力路由；TdxQuant 保留为可选诊断和资金字段探索。
+- Windows 正常启动不再要求通达信或本机 TQ 服务，数据接口凭据改由系统安全存储
+  管理，并采用“内存测试成功、人工确认、原子替换、重新预热”的切换流程。
 - 开发方式调整为 Mac 本地优先，GitHub 仅在版本节点或明确备份/交接需求时同步。
 - 版本路线重排：先完成 Mac Replay 基础和本地 Alpha，再进入 Windows/通达信真实数据闸门。
 - v0.3 执行路线收敛为 Windows + 官方 TdxQuant 单人只读测试；Mac 仅保留 Mock/Replay 与离线契约验证，不购买或接入 Tushare/iFinD。
 
 ### Added
 
+- 独立 macOS PyInstaller spec：生成本机 arm64 `StockWatcher.app`，包含 Retina 配置与
+  macOS 留白图标，排除 Windows/TdxQuant 诊断入口；支持 ad-hoc 签名和内部安装验收。
+- Mac V1 平台层：Application Support/Logs 路径分离、实际 Keychain backend 校验、系统钥匙串
+  文案、单实例、Dock/应用菜单、关闭隐藏/显式退出、右下角多屏弹窗、次要 Notification Center
+  和睡眠/网络恢复保护；默认 Tushare 入口延迟加载 Windows TdxQuant 诊断模块。
+- 15:30盘后回顾自动生成固定A4纵向三页PDF；App可按日期选择最近31个自然日的报告并下载。
+  PDF由本地确定性脚本排版，不依赖AI大模型，不上传行情、候选或凭据。
+- 全市场无重叠扫描协调器、15 分钟实时快照环形缓冲、历史分钟预热，以及确定性的
+  1/3/5 分钟涨速、突然加速、成交放大、当日前高、三日新高和相对板块强弱。
+- 行业/概念 SectorEngine、板块硬门、100 分候选引擎、正式/补位三席、同板块最多两只、
+  8 分立即替换/连续三轮替换和三轮新鲜恢复。
+- 09:45、14:45 与强异动提醒状态机；强异动每日最多三次、同股五分钟冷却，资金不可用
+  时允许以个股+板块触发并标记未确认。
+- 不读取命令行 Token 的 30 分钟真实交易时段验证脚本，记录每轮三只、原因、覆盖、重复、
+  源年龄、耗时、成功率与 SHA-256。
+- 确定性的盘后回顾引擎与工具内总结视图：使用真实日线收盘、前三个交易日背景和行业
+  硬门形成市场广度、强势行业与回溯 Top3；不把收盘回放伪装成盘中提醒，也不虚构
+  1/3/5 分钟涨速或资金增强。2026-07-29 回放统计 5,516 只有效证券、4,248 只上涨，
+  回溯观察为欢乐家、东百集团、国芳集团。
+- Windows 0.4.0-alpha 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
+  保持仓库外发布，未签名包在受管设备上仍需可信代码签名或管理员允许规则。
+- 经 Human Owner 明确授权的 Tushare SDK 原生实时 Provider：固定供应商验证入口、
+  800 只批次上限、0.5 秒最小请求间隔、供应商日期/时间来源校验、脱敏全市场 M0
+  工具和冻结运行时的最小 SDK 模块收集。2026-07-29 盘后工程探测覆盖 5530/5530，只作为
+  `NON_AUTHORITATIVE_ENGINEERING_CHECK`；20/20 盘后交叉样本确认量为“股”、额为“元”，
+  交易时段 M0 与候选开放仍待验证。
+- StockWatcher 品牌 PNG 与多尺寸 Windows ICO；EXE、安装器和 Qt 窗口使用同一图标。
+- Tushare Super/Fast transport、统一响应解析、TLS/超时/重试/限频策略、能力路由、
+  归一化严格校验、脱敏 M0 探针，以及 Windows“数据接口”设置界面。
 - Windows TQ 只读界面现在始终分开展示连接状态、最近检测、数据门、候选状态和
   当前验证阶段；默认每 60 秒自动执行严格连接检测，并提供“重新连接 TQ”和
   “立即抓取（只读）”按钮。人工抓取只调用官方回环证券列表接口，显式使用整数
@@ -27,6 +94,25 @@
 
 ### Fixed
 
+- RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
+- A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
+- Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.
+- Intraday strong-movement popups now name the triggering stock (or trigger count) while preserving the existing readiness, cooldown and daily-limit rules.
+
+- 稳定替换现在只保留席位，不再保留上一轮候选对象；被保留股票的价格、涨幅、评分、等级、
+  原因和源时间全部从本轮新鲜合规扫描刷新，本轮缺失、过期或被排除的股票立即退出。
+- 全市场扫描逐股排除旧时间或不可用行情，并继续要求新鲜覆盖率不低于99%；少量停牌或久未
+  成交证券不再把整轮误判为失败，也不会进入滚动基线或候选。
+- macOS 普通前后台切换不再误判为睡眠唤醒；只有真实挂起、网络恢复或超过20秒的事件循环
+  停顿才清理旧基线并进入连续三轮恢复门。
+- 15:30 盘后回顾先于过期基础缓存刷新执行；普通 Pro 限流不再提前遮蔽总结生成，授权的
+  Super 静态兜底会明确标记 `RETROSPECTIVE_ONLY`，不得冒充主路线或盘中 Live。
+- macOS 单实例在主进程被异常中断、遗留 Unix socket 时会安全回收无主端点并恢复启动；仍可
+  连接的既有实例优先被唤起，不会被替换。
+- 数据接口页现在完整显示 Token 输入框、保存提示和带边框的操作按钮；“测试并保存”始终
+  清晰可用，未保存 Token 时“重新检测/清除”明确置灰并在保存后可用，避免误以为页面无响应。
+- Super GET 请求现在把调用方声明的字段集合显式传为 `fields` 查询参数，避免
+  全市场实时探针无条件拉取未使用字段。
 - Windows 自包含启动器的严格原生 Preflight 通过后，现在把同一条已验签官方
   终端路径和已验证状态直接传给诊断界面；首次打开不再重复 API 会话，也不会
   因界面侧丢失终端路径而把已通过的现场误标为 `STOPPED`。手动重新连接仍使用

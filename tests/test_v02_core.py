@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import csv
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import ModuleType
+from typing import cast
 
 import pytest
 
@@ -16,7 +20,17 @@ from stock_watcher.engine import (
     ReplaySchedule,
 )
 from stock_watcher.engine.candidates import CandidateBatch
+from stock_watcher.providers.tushare import Tushare15000Provider
+from stock_watcher.runtime import TushareV1Runtime
+from stock_watcher.runtime.continuity import (
+    analyze_scan_gaps,
+    continuity_gap_summary_parts,
+)
+from stock_watcher.security import MemoryCredentialStore
 from stock_watcher.storage import SQLiteStore
+from stock_watcher.ui.tushare_v1_session import TushareV1Session
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def stamp(minute: int = 45) -> datetime:
@@ -97,7 +111,8 @@ def test_stopped_and_warming_produce_no_new_batch() -> None:
 def test_schedule_uses_injected_replay_clock_only() -> None:
     schedule = ReplaySchedule()
     assert schedule.due(stamp())
-    assert schedule.due(datetime(2026, 7, 23, 14, 50, tzinfo=SHANGHAI))
+    assert schedule.due(datetime(2026, 7, 23, 14, 45, tzinfo=SHANGHAI))
+    assert not schedule.due(datetime(2026, 7, 23, 14, 50, tzinfo=SHANGHAI))
     assert not schedule.due(stamp(44))
 
 
@@ -295,35 +310,116 @@ def test_corrupt_database_switches_to_read_only_degradation(tmp_path: Path) -> N
     assert store.read_only
 
 
-def test_sqlite_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> None:
+def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> None:
     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
     empty_store.initialize()
     with empty_store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (2,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
 
     path = tmp_path / "watcher.sqlite3"
     with sqlite3.connect(path) as connection:
         connection.execute(
             "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
         )
-        connection.execute("INSERT INTO schema_version VALUES (1, '2026-07-23T09:45:00+08:00')")
-        connection.execute("CREATE TABLE notes (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        connection.execute("INSERT INTO notes VALUES ('v1-data', 'preserved')")
+        connection.execute("INSERT INTO schema_version VALUES (5, '2026-08-06T09:45:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
     store = SQLiteStore(path)
     store.initialize()
     store.initialize()
     with store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (2,)
-        assert connection.execute("SELECT value FROM notes WHERE key = 'v1-data'").fetchone() == (
-            "preserved",
-        )
-        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        tables = {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(runtime_sessions)")
         }
-    assert {"config_versions", "candidate_snapshots", "alert_events", "health_metrics"} <= tables
-    assert path.with_suffix(".sqlite3.pre-v2.bak").exists()
+        assert {
+            "last_sleep_at",
+            "last_wake_at",
+            "previous_session_id",
+            "previous_unclean_exit",
+            "watchdog_restart_count",
+        } <= columns
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'runtime_events'"
+        ).fetchone() == ("runtime_events",)
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert path.with_suffix(".sqlite3.pre-v6.bak").exists()
+
+
+def test_runtime_session_and_scan_attempt_lifecycle_is_auditable(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "runtime.sqlite3")
+    store.start_runtime_session(
+        session_id="session-a",
+        pid=101,
+        ppid=1,
+        app_path="/Applications/StockWatcher.app",
+        source_commit="commit-a",
+        started_at="2026-08-06T09:20:00+08:00",
+    )
+    store.record_runtime_event(
+        session_id="session-a",
+        occurred_at="2026-08-06T09:21:00+08:00",
+        event_type="sleep_detected",
+        detail={"reason": "system-suspend"},
+    )
+    store.heartbeat_runtime_session("session-a", "2026-08-06T09:22:00+08:00")
+    store.start_scan_attempt(
+        attempt_id="attempt-a",
+        session_id="session-a",
+        started_at="2026-08-06T09:23:00+08:00",
+        operation="automatic",
+        thread_name="scan-worker",
+        timer_active=True,
+    )
+    store.heartbeat_scan_attempt("attempt-a", "2026-08-06T09:23:30+08:00")
+    store.finish_scan_attempt(
+        "attempt-a",
+        "2026-08-06T09:24:00+08:00",
+        state="completed",
+        detail="healthy",
+    )
+    store.end_runtime_session(
+        "session-a",
+        "2026-08-06T09:25:00+08:00",
+        exit_reason="menu_quit",
+        graceful_exit=True,
+    )
+    session = store.get_runtime_session("session-a")
+    assert session is not None
+    assert session["last_sleep_at"] == "2026-08-06T09:21:00+08:00"
+    assert session["graceful_exit"] == 1
+    assert store.list_scan_attempts(session_id="session-a")[0]["state"] == "completed"
+    assert store.list_runtime_events("session-a")[0]["event_type"] == "sleep_detected"
+
+
+def test_next_runtime_session_marks_previous_session_unclean(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "runtime.sqlite3")
+    store.start_runtime_session(
+        session_id="session-a",
+        pid=101,
+        ppid=1,
+        app_path="/Applications/StockWatcher.app",
+        source_commit="commit-a",
+        started_at="2026-08-06T09:20:00+08:00",
+    )
+    store.start_runtime_session(
+        session_id="session-b",
+        pid=102,
+        ppid=1,
+        app_path="/Applications/StockWatcher.app",
+        source_commit="commit-b",
+        started_at="2026-08-06T09:30:00+08:00",
+    )
+    previous = store.get_runtime_session("session-a")
+    current = store.get_runtime_session("session-b")
+    assert previous is not None and current is not None
+    assert previous["exit_reason"] == "unclean_exit"
+    assert current["previous_session_id"] == "session-a"
+    assert current["previous_unclean_exit"] == 1
 
 
 def test_sqlite_migration_failure_rolls_back_and_degrades_read_only(
@@ -358,3 +454,564 @@ def test_sqlite_migration_failure_rolls_back_and_degrades_read_only(
             ).fetchone()
             is None
         )
+
+
+def test_tushare_v1_session_wires_runtime_lifecycle(tmp_path: Path) -> None:
+    """Session creation starts a runtime session; heartbeat and shutdown persist."""
+    import os
+    from zoneinfo import ZoneInfo
+
+    now = datetime(2026, 8, 6, 9, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    session = TushareV1Session(
+        tmp_path / "lifecycle.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast("TushareV1Runtime", object()),
+            cast("Tushare15000Provider", object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session.heartbeat(now=now + timedelta(minutes=1))
+        session.record_platform_event(
+            "sleep_detected", now=now + timedelta(minutes=2), detail={"reason": "test"}
+        )
+        persisted = session.store.get_runtime_session(session._runtime_session_id)
+        assert persisted is not None
+        assert persisted["pid"] == os.getpid()
+        assert persisted["graceful_exit"] == 0
+        assert persisted["last_heartbeat_at"].startswith("2026-08-06T09:21")
+        assert session.store.list_runtime_events(session._runtime_session_id)[0][
+            "event_type"
+        ] == "sleep_detected"
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+    ended = session.store.get_runtime_session(session._runtime_session_id)
+    assert ended is not None
+    assert ended["graceful_exit"] == 1
+    assert ended["exit_reason"] == "menu_quit"
+
+
+def test_sleep_cancels_active_scan_and_records_sleep_event(tmp_path: Path) -> None:
+    """mark_sleep persists sleep_detected and voids the in-flight scan attempt."""
+    now = datetime(2026, 8, 6, 10, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "sleep.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        attempt_id = session._begin_scan_attempt(now=now, operation="automatic")
+        assert attempt_id is not None
+        session.mark_sleep(now=now, reason="system-suspend")
+        attempts = session.store.list_scan_attempts(session_id=session._runtime_session_id)
+        assert attempts[0]["state"] == "sleep_interrupted"
+        events = session.store.list_runtime_events(session._runtime_session_id)
+        assert events[0]["event_type"] == "sleep_detected"
+        persisted = session.store.get_runtime_session(session._runtime_session_id)
+        assert persisted is not None
+        assert persisted["last_sleep_at"].startswith("2026-08-06T10:30")
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_scan_stall_records_event_and_enters_recovery(tmp_path: Path) -> None:
+    """A >90s trading-hours gap without sleep triggers scan_stalled recovery."""
+    now = datetime(2026, 8, 6, 10, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "stall.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session._runtime = cast(TushareV1Runtime, object())
+        session.last_scan_succeeded_at = now - timedelta(minutes=3)
+        session._run(force=True, manual_request=False)
+        events = session.store.list_runtime_events(session._runtime_session_id)
+        assert events[0]["event_type"] == "scan_stalled"
+        assert session._platform_recovery_reason is not None
+        assert session.state is HealthState.WARMING
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def _seed_healthy_scan_run(
+    store: SQLiteStore,
+    trade_date: str,
+    times: list[str],
+) -> None:
+    for completed in times:
+        store.record_scan_run(
+            {
+                "started_at": completed,
+                "completed_at": completed,
+                "trigger_type": "automatic",
+                "task_key": None,
+                "health": HealthState.HEALTHY.value,
+                "detail": "正常",
+                "stable_batch_json": '{"candidates": []}',
+                "audit_json": "{}",
+            }
+        )
+
+
+def test_continuity_reports_lunch_and_hidden_afternoon_gap_independently() -> None:
+    """A long lunch must not hide a shorter but critical trading-session gap."""
+    lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
+    timestamps = [datetime.fromisoformat("2026-08-06T11:30:17+08:00")]
+    timestamps.extend(
+        lunch_end + timedelta(seconds=30 * index)
+        for index in range(112)
+    )
+    timestamps.extend(
+        [
+            datetime.fromisoformat("2026-08-06T13:55:58+08:00"),
+            datetime.fromisoformat("2026-08-06T14:38:11+08:00"),
+        ]
+    )
+
+    gaps = analyze_scan_gaps(timestamps)
+    rendered = "；".join(continuity_gap_summary_parts(gaps))
+
+    assert "最长无扫描间隔1小时29分48秒" in rendered
+    assert "午休" in rendered
+    assert "最长交易时段无扫描间隔42分13秒" in rendered
+    assert "13:55:58→14:38:11" in rendered
+    assert "交易时段超90秒空窗1段" in rendered
+
+
+def test_session_continuity_evidence_includes_every_reportable_trading_gap(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 8, 6, 15, 30, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "continuity.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
+        continuous = [
+            (lunch_end + timedelta(seconds=30 * index)).isoformat()
+            for index in range(112)
+        ]
+        _seed_healthy_scan_run(
+            session.store,
+            "2026-08-06",
+            [
+                "2026-08-06T11:30:17+08:00",
+                *continuous,
+                "2026-08-06T13:55:58+08:00",
+                "2026-08-06T14:38:11+08:00",
+            ],
+        )
+
+        evidence = session._collect_continuity_evidence("2026-08-06")
+
+        assert "最长交易时段无扫描间隔42分13秒" in evidence
+        assert "交易时段超90秒空窗1段" in evidence
+        assert "13:55:58→14:38:11" in evidence
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_summary_scheduler_runs_decoupled_from_scan_loop(tmp_path: Path) -> None:
+    """check_automation_tasks reaches a terminal state without any scan."""
+    now = datetime(2026, 8, 6, 15, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "summary.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        _seed_healthy_scan_run(
+            session.store,
+            "2026-08-06",
+            ["2026-08-06T09:50:00+08:00", "2026-08-06T09:50:10+08:00"],
+        )
+        session.check_automation_tasks(now=now)
+        task = session.store.get_automation_task("2026-08-06:summary-15:30")
+        assert task is not None
+        assert task["state"] == "succeeded"
+        summary = session.store.get_daily_summary("2026-08-06")
+        assert summary is not None
+        assert summary["catch_up"] == 0
+        assert "最长无扫描间隔" in summary["health_summary"]
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_summary_catch_up_marks_catch_up_flag(tmp_path: Path) -> None:
+    """A 15:32 launch catches up and records catch_up=true."""
+    now = datetime(2026, 8, 6, 15, 32, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "catchup.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        _seed_healthy_scan_run(
+            session.store,
+            "2026-08-06",
+            ["2026-08-06T09:50:00+08:00"],
+        )
+        session.check_automation_tasks(now=now)
+        summary = session.store.get_daily_summary("2026-08-06")
+        assert summary is not None
+        assert summary["catch_up"] == 1
+        task = session.store.get_automation_task("2026-08-06:summary-15:30")
+        assert task is not None
+        assert task["state"] == "succeeded"
+        assert "catch_up=true" in str(task["detail"])
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_alert_policy_global_batch_cooldown_blocks_rapid_batches() -> None:
+    """Two intraday batches must be at least 5 minutes apart."""
+    first = batch(item("600001"), item("600002"), item("600003"))
+    second = batch(
+        item("600004", source_ts=stamp(46)),
+        item("600005", source_ts=stamp(46)),
+        item("600006", source_ts=stamp(46)),
+    )
+    assert first is not None and second is not None
+    policy = AlertPolicy(AlertPolicyConfig(replacement_cycles=2, replacement_margin=1.0))
+    now = stamp()
+    assert policy.decide(
+        first, now, AlertTrigger.INTRADAY,
+        strong_movement=True, triggering_codes=("600001",), event_strength=1.0,
+    ).should_alert
+    decision = policy.decide(
+        second, now + timedelta(minutes=1), AlertTrigger.INTRADAY,
+        strong_movement=True, triggering_codes=("600004",), event_strength=1.0,
+    )
+    assert decision.reason == "global-cooldown"
+    assert policy.decide(
+        second, now + timedelta(minutes=6), AlertTrigger.INTRADAY,
+        strong_movement=True, triggering_codes=("600004",), event_strength=1.2,
+    ).should_alert
+
+
+def test_feature_readiness_blocks_warmup_strong_alert(tmp_path: Path) -> None:
+    """A warming baseline must never fire an intraday anomaly alert."""
+    from types import SimpleNamespace
+
+    from stock_watcher.engine import StrongMovementEvent
+
+    now = datetime(2026, 8, 6, 10, 5, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "warmup.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session.batch = batch(item("600001"), item("600002"), item("600003"))
+        assert session.batch is not None
+        event = StrongMovementEvent(
+            triggering_codes=("600001",),
+            strength=1.5,
+            funds_unconfirmed=True,
+        )
+        audit = SimpleNamespace(warmup_state="warming", display_velocity_ready=False, rows=())
+        assert (
+            session._evaluate_alerts(now, event, selection_audit=audit, scan_run_id=7)
+            is None
+        )
+        assert session.store.list_alert_history(now=now, days=1) == []
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_strong_alert_fires_with_full_detail_when_ready(tmp_path: Path) -> None:
+    """A ready baseline stores complete audit detail in alert_events."""
+    import json as json_module
+    from types import SimpleNamespace
+
+    from stock_watcher.engine import StrongMovementEvent
+
+    now = datetime(2026, 8, 6, 10, 5, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "ready.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session.batch = batch(item("600001"), item("600002"), item("600003"))
+        assert session.batch is not None
+        event = StrongMovementEvent(
+            triggering_codes=("600001",),
+            strength=1.5,
+            funds_unconfirmed=True,
+        )
+        audit = SimpleNamespace(
+            warmup_state="ready",
+            display_velocity_ready=True,
+            rows=(
+                SimpleNamespace(
+                    code="600001",
+                    name="触发样本",
+                    raw_rank=4,
+                    sector="测试概念",
+                    sector_type="concept",
+                ),
+            ),
+        )
+        snapshot_id = session._evaluate_alerts(
+            now, event, selection_audit=audit, scan_run_id=7
+        )
+        assert snapshot_id is not None
+        rows = session.store.list_alert_history(now=now, days=1)
+        assert rows and rows[0]["trigger_type"] == "intraday"
+        detail = json_module.loads(str(rows[0]["detail_json"]))
+        assert detail["trigger_symbol"] == "600001"
+        assert detail["trigger_time"].startswith("2026-08-06T10:05")
+        assert detail["feature_readiness"] == "ready"
+        assert detail["source_scan_id"] == 7
+        assert detail["cooldown_decision"] == "strong-movement"
+        pending = session.consume_pending_alert()
+        assert pending is not None
+        assert pending.title == "盘中强异动"
+        assert pending.subtitle.startswith("触发样本触发｜")
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
+def test_export_selection_audit_generates_full_machine_readable_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The export tool produces all nine required audit files."""
+    import importlib.util
+    import sys as sys_module
+
+    db = tmp_path / "audit.sqlite3"
+    store = SQLiteStore(db)
+    now = datetime(2026, 8, 6, 10, 5, 0, tzinfo=SHANGHAI)
+    base = batch(item("600001"), item("600002"), item("600003"))
+    assert base is not None
+    snapshot_id = store.record_batch(base)
+    store.record_alert_event(
+        snapshot_id,
+        now.isoformat(),
+        "strong-movement",
+        "macos-desktop",
+        trigger_type="intraday",
+        detail={"trigger_symbol": "600001", "feature_readiness": "ready"},
+    )
+    store.record_scan_run(
+        {
+            "started_at": now.isoformat(),
+            "completed_at": now.isoformat(),
+            "trigger_type": "automatic",
+            "task_key": None,
+            "health": HealthState.HEALTHY.value,
+            "detail": "正常",
+            "raw_batch_json": base.trace_payload(),
+            "stable_batch_json": base.trace_payload(),
+            "audit_json": (
+                '{"warmup_state": "ready", "raw_codes": ["600001", "600002", "600003"], '
+                '"stable_codes": ["600001", "600002", "600003"], '
+                '"rows": [{"raw_rank": 1, "code": "600001", "name": "样本600001", '
+                '"sector": "模拟板块", "sector_code": "industry:模拟板块", '
+                '"sector_type": "industry", "total_score": 50.0, "core_score": 45.0, '
+                '"level": "强", "is_formal": true, "is_supplement": false, '
+                '"velocity_available": true, '
+                '"velocity_1m_pct": 1.2, "selected_raw": true, "selected_stable": true, '
+                '"decision": "displayed"}, '
+                '{"raw_rank": 2, "code": "600002", "name": "样本600002", '
+                '"sector": "模拟板块2", "sector_code": "industry:模拟板块2", '
+                '"sector_type": "industry", "total_score": 49.0, "core_score": 44.0, '
+                '"level": "中", "is_formal": true, "is_supplement": false, '
+                '"velocity_available": true, "velocity_1m_pct": 1.0, '
+                '"selected_raw": true, "selected_stable": true, '
+                '"decision": "displayed"}, '
+                '{"raw_rank": 3, "code": "600003", "name": "样本600003", '
+                '"sector": "模拟板块3", "sector_code": "concept:模拟板块3", '
+                '"sector_type": "concept", "total_score": 48.0, "core_score": 43.0, '
+                '"level": "中", "is_formal": true, "is_supplement": false, '
+                '"velocity_available": true, "velocity_1m_pct": 0.9, '
+                '"selected_raw": true, "selected_stable": true, '
+                '"decision": "retained_by_stability"}, '
+                '{"raw_rank": 4, "code": "600004", "name": "样本600004", '
+                '"sector": "模拟板块4", "sector_code": "industry:模拟板块4", '
+                '"sector_type": "industry", "total_score": 47.0, "core_score": 42.0, '
+                '"level": "近", "is_formal": false, "is_supplement": true, '
+                '"velocity_available": false, "selected_raw": false, '
+                '"selected_stable": false, "decision": "supplement_below_cutoff"}]}'
+            ),
+        }
+    )
+    store.start_runtime_session(
+        session_id="session-x",
+        pid=101,
+        ppid=1,
+        app_path="/Applications/StockWatcher.app",
+        source_commit="commit-a",
+        started_at=now.isoformat(),
+    )
+    store.record_runtime_event(
+        session_id="session-x",
+        occurred_at=now.isoformat(),
+        event_type="sleep_detected",
+        detail={"reason": "test"},
+    )
+    store.ensure_automation_task(
+        {
+            "task_key": "2026-08-06:summary-15:30",
+            "task_type": "summary-15:30",
+            "trade_date": "2026-08-06",
+            "target_at": "2026-08-06T15:30:00+08:00",
+            "deadline_at": "2026-08-06T17:30:00+08:00",
+            "state": "planned",
+            "updated_at": now.isoformat(),
+            "detail": "等待目标时间。",
+        }
+    )
+    (db.parent / "runtime-universe-v1.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-08-06T09:00:00+08:00",
+                "trend_through_date": "2026-08-05",
+                "universe": {
+                    "concept_loaded": True,
+                    "memberships": [
+                        {"sector_type": "industry"},
+                        {"sector_type": "concept"},
+                        {"sector_type": "concept"},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    script = ROOT / "scripts" / "export_selection_audit.py"
+    module_name = "stockwatcher_test_export_audit"
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys_module.modules[module_name] = module
+    assert isinstance(module, ModuleType)
+    spec.loader.exec_module(module)
+
+    output = tmp_path / "export"
+    monkeypatch.setattr(
+        sys_module,
+        "argv",
+        ["export", str(db), "2026-08-06", str(output)],
+    )
+    assert module.main() == 0
+    expected = [
+        "scan-runs.json",
+        "scan-runs.csv",
+        "candidate-audit.csv",
+        "candidate-audit.json",
+        "raw-top20.csv",
+        "raw-top20.json",
+        "stable-top3-timeline.csv",
+        "stable-top3-timeline.json",
+        "excluded-candidates.csv",
+        "excluded-candidates.json",
+        "automation-tasks.csv",
+        "automation-tasks.json",
+        "runtime-sessions.csv",
+        "runtime-sessions.json",
+        "scheduler-events.csv",
+        "scheduler-events.json",
+        "cache-status.csv",
+        "cache-status.json",
+        "alert-events.csv",
+        "alert-events.json",
+    ]
+    for name in expected:
+        assert (output / name).is_file(), name
+    alert_csv = (output / "alert-events.csv").read_text(encoding="utf-8")
+    assert "600001" in alert_csv
+    raw_rows = list(csv.DictReader((output / "raw-top20.csv").open(encoding="utf-8")))
+    stable_rows = list(
+        csv.DictReader((output / "stable-top3-timeline.csv").open(encoding="utf-8"))
+    )
+    assert [row["code"] for row in raw_rows] == [
+        "600001",
+        "600002",
+        "600003",
+        "600004",
+    ]
+    assert all(row["name"] for row in raw_rows)
+    assert all(row["sector"] for row in raw_rows)
+    assert all(row["level"] for row in raw_rows)
+    assert [row["code"] for row in stable_rows] == ["600001", "600002", "600003"]
+    assert all(row["name"] for row in stable_rows)
+    assert all(row["decision"] for row in stable_rows)
+    cache_status = json.loads((output / "cache-status.json").read_text(encoding="utf-8"))
+    concept = next(row for row in cache_status if row["aspect"] == "concept_loaded")
+    assert concept["status"] is True
+    concept_memberships = next(
+        row for row in cache_status if row["aspect"] == "membership_count_concept"
+    )
+    assert concept_memberships["status"] == 2
+
+
+def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
+    """A non-SQLite database file is replaced by the newest valid backup."""
+    path = tmp_path / "watcher.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_version VALUES (5, '2026-08-06T09:45:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
+    store = SQLiteStore(path)
+    store.initialize()  # v5 -> v6, creates .pre-v6.bak
+    with store.connect() as connection:
+        connection.execute("INSERT INTO notes (key, value) VALUES ('probe', 'kept')")
+
+    with path.open("r+b") as handle:
+        handle.write(b"lxml._elementpath, lxml.etree, numpy (total: 69)")
+    assert path.read_bytes()[:16] != b"SQLite format 3\x00"
+
+    recovered = SQLiteStore(path)
+    recovered.initialize()
+    assert recovered.last_recovery is not None
+    assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'probe'"
+        ).fetchone() == ("kept",)
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert path.with_suffix(".sqlite3.corrupt").exists()

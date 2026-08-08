@@ -1,0 +1,279 @@
+{
+  "trade_date": "2026-07-30",
+  "generated_at": "2026-07-30T23:58:09.853852+08:00",
+  "title": "2026-07-30 A股盘后回顾测试",
+  "verdict": "RETROSPECTIVE_ONLY",
+  "market": {
+    "securities": 5519,
+    "advances": 1766,
+    "declines": 3628,
+    "unchanged": 125,
+    "up_ratio": 0.319986,
+    "median_change_pct": -1.1486,
+    "strong_count": 527,
+    "amount_cny": 2309446100230.41
+  },
+  "market_segments": [
+    {
+      "market": "沪市主板",
+      "securities": 1698,
+      "advances": 766,
+      "declines": 881,
+      "up_ratio": 0.451119,
+      "median_change_pct": -0.2288,
+      "strong_count": 211,
+      "amount_cny": 717712567084.0
+    },
+    {
+      "market": "深市主板",
+      "securities": 1491,
+      "advances": 486,
+      "declines": 959,
+      "up_ratio": 0.325956,
+      "median_change_pct": -0.9084,
+      "strong_count": 137,
+      "amount_cny": 634381517541.11
+    },
+    {
+      "market": "创业板",
+      "securities": 1394,
+      "advances": 277,
+      "declines": 1102,
+      "up_ratio": 0.198709,
+      "median_change_pct": -2.2165,
+      "strong_count": 99,
+      "amount_cny": 599700965126.64
+    },
+    {
+      "market": "科创板",
+      "securities": 610,
+      "advances": 105,
+      "declines": 503,
+      "up_ratio": 0.172131,
+      "median_change_pct": -3.8005,
+      "strong_count": 31,
+      "amount_cny": 343466816321.0
+    },
+    {
+      "market": "北交所",
+      "securities": 326,
+      "advances": 132,
+      "declines": 183,
+      "up_ratio": 0.404908,
+      "median_change_pct": -0.4503,
+      "strong_count": 49,
+      "amount_cny": 14184234157.66
+    }
+  ],
+  "top_sectors": [
+    {
+      "name": "白酒",
+      "member_count": 19,
+      "up_ratio": 1.0,
+      "strong_count": 18,
+      "median_change_pct": 4.0109,
+      "score": 25.0
+    },
+    {
+      "name": "银行",
+      "member_count": 42,
+      "up_ratio": 1.0,
+      "strong_count": 27,
+      "median_change_pct": 2.31175,
+      "score": 24.6235
+    },
+    {
+      "name": "汽车整车",
+      "member_count": 22,
+      "up_ratio": 0.9090909090909091,
+      "strong_count": 11,
+      "median_change_pct": 1.974,
+      "score": 23.2207
+    },
+    {
+      "name": "石油开采",
+      "member_count": 20,
+      "up_ratio": 0.8,
+      "strong_count": 7,
+      "median_change_pct": 1.3673000000000002,
+      "score": 21.1346
+    },
+    {
+      "name": "普钢",
+      "member_count": 26,
+      "up_ratio": 0.7692307692307693,
+      "strong_count": 6,
+      "median_change_pct": 1.1428,
+      "score": 20.4394
+    },
+    {
+      "name": "农药化肥",
+      "member_count": 58,
+      "up_ratio": 0.7241379310344828,
+      "strong_count": 19,
+      "median_change_pct": 0.9811000000000001,
+      "score": 19.7553
+    },
+    {
+      "name": "摩托车",
+      "member_count": 13,
+      "up_ratio": 0.6153846153846154,
+      "strong_count": 5,
+      "median_change_pct": 1.4125,
+      "score": 18.7481
+    },
+    {
+      "name": "港口",
+      "member_count": 16,
+      "up_ratio": 0.75,
+      "strong_count": 3,
+      "median_change_pct": 1.25255,
+      "score": 17.9051
+    },
+    {
+      "name": "饲料",
+      "member_count": 23,
+      "up_ratio": 0.6521739130434783,
+      "strong_count": 7,
+      "median_change_pct": 0.6667,
+      "score": 17.5508
+    },
+    {
+      "name": "出版业",
+      "member_count": 28,
+      "up_ratio": 0.5714285714285714,
+      "strong_count": 5,
+      "median_change_pct": 0.4773,
+      "score": 16.526
+    }
+  ],
+  "top3": [
+    {
+      "rank": 1,
+      "code": "603919.SH",
+      "name": "金徽酒",
+      "market": "沪市主板",
+      "close": 16.89,
+      "change_pct": 10.0326,
+      "sector": "白酒",
+      "sector_code": "白酒",
+      "level": "强",
+      "core_score": 64.6491,
+      "sector_score": 25.0,
+      "close_evidence_score": 29.6491,
+      "trend_score": 10.0,
+      "sector_up_ratio": 1.0,
+      "sector_strong_count": 18,
+      "sector_relative_strength": 6.0217,
+      "amount_ratio_3d": 2.883,
+      "trend_3d_pct": 16.0825,
+      "daily_fund_background": "日级资金未确认",
+      "reasons": [
+        "收盘涨幅 +10.03%",
+        "白酒行业上涨比例 100.0%，18只涨幅达到2%",
+        "相对所属行业强 +6.02 个百分点",
+        "成交额为前三日均值的 2.88 倍",
+        "盘中最高价高于前三个交易日最高价",
+        "最近三个交易日累计 +16.08%"
+      ],
+      "retrospective_only": true
+    },
+    {
+      "rank": 2,
+      "code": "600702.SH",
+      "name": "舍得酒业",
+      "market": "沪市主板",
+      "close": 37.49,
+      "change_pct": 10.0059,
+      "sector": "白酒",
+      "sector_code": "白酒",
+      "level": "强",
+      "core_score": 62.1111,
+      "sector_score": 25.0,
+      "close_evidence_score": 27.1111,
+      "trend_score": 10.0,
+      "sector_up_ratio": 1.0,
+      "sector_strong_count": 18,
+      "sector_relative_strength": 5.995,
+      "amount_ratio_3d": 2.037,
+      "trend_3d_pct": 13.1603,
+      "daily_fund_background": "日级资金未确认",
+      "reasons": [
+        "收盘涨幅 +10.01%",
+        "白酒行业上涨比例 100.0%，18只涨幅达到2%",
+        "相对所属行业强 +6.00 个百分点",
+        "成交额为前三日均值的 2.04 倍",
+        "盘中最高价高于前三个交易日最高价",
+        "最近三个交易日累计 +13.16%"
+      ],
+      "retrospective_only": true
+    },
+    {
+      "rank": 3,
+      "code": "605033.SH",
+      "name": "美邦股份",
+      "market": "沪市主板",
+      "close": 18.7,
+      "change_pct": 10.0,
+      "sector": "农药化肥",
+      "sector_code": "农药化肥",
+      "level": "强",
+      "core_score": 59.3454,
+      "sector_score": 19.7553,
+      "close_evidence_score": 29.5901,
+      "trend_score": 10.0,
+      "sector_up_ratio": 0.7241379310344828,
+      "sector_strong_count": 19,
+      "sector_relative_strength": 9.0189,
+      "amount_ratio_3d": 2.8634,
+      "trend_3d_pct": 11.2433,
+      "daily_fund_background": "日级资金未确认",
+      "reasons": [
+        "收盘涨幅 +10.00%",
+        "农药化肥行业上涨比例 72.4%，19只涨幅达到2%",
+        "相对所属行业强 +9.02 个百分点",
+        "成交额为前三日均值的 2.86 倍",
+        "盘中最高价高于前三个交易日最高价",
+        "最近三个交易日累计 +11.24%"
+      ],
+      "retrospective_only": true
+    }
+  ],
+  "fund_capability": "unavailable",
+  "fund_summary": "资金未确认，本次排序未使用资金项。",
+  "data_limitations": [
+    "这是盘后历史数据回溯，不是09:45、14:45或强异动的实时提醒证据。",
+    "当日分钟历史接口未形成可用记录；1/3/5分钟涨速与突然加速均未填充。",
+    "行业宽度使用Tushare股票基础资料的行业归属；概念板块未纳入本次回溯。",
+    "日级moneyflow只作为收盘背景，资金评分保持0分。",
+    "本次因主路线限频使用旧Super静态高级诊断；不构成V1主数据路线验收。"
+  ],
+  "provider_route": "https://ai-tool.indevs.in/tushare/pro (advanced diagnostic only)",
+  "raw_payload_persisted": false,
+  "credential_persisted_or_printed": false,
+  "schema_version": "stockwatcher-post-close-review-1",
+  "credential_source": "platform_secure_storage_super_advanced_diagnostic",
+  "credential_storage": "系统钥匙串",
+  "source_coverage": {
+    "stock_records": 5530,
+    "daily_records": {
+      "2026-07-30": 5528,
+      "2026-07-27": 5523,
+      "2026-07-28": 5524,
+      "2026-07-29": 5524
+    },
+    "moneyflow_records": 0,
+    "open_dates_checked": 23,
+    "mechanical_jump_exclusions": 0,
+    "optional_failures": [
+      "moneyflow:advanced-diagnostic-unavailable",
+      "adjustment_factor:advanced-diagnostic-unavailable"
+    ]
+  },
+  "minute_history_probe": {
+    "trade_date": "2026-07-30",
+    "status": "unavailable",
+    "used_in_review": false,
+    "reason": "当日stk_mins受控探测返回业务不可用"
+  }
+}

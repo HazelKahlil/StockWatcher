@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "authority": "NON_AUTHORITATIVE_DIAGNOSTIC",
+  "first_realtime_failure_preserved": true,
+  "raw_payload_persisted": false,
+  "credential_persisted": false,
+  "instrument_identifiers_persisted": false,
+  "super_checked_at": "2026-07-29T13:13:44.613907+08:00",
+  "super_checks": [
+    {
+      "name": "rt_k_single",
+      "status": "EMPTY",
+      "http_status": 200,
+      "safe_reason": "empty_data",
+      "records": 0,
+      "source_timestamp_present": false
+    },
+    {
+      "name": "rt_k_market",
+      "status": "EMPTY",
+      "http_status": 200,
+      "safe_reason": "empty_data",
+      "records": 0,
+      "source_timestamp_present": false
+    },
+    {
+      "name": "rt_min_1min",
+      "status": "FAIL",
+      "http_status": null,
+      "safe_reason": "timeout",
+      "records": null,
+      "source_timestamp_present": false
+    },
+    {
+      "name": "rt_min_daily_1min",
+      "status": "FAIL",
+      "http_status": null,
+      "safe_reason": "timeout",
+      "records": null,
+      "source_timestamp_present": false
+    }
+  ],
+  "super_catalog": {
+    "http_status": 200,
+    "rt_k_listed": true,
+    "rt_min_text_present": true,
+    "rt_min_daily_text_present": false
+  },
+  "fast_checked_at": "2026-07-29T13:18:11.107505+08:00",
+  "fast_check": {
+    "name": "rt_k_single",
+    "status": "FAIL",
+    "http_status": null,
+    "safe_reason": "business_error",
+    "records": null,
+    "source_timestamp_present": false
+  },
+  "official_contract": {
+    "rt_k_requires_separate_permission": true,
+    "rt_min_requires_freq": true,
+    "rt_min_freq_used": "1MIN",
+    "rt_min_requires_separate_permission": true,
+    "rt_min_daily_requires_rt_min_permission": true
+  },
+  "verdict": "FAIL",
+  "candidate_gate": "CLOSED"
+}

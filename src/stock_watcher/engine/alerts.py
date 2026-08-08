@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 
-from .candidates import CandidateBatch
+from .candidates import Candidate, CandidateBatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,10 +16,11 @@ class AlertPolicyConfig:
 
 
 class AlertTrigger(StrEnum):
-    """The explicitly classified source of an alert evaluation."""
-
     SCHEDULED_0945 = "scheduled-09:45"
-    SCHEDULED_1450 = "scheduled-14:50"
+    SCHEDULED_1445 = "scheduled-14:45"
+    # Compatibility symbol for saved v0.2 traces; it now resolves to the
+    # Human Owner-confirmed 14:45 trigger and is not shown in the ordinary UI.
+    SCHEDULED_1450 = "scheduled-14:45"
     INTRADAY = "intraday"
 
 
@@ -29,32 +30,183 @@ class AlertDecision:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class StrongMovementEvent:
+    triggering_codes: tuple[str, ...]
+    strength: float
+    funds_unconfirmed: bool
+
+
+@dataclass(slots=True)
+class StrongMovementDetector:
+    """Detect synchronized acceleration in the formal candidate pool.
+
+    The displayed Top 3 is deliberately stable and diversified, so it is not a
+    sufficient input for anomaly detection.  The detector keeps a bounded,
+    deterministic pool of formal candidates from the same full-market scan and
+    never lets a ``近`` supplement trigger an alert.
+    """
+
+    candidate_pool_size: int = 100
+    anomaly_pool_size: int | None = None
+    minimum_velocity_1m: float = 0.8
+    minimum_velocity_increase: float = 0.35
+    minimum_sector_score: float = 18.0
+    minimum_sector_increase: float = 0.1
+    minimum_amount_ratio_increase: float = 0.2
+    _last_velocity: dict[str, float] = field(default_factory=dict)
+    _last_sector_score: dict[str, float] = field(default_factory=dict)
+    _last_amount_ratio: dict[str, float] = field(default_factory=dict)
+    _last_source_ts: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.anomaly_pool_size is not None:
+            self.candidate_pool_size = self.anomaly_pool_size
+        if self.candidate_pool_size < 1:
+            raise ValueError("candidate_pool_size must be positive")
+
+    def reset(self) -> None:
+        """Forget pre-disconnect baselines so recovery cannot emit old events."""
+        self._last_velocity = {}
+        self._last_sector_score = {}
+        self._last_amount_ratio = {}
+        self._last_source_ts = None
+
+    def evaluate(
+        self,
+        batch: CandidateBatch,
+        *,
+        candidate_pool: tuple[Candidate, ...] | None = None,
+    ) -> StrongMovementEvent | None:
+        if self._last_source_ts is not None and batch.source_ts <= self._last_source_ts:
+            return None
+        self._last_source_ts = batch.source_ts
+        triggering: list[str] = []
+        strengths: list[float] = []
+        funds_unconfirmed = False
+        pool = candidate_pool if candidate_pool is not None else batch.candidates
+        ranked_pool = tuple(
+            sorted(
+                (candidate for candidate in pool if candidate.is_formal),
+                key=lambda candidate: (
+                    -candidate.total_score,
+                    candidate.code,
+                ),
+            )[: self.candidate_pool_size]
+        )
+        for candidate in ranked_pool:
+            previous_velocity = self._last_velocity.get(candidate.code)
+            previous_sector = self._last_sector_score.get(candidate.code)
+            self._last_velocity[candidate.code] = candidate.velocity_pct
+            self._last_sector_score[candidate.code] = candidate.sector_score
+            amount_ratio = candidate.amount_ratio_1m
+            previous_amount = self._last_amount_ratio.get(candidate.code)
+            if isinstance(amount_ratio, (int, float)):
+                self._last_amount_ratio[candidate.code] = float(amount_ratio)
+            if previous_velocity is None or previous_sector is None:
+                continue
+            velocity_increase = (
+                candidate.velocity_pct - previous_velocity
+                if previous_velocity is not None
+                else candidate.acceleration_pct
+            )
+            sector_increase = (
+                candidate.sector_score - previous_sector
+                if previous_sector is not None
+                else 0.0
+            )
+            if (
+                candidate.velocity_pct < self.minimum_velocity_1m
+                or velocity_increase is None
+                or velocity_increase < self.minimum_velocity_increase
+                or candidate.sector_score < self.minimum_sector_score
+                or sector_increase < self.minimum_sector_increase
+            ):
+                continue
+            amount_increase = 0.0
+            if previous_amount is not None and isinstance(amount_ratio, (int, float)):
+                amount_increase = float(amount_ratio) - previous_amount
+            fund_is_unconfirmed = (
+                candidate.super_large_state == "unconfirmed"
+                and candidate.large_state == "unconfirmed"
+            )
+            fund_supports = (
+                candidate.super_large_state == "enhancing"
+                or candidate.large_state == "enhancing"
+            ) and candidate.fund_sync_state != "diverging"
+            if not fund_is_unconfirmed and not fund_supports:
+                continue
+            funds_unconfirmed = funds_unconfirmed or fund_is_unconfirmed
+            triggering.append(candidate.code)
+            strengths.append(
+                velocity_increase
+                + max(0.0, sector_increase)
+                + (
+                    min(1.0, amount_increase)
+                    if amount_increase >= self.minimum_amount_ratio_increase
+                    else 0.0
+                )
+            )
+        if not triggering:
+            return None
+        return StrongMovementEvent(
+            triggering_codes=tuple(triggering),
+            strength=max(strengths),
+            funds_unconfirmed=funds_unconfirmed,
+        )
+
+
 @dataclass(slots=True)
 class AlertPolicy:
     config: AlertPolicyConfig = field(default_factory=AlertPolicyConfig)
     _last_codes: tuple[str, ...] = ()
     _last_sent: dict[str, datetime] = field(default_factory=dict)
+    _last_intraday_at: datetime | None = None
     _intraday_sent_today: int = 0
+    _fixed_sent: set[AlertTrigger] = field(default_factory=set)
     _day: date | None = None
     _replacement_streak: int = 0
     _replacement_relation: tuple[str, str] | None = None
     _last_processed_source_ts: datetime | None = None
+    _last_event_strength: float = 0.0
 
-    def decide(self, batch: CandidateBatch, now: datetime, trigger: AlertTrigger) -> AlertDecision:
+    def decide(
+        self,
+        batch: CandidateBatch,
+        now: datetime,
+        trigger: AlertTrigger,
+        *,
+        strong_movement: bool = True,
+        triggering_codes: tuple[str, ...] = (),
+        event_strength: float = 0.0,
+    ) -> AlertDecision:
         if self._day != now.date():
-            self._day, self._intraday_sent_today = now.date(), 0
-            self._reset_replacement_debounce()
-            self._last_sent = {}
-            self._last_codes = ()
-        if (
-            trigger is AlertTrigger.INTRADAY
-            and self._intraday_sent_today >= self.config.daily_limit
-        ):
-            return AlertDecision(False, "daily-limit")
+            self._reset_day(now.date())
         codes = tuple(candidate.code for candidate in batch.candidates)
+        if len(codes) != 3:
+            return AlertDecision(False, "requires-three")
+        if trigger in {AlertTrigger.SCHEDULED_0945, AlertTrigger.SCHEDULED_1445}:
+            if trigger in self._fixed_sent:
+                return AlertDecision(False, "fixed-already-sent")
+            if (
+                self._last_processed_source_ts is not None
+                and batch.source_ts < self._last_processed_source_ts
+            ):
+                return AlertDecision(False, "stale-source")
+            self._last_processed_source_ts = batch.source_ts
+            self._fixed_sent.add(trigger)
+            self._last_codes = codes
+            return AlertDecision(True, trigger.value)
+        if not strong_movement:
+            return AlertDecision(False, "not-strong-movement")
+        if self._intraday_sent_today >= self.config.daily_limit:
+            return AlertDecision(False, "daily-limit")
+        if (
+            self._last_intraday_at is not None
+            and now - self._last_intraday_at < self.config.cooldown
+        ):
+            return AlertDecision(False, "global-cooldown")
         if self._replacement_relation is not None and codes == self._last_codes:
-            # Returning to the accepted Top3 interrupts a pending replacement,
-            # even when this batch is later rejected as stale.
             self._reset_replacement_debounce(clear_source_ts=True)
         if (
             self._last_processed_source_ts is not None
@@ -62,14 +214,13 @@ class AlertPolicy:
         ):
             return AlertDecision(False, "stale-source")
         self._last_processed_source_ts = batch.source_ts
-        if not codes:
-            return AlertDecision(False, "empty")
-        if codes == self._last_codes:
+        if codes == self._last_codes and event_strength <= self._last_event_strength:
             return AlertDecision(False, "unchanged")
+        cooldown_codes = triggering_codes or codes
         if any(
             now - sent < self.config.cooldown
             for code, sent in self._last_sent.items()
-            if code in codes
+            if code in cooldown_codes
         ):
             return AlertDecision(False, "cooldown")
         relation = self._replacement_relation_for(batch)
@@ -84,14 +235,14 @@ class AlertPolicy:
         else:
             self._reset_replacement_debounce()
         self._last_codes = codes
-        self._last_sent.update({code: now for code in codes})
-        if trigger is AlertTrigger.INTRADAY:
-            self._intraday_sent_today += 1
+        self._last_sent.update({code: now for code in cooldown_codes})
+        self._last_intraday_at = now
+        self._intraday_sent_today += 1
+        self._last_event_strength = event_strength
         self._reset_replacement_debounce()
-        return AlertDecision(True, "changed")
+        return AlertDecision(True, "strong-movement")
 
     def _replacement_relation_for(self, batch: CandidateBatch) -> tuple[str, str] | None:
-        """Return a single near-margin top-three replacement, if this is one."""
         if not self._last_codes:
             return None
         previous = set(self._last_codes[:3])
@@ -107,6 +258,16 @@ class AlertPolicy:
         if entering_candidate.score - third.score >= self.config.replacement_margin:
             return None
         return next(iter(outgoing)), next(iter(entering))
+
+    def _reset_day(self, day: date) -> None:
+        self._day = day
+        self._intraday_sent_today = 0
+        self._last_intraday_at = None
+        self._fixed_sent = set()
+        self._last_sent = {}
+        self._last_codes = ()
+        self._last_event_strength = 0.0
+        self._reset_replacement_debounce(clear_source_ts=True)
 
     def _reset_replacement_debounce(self, *, clear_source_ts: bool = False) -> None:
         self._replacement_streak = 0

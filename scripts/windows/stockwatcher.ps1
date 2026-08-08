@@ -50,6 +50,26 @@ function Invoke-CheckedNative {
     }
 }
 
+function Resolve-Iscc {
+    $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    $candidates = @()
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+    }
+    if ($env:ProgramFiles) {
+        $candidates += Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    throw "未找到 Inno Setup（ISCC.exe）；无法完成 Windows 安装器编译。"
+}
+
 function Write-StrictUtf8Text {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -390,6 +410,23 @@ function Ensure-Environment {
     New-Item -ItemType Directory -Force -Path $ReportRoot | Out-Null
 }
 
+function Ensure-PyInstaller {
+    & $PythonPath -m PyInstaller --version *> $null
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+    $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
+    if (-not $uv) {
+        throw "当前开发环境缺少 PyInstaller；请先安装 uv 并执行 uv sync --all-groups。"
+    }
+    Invoke-CheckedNative -Command $uv.Source -Arguments @(
+        "sync", "--all-groups", "--project", $ProjectRoot
+    ) -FailureMessage "同步锁定的构建依赖失败"
+    Invoke-CheckedNative -Command $PythonPath -Arguments @(
+        "-m", "PyInstaller", "--version"
+    ) -FailureMessage "锁定环境中没有可用的 PyInstaller"
+}
+
 function Invoke-Preflight {
     Write-Title "检查 Windows / 通达信 / TQ 服务"
     New-Item -ItemType Directory -Force -Path $ReportRoot | Out-Null
@@ -436,7 +473,7 @@ function Invoke-Preflight {
 function Invoke-Run {
     Write-Title "启动 StockWatcher"
     Ensure-Environment
-    Invoke-CheckedNative -Command $PythonPath -Arguments @("-m", "stock_watcher.ui.app", "--provider", "tdxquant", "--endpoint", $Endpoint) -FailureMessage "StockWatcher 启动失败"
+    Invoke-CheckedNative -Command $PythonPath -Arguments @("-m", "stock_watcher.ui.app", "--provider", "tushare") -FailureMessage "StockWatcher 启动失败"
 }
 
 function Invoke-Probe {
@@ -449,7 +486,7 @@ function Invoke-Probe {
 function Invoke-Build {
     Write-Title "构建 Windows 分发包"
     Ensure-Environment
-    Invoke-CheckedNative -Command $PythonPath -Arguments @("-m", "pip", "install", "--upgrade", "pyinstaller>=6,<7") -FailureMessage "安装 PyInstaller 失败"
+    Ensure-PyInstaller
     $driveName = $null
     $driveMapped = $false
     $stageParent = $null
@@ -479,33 +516,29 @@ function Invoke-Build {
         if (-not (Test-Path -LiteralPath (Join-Path $bundleRoot "StockWatcher.exe") -PathType Leaf)) {
             throw "PyInstaller 未生成完整的 StockWatcher bundle。"
         }
-        $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-        if ($iscc) {
-            $installerScript = Join-Path $mappedRoot "packaging\windows\StockWatcher.iss"
-            Assert-IsccPathBudget -BundleRoot $bundleRoot -InstallerScript $installerScript
-            New-Item -ItemType Directory -Force -Path $stageInstaller | Out-Null
-            Invoke-CheckedNative -Command $iscc.Source -Arguments @(
-                "/DStockWatcherBundleDir=$bundleRoot",
-                "/DStockWatcherOutputDir=$stageInstaller",
-                $installerScript
-            ) -FailureMessage "Inno Setup 安装器编译失败"
-        } else {
-            throw "未找到 Inno Setup（ISCC.exe）；无法完成 Windows 安装器编译。"
-        }
-        $installer = Join-Path $stageInstaller "StockWatcher-0.3.0-alpha-setup.exe"
+        $iscc = Resolve-Iscc
+        $installerScript = Join-Path $mappedRoot "packaging\windows\StockWatcher.iss"
+        Assert-IsccPathBudget -BundleRoot $bundleRoot -InstallerScript $installerScript
+        New-Item -ItemType Directory -Force -Path $stageInstaller | Out-Null
+        Invoke-CheckedNative -Command $iscc -Arguments @(
+            "/DStockWatcherBundleDir=$bundleRoot",
+            "/DStockWatcherOutputDir=$stageInstaller",
+            $installerScript
+        ) -FailureMessage "Inno Setup 安装器编译失败"
+        $installer = Join-Path $stageInstaller "StockWatcher-0.4.0-alpha-setup.exe"
         if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
             throw "Inno Setup 未生成安装器。"
         }
-        $portable = Join-Path $stageRoot "StockWatcher-0.3.0-alpha-portable.zip"
+        $portable = Join-Path $stageRoot "StockWatcher-0.4.0-alpha-portable.zip"
         Compress-Archive -Path (Join-Path $bundleRoot "*") -DestinationPath $portable -CompressionLevel Optimal
         $publishArtifacts = @(
             [PSCustomObject]@{
                 Source = $installer
-                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.3.0-alpha-setup.exe"
+                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.4.0-alpha-setup.exe"
             },
             [PSCustomObject]@{
                 Source = $portable
-                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.3.0-alpha-portable.zip"
+                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.4.0-alpha-portable.zip"
             }
         )
         Publish-BuildArtifactsTransaction -Artifacts $publishArtifacts -TransactionParent $stageParent -RunId $runId

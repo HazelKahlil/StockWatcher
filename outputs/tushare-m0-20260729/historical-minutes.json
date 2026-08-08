@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "phase": "historical_minutes",
+  "raw_payload_persisted": false,
+  "credential_persisted": false,
+  "observations": [
+    {
+      "sample": 1,
+      "freq": "1min",
+      "status": "PASS",
+      "http_status": 200,
+      "elapsed_ms": 1640.0,
+      "records": 723,
+      "earliest": "2026-07-24 09:30:00",
+      "latest": "2026-07-28 15:00:00",
+      "rows_by_date": {
+        "2026-07-24": 241,
+        "2026-07-27": 241,
+        "2026-07-28": 241
+      },
+      "duplicate_timestamps": 0,
+      "lunch_break_rows": 0,
+      "invalid_ohlc_or_negative_unit_rows": 0,
+      "volume_unit": "shares",
+      "amount_unit": "CNY"
+    },
+    {
+      "sample": 1,
+      "freq": "5min",
+      "status": "PASS",
+      "http_status": 200,
+      "elapsed_ms": 953.0,
+      "records": 147,
+      "earliest": "2026-07-24 09:30:00",
+      "latest": "2026-07-28 15:00:00",
+      "rows_by_date": {
+        "2026-07-24": 49,
+        "2026-07-27": 49,
+        "2026-07-28": 49
+      },
+      "duplicate_timestamps": 0,
+      "lunch_break_rows": 0,
+      "invalid_ohlc_or_negative_unit_rows": 0,
+      "volume_unit": "shares",
+      "amount_unit": "CNY"
+    },
+    {
+      "sample": 2,
+      "freq": "1min",
+      "status": "PASS",
+      "http_status": 200,
+      "elapsed_ms": 1094.0,
+      "records": 723,
+      "earliest": "2026-07-24 09:30:00",
+      "latest": "2026-07-28 15:00:00",
+      "rows_by_date": {
+        "2026-07-24": 241,
+        "2026-07-27": 241,
+        "2026-07-28": 241
+      },
+      "duplicate_timestamps": 0,
+      "lunch_break_rows": 0,
+      "invalid_ohlc_or_negative_unit_rows": 0,
+      "volume_unit": "shares",
+      "amount_unit": "CNY"
+    },
+    {
+      "sample": 2,
+      "freq": "5min",
+      "status": "PASS",
+      "http_status": 200,
+      "elapsed_ms": 656.0,
+      "records": 147,
+      "earliest": "2026-07-24 09:30:00",
+      "latest": "2026-07-28 15:00:00",
+      "rows_by_date": {
+        "2026-07-24": 49,
+        "2026-07-27": 49,
+        "2026-07-28": 49
+      },
+      "duplicate_timestamps": 0,
+      "lunch_break_rows": 0,
+      "invalid_ohlc_or_negative_unit_rows": 0,
+      "volume_unit": "shares",
+      "amount_unit": "CNY"
+    },
+    {
+      "sample": 3,
+      "freq": "1min",
+      "status": "PASS",
+      "http_status": 200,
+      "elapsed_ms": 907.0,
+      "records": 723,
+      "earliest": "2026-07-24 09:30:00",
+      "latest": "2026-07-28 15:00:00",
+      "rows_by_date": {
+        "2026-07-24": 241,
+        "2026-07-27": 241,
+        "2026-07-28": 241
+      },
+      "duplicate_timestamps": 0,
+      "lunch_break_rows": 0,
+      "invalid_ohlc_or_negative_unit_rows": 0,
+      "volume_unit": "shares",
+      "amount_unit": "CNY"
+    },
+    {
+      "sample": 3,
+      "freq": "5min",
+      "status": "PASS",
+      "http_status": 200,
+      "elapsed_ms": 1359.0,
+      "records": 147,
+      "earliest": "2026-07-24 09:30:00",
+      "latest": "2026-07-28 15:00:00",
+      "rows_by_date": {
+        "2026-07-24": 49,
+        "2026-07-27": 49,
+        "2026-07-28": 49
+      },
+      "duplicate_timestamps": 0,
+      "lunch_break_rows": 0,
+      "invalid_ohlc_or_negative_unit_rows": 0,
+      "volume_unit": "shares",
+      "amount_unit": "CNY"
+    }
+  ],
+  "verdict": "PASS"
+}

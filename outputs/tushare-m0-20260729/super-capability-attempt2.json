@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-07-29T12:50:25.467451+08:00",
+  "verdict": "FAIL",
+  "observations": [
+    {
+      "capability": "health",
+      "provider_profile": "super",
+      "http_status": 200,
+      "elapsed_ms": 2359.0,
+      "returned_records": 0,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": []
+    },
+    {
+      "capability": "status",
+      "provider_profile": "super",
+      "http_status": 404,
+      "elapsed_ms": 1657.0,
+      "returned_records": 0,
+      "source_timestamp_present": false,
+      "status": "UNAVAILABLE",
+      "safe_reason": "endpoint_not_available",
+      "field_names": []
+    },
+    {
+      "capability": "catalog",
+      "provider_profile": "super",
+      "http_status": 200,
+      "elapsed_ms": 1547.0,
+      "returned_records": 1,
+      "source_timestamp_present": false,
+      "status": "PASS",
+      "safe_reason": null,
+      "field_names": [
+        "blocked_api_patterns",
+        "cache_policy",
+        "categories",
+        "category_python_examples",
+        "code",
+        "examples",
+        "mode"
+      ]
+    },
+    {
+      "capability": "trade_cal",
+      "provider_profile": "super",
+      "http_status": null,
+      "elapsed_ms": null,
+      "returned_records": null,
+      "source_timestamp_present": false,
+      "status": "FAIL",
+      "safe_reason": "business_error",
+      "field_names": []
+    }
+  ],
+  "raw_payload_persisted": false,
+  "credential_persisted": false
+}

@@ -20,6 +20,11 @@
 交接基线的导入取舍、源哈希、阅读顺序和冲突优先级见 [reference/v2.0/README.md](reference/v2.0/README.md)。长期事实和版本 README 应引用原始基线，不复制整段需求。
 
 ## 当前导航
+- 收口总索引：[../PROJECT_INDEX.md](../PROJECT_INDEX.md) 与 [../CURRENT_RELEASES.json](../CURRENT_RELEASES.json)
+- 起始指南：[00-START-HERE.md](00-START-HERE.md)
+- 当前状态：[01-CURRENT-STATUS.md](01-CURRENT-STATUS.md)
+- 轨道状态：[tracks/app-mac.md](tracks/app-mac.md)、[tracks/web.md](tracks/web.md)、[tracks/windows.md](tracks/windows.md)
+- 归档与 worktree 规则：[operations/artifact-locations.md](operations/artifact-locations.md)、[operations/branch-and-worktree-policy.md](operations/branch-and-worktree-policy.md)
 
 - 长期事实：[project/index.md](project/index.md)
 - 规则入口：[process/index.md](process/index.md)
@@ -28,6 +33,12 @@
 - 版本索引：[visions/README.md](visions/README.md)
 - 已完成（本地待同步）：[visions/v0.1-mac-replay-foundation/README.md](visions/v0.1-mac-replay-foundation/README.md)
 - 已完成（本地待同步）：[visions/v0.2-mac-local-alpha/README.md](visions/v0.2-mac-local-alpha/README.md)
-- 活跃版本（Windows TdxQuant 数据闸门）：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)
+- 当前共享返修：
+  [visions/v0.4.1-shared-connection-gate/README.md](visions/v0.4.1-shared-connection-gate/README.md)
+- 当前 Mac V1：
+  [visions/v0.4.2-macos-v1-port/README.md](visions/v0.4.2-macos-v1-port/README.md)
+- Windows V1 真实 Top3（真实验收仍未通过）：
+  [visions/v0.4-v1-feature-complete/README.md](visions/v0.4-v1-feature-complete/README.md)
+- 可选 TdxQuant 诊断历史：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)
 - Windows 一页交接：[visions/v0.3-windows-data-gate/windows-handoff.md](visions/v0.3-windows-data-gate/windows-handoff.md)
 - Windows Codex 直接交接：[visions/v0.3-windows-data-gate/session-handoff-windows-codex.md](visions/v0.3-windows-data-gate/session-handoff-windows-codex.md)

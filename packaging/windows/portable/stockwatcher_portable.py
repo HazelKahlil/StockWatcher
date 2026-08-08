@@ -18,11 +18,16 @@ OFFICIAL_PUBLISHERS = (
     "Shenzhen Fortune Trend Technology",
 )
 REQUIRED_DEPENDENCIES = {
+    "keyring": ("keyring", "25.7.0"),
+    "lxml": ("lxml", "6.1.1"),
+    "numpy": ("numpy", "2.4.6"),
+    "pandas": ("pandas", "3.0.5"),
     "PySide6": ("PySide6", "6.11.1"),
     "pydantic": ("pydantic", "2.13.4"),
+    "requests": ("requests", "2.34.2"),
+    "tushare": ("tushare", "1.4.29"),
     "yaml": ("PyYAML", "6.0.3"),
     "tzdata": ("tzdata", "2026.3"),
-    "tqcenter": ("tqcenter", None),
 }
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 REPORT_RELATIVE_PATH = Path("StockWatcher") / "reports" / "tdxquant-preflight.json"
@@ -68,7 +73,7 @@ def validate_application(layout: PortableLayout) -> None:
     )
     if not all(path.is_file() for path in required):
         raise PortableLaunchError(
-            "便携包缺少 StockWatcher 应用、原生预检或 UI 入口，程序未启动。"
+            "便携包缺少 StockWatcher 应用、可选诊断模块或 UI 入口，程序未启动。"
             "请重新取得并核对完整冻结 ZIP。"
         )
 
@@ -280,6 +285,14 @@ def run_native_preflight(
 
 def launch_stockwatcher_ui(
     layout: PortableLayout | None,
+) -> int:
+    app = _load_application_module(layout, "stock_watcher.ui.app")
+    sys.argv = ["StockWatcher", "--provider", "tushare"]
+    return int(app.run())
+
+
+def launch_tdx_diagnostic_ui(
+    layout: PortableLayout | None,
     *,
     terminal: Path,
 ) -> int:
@@ -329,20 +342,7 @@ def launch_once(layout: PortableLayout | None = None) -> int:
         missing = missing_dependencies()
         if missing:
             raise PortableLaunchError(_dependency_message(missing))
-    terminal = find_official_terminal()
-    if terminal is None:
-        raise PortableLaunchError(
-            "未找到数字签名有效且发布者匹配官方公司的通达信终端。"
-            "StockWatcher 未启动。请由本人通过官方终端的正常入口启动并登录后重试。"
-        )
-    if not run_native_preflight(resolved_layout, terminal=terminal):
-        raise PortableLaunchError(
-            "原生 TdxQuant 预检未通过，StockWatcher 候选界面未启动。"
-            "本入口不会自动启动终端或请求管理员权限。"
-            "请由本人通过官方终端的正常入口完成启动、登录并开启 TQ 后，"
-            "再双击主入口重试。"
-        )
-    return launch_stockwatcher_ui(resolved_layout, terminal=terminal)
+    return launch_stockwatcher_ui(resolved_layout)
 
 
 def main() -> int:
