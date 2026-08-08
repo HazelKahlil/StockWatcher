@@ -9,6 +9,8 @@ const refreshStages = [
 ];
 let refreshProgressTimer = null;
 let refreshProgressHideTimer = null;
+const handledAlertIds = new Set();
+let connectionWatermark = null;
 
 function clearRefreshProgressTimers() {
   if (refreshProgressTimer) {
@@ -155,6 +157,80 @@ function cardFor(candidate, state) {
   </article>`;
 }
 
+function compactPrice(value) {
+  const price = Number(value);
+  return Number.isFinite(price) ? `¥${price.toFixed(2)}` : '¥--.--';
+}
+
+function compactPct(value) {
+  const pct = Number(value);
+  if (!Number.isFinite(pct)) return '--.--%';
+  return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+}
+
+function compactAlertCard(candidate, triggeringCodes) {
+  const rank = Math.min(3, Math.max(1, Number(candidate.rank) || 1));
+  const level = levelMeta(candidate);
+  const isTrigger = triggeringCodes.has(String(candidate.code));
+  const rankStr = String(rank).padStart(2, '0');
+  return `
+    <article class="strong-alert-mini-card ${isTrigger ? 'is-trigger' : ''}">
+      <div class="strong-alert-mini-top">
+        <span class="rank rank-${rank}-badge">${rankStr}</span>
+        <span class="level-tag level-${level.tone}">${esc(level.label)}</span>
+      </div>
+      <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}</strong>
+      <span class="strong-alert-mini-code">${esc(candidate.code || '—')}</span>
+      <div class="strong-alert-mini-market">
+        <span class="strong-alert-mini-price">${compactPrice(candidate.price)}</span>
+        <span class="strong-alert-mini-pct">${compactPct(candidate.change_pct)}</span>
+      </div>
+    </article>`;
+}
+
+function showStrongAlert(payload, state) {
+  const stack = document.getElementById('strong-alerts');
+  if (!stack || payload.trigger_type !== 'intraday') return;
+  const triggeringCodes = new Set((payload.triggering_codes || []).map(String));
+  const candidates = Array.isArray(state?.candidates) ? state.candidates.slice(0, 3) : [];
+  const triggerCandidate = candidates.find((candidate) => triggeringCodes.has(String(candidate.code)));
+  const triggerName = triggerCandidate?.name || [...triggeringCodes][0] || '候选股票';
+  const sectorName = triggerCandidate?.sector_name || '';
+  const alertId = esc(payload.alert_id || Date.now());
+  const cards = candidates.length
+    ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes)).join('')
+    : `<div class="strong-alert-syncing">${esc([...triggeringCodes].join('、') || '触发股票')} · 实时卡片同步中</div>`;
+  const toast = document.createElement('article');
+  toast.className = 'strong-alert-toast';
+  toast.dataset.alertId = alertId;
+  toast.setAttribute('role', 'alert');
+  toast.innerHTML = `
+    <div class="strong-alert-header">
+      <div>
+        <span class="strong-alert-kicker">盘中强异动</span>
+        <time datetime="${esc(payload.displayed_at || '')}">${fmtTime(payload.displayed_at)}</time>
+      </div>
+      <button type="button" class="strong-alert-dismiss" data-dismiss-alert>关闭</button>
+    </div>
+    <h2 class="strong-alert-title">发现强异动信号</h2>
+    <p class="strong-alert-summary">${esc(triggerName)}${sectorName ? ` · ${esc(sectorName)}` : ''} · 请及时查看</p>
+    <div class="strong-alert-mini-grid">${cards}</div>
+    <div class="strong-alert-footer">
+      <a href="/alerts">查看提醒中心</a>
+      <span>浏览器通知已同步</span>
+    </div>`;
+  stack.prepend(toast);
+  toast.querySelector('[data-dismiss-alert]')?.addEventListener('click', () => {
+    toast.classList.add('is-leaving');
+    setTimeout(() => toast.remove(), 220);
+  });
+  setTimeout(() => {
+    if (!toast.isConnected) return;
+    toast.classList.add('is-leaving');
+    setTimeout(() => toast.remove(), 220);
+  }, 15000);
+}
+
 function liveDateTimeLabel() {
   const parts = new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -270,22 +346,40 @@ async function loadState() {
   try {
     const state = await apiJson('/api/v1/state');
     renderState(state);
+    return state;
   } catch { /* WS/REST 双通道，断开时保留最后数据 */ }
+  return null;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
   await loadState();
-  connectEvents();
-  onEvent((event) => {
+  onEvent(async (event) => {
+    if (event.event_type === 'server.hello') {
+      connectionWatermark = Number(event.payload?.latest_event_id || 0);
+      return;
+    }
     if (event.event_type === 'state.snapshot' || event.event_type === 'state.changed' || event.event_type === 'candidates.updated') {
       loadState();
     }
     if (event.event_type === 'alert.created') {
-      notify('StockWatcher 提醒', `触发：${event.payload.trigger_type}`);
+      const eventId = Number(event.event_id || 0);
+      if (connectionWatermark != null && eventId <= connectionWatermark) return;
+      const alertId = Number(event.payload?.alert_id || 0);
+      if (alertId && handledAlertIds.has(alertId)) return;
+      if (alertId) handledAlertIds.add(alertId);
+      const state = await loadState();
+      if (event.payload.trigger_type === 'intraday') {
+        showStrongAlert(event.payload, state);
+        const code = event.payload.triggering_codes?.[0] || '候选股票';
+        notify('盘中强异动', `${code} 触发强异动提醒，请及时查看`);
+      } else {
+        notify('StockWatcher 提醒', `触发：${event.payload.trigger_type}`);
+      }
     }
   });
+  connectEvents();
   const refreshButton = document.getElementById('manual-refresh');
   refreshButton.addEventListener('click', async () => {
     const startedAt = beginRefreshProgress();

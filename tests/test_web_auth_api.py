@@ -208,6 +208,15 @@ def test_last_active_admin_cannot_be_removed(
 
 def test_dashboard_assets_have_no_inline_styles() -> None:
     root = Path(__file__).resolve().parents[1]
+    dashboard_template = (root / "src/stock_watcher/server/templates/dashboard.html").read_text(
+        encoding="utf-8"
+    )
+    dashboard_script = (root / "src/stock_watcher/server/static/dashboard.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'id="strong-alerts"' in dashboard_template
+    assert "showStrongAlert" in dashboard_script
+    assert "trigger_type === 'intraday'" in dashboard_script
     for relative in (
         "src/stock_watcher/server/templates/dashboard.html",
         "src/stock_watcher/server/static/dashboard.js",
