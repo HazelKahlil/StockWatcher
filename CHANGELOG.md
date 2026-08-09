@@ -94,6 +94,10 @@
 
 ### Fixed
 
+- 生产全市场缓存默认至少 4500 只并要求行业覆盖 95%；日线必须匹配请求交易日，缺最新日线、
+  复权变化和当日复牌统一排除，避免截断证券池或机械跳变污染候选。
+- 实时扫描拒绝混合日期和日期回退；交易日切换清空盘中价格/成交量、稳定 Top3 与强异动
+  基线，强制基础刷新重新读取证券和日线。
 - RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
 - A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
 - Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.
