@@ -10,10 +10,13 @@
 - schema 升至 v8，保留每次 `command.updated` 状态迁移；修复 Token 三次轮换、命令限流、
   多标签页 CSRF、密码改动会话撤销、最后管理员竞态和命令详情越权。
 - restore 改为完整替换 reports；provider preflight 严格验证全市场覆盖和真实源时间。
+- 真实 Docker 恢复演练补齐 reports 命名卷挂载点路径：在卷内 staging/rollback，避免重命名
+  挂载点导致恢复失败，同时确保旧报告不会残留。
 
 ### Status
 
-- 只完成本机代码返修，未部署；交易日现场验收待执行，状态保持 `BLOCKED / NOT_ACCEPTED`。
+- 本机 Docker 已加载 `ec00089`；schema v8、SQLite 完整性、外键、Web/Worker/Tunnel、公开
+  readiness 和部署后备份均已验证。交易日现场验收待执行，状态保持 `BLOCKED / NOT_ACCEPTED`。
 
 ## [web-internal-test-v1] - 2026-08-07
 

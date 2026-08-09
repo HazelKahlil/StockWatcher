@@ -74,8 +74,8 @@
 
 ## 2026-08-09 全仓 Review 返修（本机基准）
 
-- Human Owner 暂缓 VPS、Windows 和中国大陆网络验证；本轮只修本机 Mac 代码，不部署、
-  不重启线上容器、不改账号/DNS，也不读取或回显任何凭据。
+- Human Owner 暂缓 VPS、Windows 和中国大陆网络验证；先完成本机 Mac 代码返修，随后明确授权
+  部署到现有 Mac Docker；不改账号/DNS，也不读取或回显任何凭据。
 - 行情与候选 fail-closed：生产证券池至少 4500 只、行业覆盖至少 95%；日线逐行匹配请求
   交易日；缺最新日线、复权因子变化和当日复牌进入机械跳变排除；跨交易日清空盘中滚动
   基线，混合日期和日期回退停止候选；强制刷新重新读取证券列表与日线。
@@ -91,8 +91,16 @@
 - 运维：restore 完整替换 reports 目录，避免遗留旧 PDF；provider preflight 修复 `full`
   解析，并校验证券数量/唯一性/行业覆盖、实时覆盖、唯一代码、真实 `source_ts`、交易日、
   交易时段、新鲜度和扫描跨度。
+- 本机部署首次 schema v8 迁移返回 `database disk image is malformed`，服务保持停止并保留
+  失败现场；随后从升级前备份恢复，验证 `integrity_check=ok`、schema v7、外键问题 0 后，
+  重新迁移到 schema v8 成功。
+- 恢复演练暴露 reports 命名卷挂载点不能整体重命名；提交 `ec00089` 改为在挂载卷内 staging
+  和 rollback，定向测试、Ruff、Mypy 通过，真实容器恢复返回 `reports_restored=true`。
 - 本机代码验证：`413 passed / 25 skipped / 11 deselected`；11 项中 9 项为当前受限沙箱明确
   排除（6 个 QLocalServer socket、3 个已安装 App 真实数据库合同），另 2 项为 live_tushare；
   Ruff、Mypy（136 source files）、原生 JS 语法、workspace 29 项和 `git diff --check` 通过。
+- 本机 Docker 当前运行镜像 `stockwatcher-web:web-internal-test-v1-ec00089`；Web、Worker、
+  tunnel gateway、cloudflared、origin、公开 HTTPS live/ready 均通过，运行源码为 `ec00089`。
+  部署后 schema v8 备份再次验证 `integrity_check=ok` 且外键问题为 0。
 - 当前仍为 `BLOCKED / NOT_ACCEPTED`：静态/回归验证不能替代下一交易日的真实全市场、Top3、
   09:45/14:45、强异动和 15:30 现场验收。
