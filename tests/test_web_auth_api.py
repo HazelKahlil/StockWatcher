@@ -328,6 +328,20 @@ def test_login_uses_external_script_compatible_with_csp() -> None:
     assert "<script type=\"module\">" not in login_template
 
 
+def test_base_template_declares_favicon_assets() -> None:
+    root = Path(__file__).resolve().parents[1]
+    base_template = (root / "src/stock_watcher/server/templates/base.html").read_text(
+        encoding="utf-8"
+    )
+    static = root / "src/stock_watcher/server/static"
+    assert 'href="/static/favicon.ico?v=1"' in base_template
+    assert 'href="/static/favicon-32x32.png?v=1"' in base_template
+    assert 'href="/static/apple-touch-icon.png?v=1"' in base_template
+    assert (static / "favicon.ico").read_bytes().startswith(b"\x00\x00\x01\x00")
+    for name in ("favicon-32x32.png", "apple-touch-icon.png", "stockwatcher-icon.png"):
+        assert (static / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_snapshot_bound_detail_race(
     app_env: tuple[Any, SQLiteStore, Any, Any, Any],
     tmp_path: Path,
