@@ -110,3 +110,15 @@
   丢失日志。
 - 当前仍为 `BLOCKED / NOT_ACCEPTED`：静态/回归验证不能替代下一交易日的真实全市场、Top3、
   09:45/14:45、强异动和 15:30 现场验收。
+
+## 2026-08-09 Web favicon
+
+- 使用 Human Owner 提供的六边形 StockWatcher 图，机械去除白色背景并裁成真实 Alpha 透明
+  1024×1024 主图；导出 16/32/48 多尺寸 ICO、32×32 PNG 和 180×180 Apple Touch Icon。
+- `base.html` 为所有页面声明 favicon 与 Apple 图标，资源 URL 使用 `v=1` 做首次缓存隔离。
+- `tests/test_web_auth_api.py` 新增模板链接与 PNG/ICO 魔数检查；完整 Web 认证/模板回归
+  18 项、Ruff、图像尺寸和 Alpha 检查均通过。
+- 本机 Docker 当前运行 `stockwatcher-web:web-internal-test-v1-7528f38`；公网 HTML 已回读
+  三条图标链接，公网 32px PNG 与仓库文件 SHA-256 完全一致，健康检查保持通过。
+- 此项只完成网页图标，不改变候选规则、账号、Token、DNS 或交易日验收边界；整体状态继续
+  保持 `BLOCKED / NOT_ACCEPTED`。

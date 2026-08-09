@@ -1,5 +1,18 @@
 # Changelog
 
+## [web-internal-test-v1-favicon] - 2026-08-09
+
+### Added
+
+- 将 Owner 提供的 StockWatcher 六边形图标处理为真实 Alpha 透明 favicon，提供 16/32/48
+  多尺寸 ICO、32px PNG、180px Apple Touch Icon 和 1024px 主图。
+- 所有页面模板声明 favicon 与 Apple 图标，并通过版本参数避免浏览器继续使用旧缓存。
+
+### Deployment
+
+- 本机 Docker 已加载 `7528f38`；公开页面图标链接、静态文件字节哈希以及
+  Web/Worker/Tunnel readiness 均验证通过。
+
 ## [web-internal-test-v1-review-hardening] - 2026-08-09
 
 ### Fixed
