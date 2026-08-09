@@ -237,6 +237,7 @@ class CommandService:
         *,
         holder_id: str,
         fencing_token: int,
+        expected_attempt: int,
         status: CommandStatus,
         result: dict[str, Any] | None = None,
         error_code: str | None = None,
@@ -249,7 +250,7 @@ class CommandService:
                 "UPDATE web_commands SET status = ?, completed_at = ?, "
                 "result_json = ?, error_code = ?, error_detail = ? "
                 "WHERE command_id = ? AND claimed_by = ? AND fencing_token = ? "
-                "AND status = 'running'",
+                "AND attempts = ? AND status = 'running'",
                 (
                     status.value,
                     current.isoformat(),
@@ -259,6 +260,7 @@ class CommandService:
                     command_id,
                     holder_id,
                     int(fencing_token),
+                    int(expected_attempt),
                 ),
             )
             return cursor.rowcount == 1

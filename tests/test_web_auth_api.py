@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from stock_watcher.domain import SHANGHAI
 from stock_watcher.server.config import ServerSettings
 from stock_watcher.server.web import create_app
+from stock_watcher.services import CommandType
 from stock_watcher.storage import SQLiteStore
 
 
@@ -136,7 +137,7 @@ def test_csrf_protection(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> Non
         headers={"X-CSRF-Token": "wrong-value"},
     )
     assert response.status_code == 403
-    # Rotated CSRF from /me works.
+    # Stable per-session CSRF from /me works.
     csrf = client.get("/api/v1/me").json()["csrf_token"]
     response = client.post(
         "/api/v1/commands/manual-refresh",
@@ -144,6 +145,42 @@ def test_csrf_protection(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> Non
         headers={"X-CSRF-Token": csrf},
     )
     assert response.status_code == 202
+
+
+def test_csrf_remains_valid_across_multiple_tabs(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, _, _, _ = app_env
+    client = TestClient(app)
+    first = login(client, "tester1", "tester-pass-123")
+    assert client.get("/alerts").status_code == 200
+    second = client.get("/api/v1/me").json()["csrf_token"]
+    assert first == second
+    response = client.post(
+        "/api/v1/commands/manual-refresh",
+        headers={"X-CSRF-Token": first, "Idempotency-Key": "multi-tab"},
+    )
+    assert response.status_code == 202
+
+
+def test_command_rate_limit_consumes_successful_requests(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, auth, _, _ = app_env
+    auth.command_limiter.max_attempts = 2
+    client = TestClient(app)
+    csrf = login(client, "tester1", "tester-pass-123")
+    for index in range(2):
+        response = client.post(
+            "/api/v1/commands/manual-refresh",
+            headers={"X-CSRF-Token": csrf, "Idempotency-Key": f"limit-{index}"},
+        )
+        assert response.status_code == 202
+    blocked = client.post(
+        "/api/v1/commands/manual-refresh",
+        headers={"X-CSRF-Token": csrf, "Idempotency-Key": "limit-blocked"},
+    )
+    assert blocked.status_code == 429
 
 
 def test_session_revocation_and_expiry(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
@@ -182,6 +219,59 @@ def test_admin_user_management(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) 
         headers={"X-CSRF-Token": csrf},
     )
     assert bad.status_code == 400
+
+
+def test_password_change_revokes_all_existing_user_sessions(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, _, _, tester = app_env
+    tester_client = TestClient(app)
+    login(tester_client, "tester1", "tester-pass-123")
+    admin_client = TestClient(app)
+    csrf = login(admin_client, "admin one", "admin-pass-12345")
+    changed = admin_client.patch(
+        f"/api/v1/admin/users/{tester['user_id']}",
+        json={"password": "tester-new-password-123"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert changed.status_code == 200
+    assert tester_client.get("/api/v1/me").status_code == 401
+
+
+def test_command_status_is_limited_to_requester_or_admin(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, auth, admin, tester = app_env
+    private = app.state.commands.create(
+        command_type=CommandType.TOKEN_TEST,
+        requested_by=int(admin["user_id"]),
+    )
+    tester_client = TestClient(app)
+    login(tester_client, "tester1", "tester-pass-123")
+    assert tester_client.get(
+        f"/api/v1/commands/{private['command_id']}"
+    ).status_code == 404
+
+    second = auth.create_user(
+        username="tester2",
+        password="tester-two-pass-123",
+        role="tester",
+    )
+    shared = app.state.commands.create(
+        command_type=CommandType.MANUAL_REFRESH,
+        requested_by=int(tester["user_id"]),
+    )
+    second_client = TestClient(app)
+    login(second_client, "tester2", "tester-two-pass-123")
+    response = second_client.get(f"/api/v1/commands/{shared['command_id']}")
+    assert response.status_code == 200
+    assert response.json() == {
+        "command_id": shared["command_id"],
+        "command_type": "manual_refresh",
+        "status": "queued",
+        "coalesced": True,
+    }
+    assert second["user_id"] != tester["user_id"]
 
 
 def test_last_active_admin_cannot_be_removed(

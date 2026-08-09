@@ -109,9 +109,63 @@ def test_ws_resync_required_on_expired_cursor(app_env: tuple[Any, SQLiteStore]) 
         assert messages[1]["payload"]["minimum_event_id"] == 3
 
 
+def test_ws_hides_admin_events_and_advances_with_safe_cursor(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, _ = app_env
+    app.state.outbox.append_own(
+        event_type="admin.diagnostic",
+        payload={"private": True},
+        source_kind="admin",
+        source_id="1",
+        visibility="admin",
+    )
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events?after_id=0") as websocket:
+        assert json.loads(websocket.receive_text())["event_type"] == "server.hello"
+        assert json.loads(websocket.receive_text())["event_type"] == "state.snapshot"
+        cursor = json.loads(websocket.receive_text())
+        assert cursor["event_type"] == "server.cursor"
+        assert cursor["event_id"] == 1
+        assert cursor["payload"] == {"last_event_id": 1}
+
+
+def test_ws_command_updates_are_visible_only_to_requester(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, _ = app_env
+    app.state.outbox.append_own(
+        event_type="command.updated",
+        payload={"command_id": "private", "status": "running", "requested_by": 999},
+        source_kind="command",
+        source_id="private",
+    )
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events?after_id=0") as websocket:
+        websocket.receive_text()
+        websocket.receive_text()
+        cursor = json.loads(websocket.receive_text())
+        assert cursor["event_type"] == "server.cursor"
+        assert cursor["event_id"] == 1
+
+
 def test_ws_unauthorized_rejected(app_env: tuple[Any, SQLiteStore]) -> None:
     app, _ = app_env
     anon = TestClient(app)
     with pytest.raises(Exception):
         with anon.websocket_connect("/ws/v1/events?after_id=0") as websocket:
             websocket.receive_text()
+
+
+def test_browser_does_not_advance_cursor_from_hello() -> None:
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "stock_watcher"
+        / "server"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+    assert "event.event_type !== 'server.hello'" in script
+    assert "event.event_type === 'server.resync_required'" in script
+    assert "lastEventId = event.payload.latest_event_id" not in script

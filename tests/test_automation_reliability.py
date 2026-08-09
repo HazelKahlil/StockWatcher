@@ -136,7 +136,8 @@ class _StaleUsableRuntime:
     def universe_is_usable(self, _now: datetime) -> bool:
         return True
 
-    def prepare(self) -> RuntimeUniverse:
+    def prepare(self, *, force_refresh: bool = False) -> RuntimeUniverse:
+        del force_refresh
         self.prepare_calls += 1
         return self.universe
 

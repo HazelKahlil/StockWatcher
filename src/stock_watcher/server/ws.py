@@ -18,6 +18,7 @@ from stock_watcher.services.public_state import PublicStateBuilder
 from stock_watcher.storage import SQLiteStore
 
 HEARTBEAT_SECONDS = 20
+SEND_TIMEOUT_SECONDS = 5.0
 QUEUE_HARD_LIMIT = 1000
 QUEUE_COALESCE_AFTER = 300
 
@@ -88,11 +89,11 @@ class WebSocketManager:
                 "user_role": str(session.get("role")),
             },
         )
-        await websocket.send_text(json.dumps(hello, ensure_ascii=False))
+        await _send(websocket, hello)
         if after_id > 0 and (after_id + 1) < minimum:
-            await websocket.send_text(
-                json.dumps(
-                    _envelope(
+            await _send(
+                websocket,
+                _envelope(
                         0,
                         "server.resync_required",
                         _now_iso(),
@@ -103,8 +104,6 @@ class WebSocketManager:
                             "latest_event_id": latest,
                         },
                     ),
-                    ensure_ascii=False,
-                )
             )
             return
         state = self.public_state.build(
@@ -112,9 +111,9 @@ class WebSocketManager:
                 __import__("stock_watcher.domain", fromlist=["SHANGHAI"]).SHANGHAI
             )
         )
-        await websocket.send_text(
-            json.dumps(
-                _envelope(
+        await _send(
+            websocket,
+            _envelope(
                     0,
                     "state.snapshot",
                     _now_iso(),
@@ -129,8 +128,6 @@ class WebSocketManager:
                         "source_ts": state.get("source_ts"),
                     },
                 ),
-                ensure_ascii=False,
-            )
         )
         cursor = after_id
         pending: list[dict[str, Any]] = []
@@ -139,23 +136,33 @@ class WebSocketManager:
             try:
                 now = __import__("time").monotonic()
                 if now - last_send >= self.heartbeat_seconds:
-                    await websocket.send_text(
-                        json.dumps(
-                            _envelope(
+                    await _send(
+                        websocket,
+                        _envelope(
                                 0,
                                 "server.heartbeat",
                                 _now_iso(),
                                 self.source_commit,
                                 {"server_time": _now_iso()},
                             ),
-                            ensure_ascii=False,
-                        )
                     )
                     last_send = now
                 events = self.outbox.read_since(cursor, limit=100)
                 for event in events:
-                    pending.append(event)
                     cursor = int(event["event_id"])
+                    if _event_visible(event, session):
+                        pending.append(event)
+                if events and (not pending or int(pending[-1]["event_id"]) < cursor):
+                    pending.append(
+                        {
+                            "event_id": cursor,
+                            "event_type": "server.cursor",
+                            "occurred_at": _now_iso(),
+                            "source_commit": self.source_commit,
+                            "correlation_id": None,
+                            "payload": {"last_event_id": cursor},
+                        }
+                    )
                 if len(pending) > QUEUE_COALESCE_AFTER:
                     pending = _coalesce(pending, self.source_commit)
                 if len(pending) > QUEUE_HARD_LIMIT:
@@ -163,9 +170,9 @@ class WebSocketManager:
                     return
                 while pending:
                     event = pending.pop(0)
-                    await websocket.send_text(
-                        json.dumps(
-                            _envelope(
+                    await _send(
+                        websocket,
+                        _envelope(
                                 int(event["event_id"]),
                                 str(event["event_type"]),
                                 str(event["occurred_at"]),
@@ -173,8 +180,6 @@ class WebSocketManager:
                                 event["payload"],
                                 event.get("correlation_id"),
                             ),
-                            ensure_ascii=False,
-                        )
                     )
                 await asyncio.sleep(1.0)
             except WebSocketDisconnect:
@@ -195,6 +200,41 @@ def _coalesce(pending: list[dict[str, Any]], source_commit: str) -> list[dict[st
     if latest_state is not None:
         merged.append(latest_state)
     return merged
+
+
+def _event_visible(event: dict[str, Any], session: dict[str, Any]) -> bool:
+    role = str(session.get("role", ""))
+    visibility = str(event.get("visibility", "all"))
+    if visibility == "admin" and role != "admin":
+        return False
+    if visibility == "tester" and role not in {"tester", "admin"}:
+        return False
+    if event.get("event_type") == "command.updated" and role != "admin":
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return False
+        requested_by = payload.get("requested_by")
+        user_id = session.get("user_id")
+        if not isinstance(requested_by, int) or not isinstance(user_id, int):
+            return False
+        try:
+            return requested_by == user_id
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+async def _send(websocket: WebSocket, payload: dict[str, Any]) -> None:
+    try:
+        await asyncio.wait_for(
+            websocket.send_text(json.dumps(payload, ensure_ascii=False)),
+            timeout=SEND_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as error:
+        try:
+            await websocket.close(code=1013, reason="client too slow")
+        finally:
+            raise RuntimeError("websocket send timed out") from error
 
 
 def _now_iso() -> str:

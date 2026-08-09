@@ -1114,7 +1114,7 @@ def test_alert_history_daily_summary_and_v3_items_are_persisted(tmp_path: Path) 
     assert len(history) == 1
     with store.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM candidate_items").fetchone() == (3,)
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (8,)
 
     summary = DailySummaryEngine().generate(
         trade_date=now.date(),

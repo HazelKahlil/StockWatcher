@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,6 @@ from stock_watcher.storage.web import (
     AuditLogRepository,
     UserRepository,
     UserStateRepository,
-    generate_opaque_token,
 )
 
 from .api import (
@@ -35,7 +35,7 @@ from .api import (
     error_response,
     state_router,
 )
-from .auth import SESSION_COOKIE_NAME, AuthService
+from .auth import SESSION_COOKIE_NAME, AuthService, csrf_value_for_session
 from .config import ServerSettings
 from .ws import WebSocketManager
 
@@ -170,16 +170,31 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             lease_row = None
             with store.connect() as connection:
                 lease_row = connection.execute(
-                    "SELECT heartbeat_at FROM service_leases "
+                    "SELECT heartbeat_at, expires_at FROM service_leases "
                     "WHERE lease_name = 'stockwatcher-worker'"
                 ).fetchone()
+            lease_live = False
+            if lease_row is not None:
+                expires_at = datetime.fromisoformat(str(lease_row[1]))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                lease_live = expires_at > datetime.now().astimezone()
+            if not lease_live:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "not_ready",
+                        "schema_version": int(version[0]),
+                        "worker_lease_held": False,
+                    },
+                )
             return JSONResponse(
                 status_code=200,
                 content={
                     "status": "ready",
                     "schema_version": int(version[0]),
-                    "worker_lease_held": lease_row is not None,
-                    "degraded": lease_row is None,
+                    "worker_lease_held": True,
+                    "degraded": False,
                 },
             )
         except Exception as error:
@@ -259,30 +274,13 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
 
 
 def _csrf_for_session(auth: AuthService, token: str | None) -> str:
-    """Server-rendered pages receive the plaintext CSRF value once.
-
-    The database stores only the hash; the value is kept in the browser's JS
-    memory and submitted via the X-CSRF-Token header.
-    """
+    """Return the stable per-session CSRF value for server-rendered pages."""
     if token is None:
         return ""
     session = auth.sessions.get(token)
     if session is None:
         return ""
-    import hashlib
-
-    # Login returns the plaintext CSRF in the JSON body; for server-rendered
-    # pages we persist nothing extra: the value is re-derived per page by
-    # generating a new opaque value and storing only its hash.
-    plaintext = generate_opaque_token()
-    auth.sessions.store.transaction()
-    with auth.sessions.store.transaction() as connection:
-        connection.execute(
-            "UPDATE web_sessions SET csrf_token_hash = ? "
-            "WHERE session_token_hash = ?",
-            (hashlib.sha256(plaintext.encode("utf-8")).hexdigest(), session["session_token_hash"]),
-        )
-    return plaintext
+    return csrf_value_for_session(token)
 
 
 def _origin_mismatch(origin: str, public_origin: str) -> bool:

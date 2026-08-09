@@ -99,8 +99,12 @@ def test_lease_lost_blocks_business_writes(tmp_path: Path) -> None:
         config=LeaseConfig(ttl_seconds=20.0),
         clock=lambda: later,
     ).acquire()
+    store.bind_write_guard(first.assert_owned)
     with pytest.raises(LeaseLostError):
-        first.renew()
+        with store.transaction() as connection:
+            connection.execute("INSERT INTO notes (key, value) VALUES ('stale', 'write')")
+    with store.connect() as connection:
+        assert connection.execute("SELECT value FROM notes WHERE key = 'stale'").fetchone() is None
 
 
 def test_outbox_append_read_since_and_prune(tmp_path: Path) -> None:
@@ -154,6 +158,23 @@ def test_outbox_dedupe_source_id(tmp_path: Path) -> None:
     assert outbox.latest_id() == 1
 
 
+def test_outbox_keeps_every_command_status_transition(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    outbox = EventOutbox(store, source_commit="a" * 40)
+    for status in ("queued", "running", "succeeded"):
+        outbox.append_own(
+            event_type="command.updated",
+            payload={"command_id": "cmd-1", "status": status},
+            source_kind="command",
+            source_id="cmd-1",
+        )
+    assert [row["payload"]["status"] for row in outbox.read_since(0)] == [
+        "queued",
+        "running",
+        "succeeded",
+    ]
+
+
 def test_command_create_claim_complete(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     seed_user(store)
@@ -173,6 +194,7 @@ def test_command_create_claim_complete(tmp_path: Path) -> None:
         str(claimed["command_id"]),
         holder_id="worker-1",
         fencing_token=1,
+        expected_attempt=1,
         status=CommandStatus.SUCCEEDED,
         result={"rounds": 3},
     )
@@ -193,6 +215,7 @@ def test_command_wrong_holder_cannot_complete(tmp_path: Path) -> None:
         str(created["command_id"]),
         holder_id="worker-2",
         fencing_token=2,
+        expected_attempt=1,
         status=CommandStatus.SUCCEEDED,
     )
     assert not ok
@@ -243,6 +266,38 @@ def test_command_crash_recovery_requeues_then_fails(tmp_path: Path) -> None:
     assert final is not None
     assert final["status"] == "failed"
     assert final["error_code"] == "timeout"
+
+
+def test_old_command_attempt_cannot_complete_retried_attempt(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    seed_user(store)
+    now = datetime(2026, 8, 7, 9, 30, tzinfo=SHANGHAI)
+    commands = CommandService(store)
+    created = commands.create(
+        command_type=CommandType.UNIVERSE_REFRESH,
+        requested_by=1,
+        expires_at=now + timedelta(seconds=1),
+    )
+    first = commands.claim_next(holder_id="worker-1", fencing_token=1, now=now)
+    assert first is not None and first["attempts"] == 1
+    retry_at = now + timedelta(minutes=11)
+    commands.expire_stale(now=retry_at)
+    second = commands.claim_next(holder_id="worker-1", fencing_token=1, now=retry_at)
+    assert second is not None and second["attempts"] == 2
+    assert not commands.complete(
+        str(created["command_id"]),
+        holder_id="worker-1",
+        fencing_token=1,
+        expected_attempt=1,
+        status=CommandStatus.SUCCEEDED,
+    )
+    assert commands.complete(
+        str(created["command_id"]),
+        holder_id="worker-1",
+        fencing_token=1,
+        expected_attempt=2,
+        status=CommandStatus.SUCCEEDED,
+    )
 
 
 def make_master_key() -> bytes:
@@ -308,6 +363,16 @@ def test_secret_activation_keeps_previous(tmp_path: Path) -> None:
     assert secrets.active_fingerprint() == fingerprint("token-new")
 
 
+def test_third_secret_rotation_replaces_old_previous_slot(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    seed_user(store)
+    secrets = SecretService(store, master_key=make_master_key())
+    for token in ("token-one", "token-two", "token-three"):
+        secrets.store_active(token=token, updated_by=1)
+    assert secrets.active_token() == "token-three"
+    assert secrets.previous_token() == "token-two"
+
+
 def test_secret_request_expiry_and_prune(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     seed_user(store)
@@ -342,7 +407,7 @@ def test_master_key_file_loading(tmp_path: Path) -> None:
         load_master_key(bad)
 
 
-def test_migration_v6_to_v7_preserves_data(tmp_path: Path) -> None:
+def test_migration_v6_to_v8_preserves_data(tmp_path: Path) -> None:
     import stock_watcher.storage.sqlite as sqlite_module
 
     path = tmp_path / "v6.sqlite3"
@@ -363,7 +428,7 @@ def test_migration_v6_to_v7_preserves_data(tmp_path: Path) -> None:
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (7,)
+        ).fetchone() == (8,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'sentinel'"
         ).fetchone() == ("kept",)
@@ -398,7 +463,30 @@ def test_migration_idempotent(tmp_path: Path) -> None:
     with store.connect() as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (7,)
+        ).fetchone() == (8,)
+
+
+def test_migration_v7_to_v8_relaxes_only_command_event_dedupe(tmp_path: Path) -> None:
+    import stock_watcher.storage.sqlite as sqlite_module
+
+    path = tmp_path / "v7.sqlite3"
+    original = sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION
+    sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION = 7
+    try:
+        SQLiteStore(path).initialize()
+    finally:
+        sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION = original
+    SQLiteStore(path).initialize()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+        ).fetchone() == (8,)
+        index_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' "
+            "AND name = 'idx_web_events_source_dedupe'"
+        ).fetchone()
+    assert index_sql is not None
+    assert "event_type <> 'command.updated'" in str(index_sql[0])
 
 
 def test_migration_rollback_via_backup(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ mutation (POST/PATCH/PUT/DELETE) requires a matching ``X-CSRF-Token``.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -69,6 +70,11 @@ class RateLimiter:
             events.popleft()
         events.append(now)
 
+    def consume(self, key: str) -> None:
+        """Check and consume one allowed request from the sliding window."""
+        self.check(key)
+        self.record_failure(key)
+
     def retry_after(self, key: str) -> int:
         return max(0, int(self._blocked_until.get(key, 0.0) - time.monotonic()) + 1)
 
@@ -81,6 +87,15 @@ def csrf_value_matches(provided: str, stored_hash: str) -> bool:
     if not provided:
         return False
     return hashlib.sha256(provided.encode("utf-8")).hexdigest() == stored_hash
+
+
+def csrf_value_for_session(session_token: str) -> str:
+    """Stable per-session CSRF value; safe across multiple browser tabs."""
+    return hmac.new(
+        session_token.encode("utf-8"),
+        b"stockwatcher-csrf-v1",
+        hashlib.sha256,
+    ).hexdigest()
 
 
 class AuthService:
@@ -195,7 +210,7 @@ class AuthService:
             )
             raise AuthError("用户名或密码错误", status_code=401)
         token = generate_opaque_token()
-        csrf = generate_opaque_token()
+        csrf = csrf_value_for_session(token)
         self.sessions.create(
             user_id=int(user["user_id"]),
             token=token,
@@ -286,7 +301,7 @@ class AuthService:
             return None
         self.sessions.revoke(token)
         new_token = generate_opaque_token()
-        csrf = generate_opaque_token()
+        csrf = csrf_value_for_session(new_token)
         self.sessions.create(
             user_id=int(session["user_id"]),
             token=new_token,

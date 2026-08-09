@@ -271,6 +271,7 @@ def test_batched_bootstrap_builds_universe_and_industry_without_sector_routes() 
     provider = _BatchedBootstrapProvider()
     universe = TushareBootstrapLoader(
         cast(object, provider),  # type: ignore[arg-type]
+        minimum_profile_count=100,
         clock=lambda: NOW,
     ).load()
 
@@ -324,6 +325,7 @@ def test_bootstrap_merges_complete_concept_memberships_for_realtime_selection() 
 
     universe = TushareBootstrapLoader(
         cast(object, WithConcepts()),  # type: ignore[arg-type]
+        minimum_profile_count=100,
         clock=lambda: NOW,
     ).load()
 
@@ -353,6 +355,7 @@ def test_fast_daily_bootstrap_skips_weekends_and_empty_weekday_holidays() -> Non
 
     universe = TushareBootstrapLoader(
         cast(object, provider),  # type: ignore[arg-type]
+        minimum_profile_count=100,
         clock=lambda: monday_morning,
     ).load()
 
@@ -392,6 +395,7 @@ def test_bootstrap_retry_keeps_successful_stock_batch_in_memory() -> None:
     provider = OneRateLimit()
     loader = TushareBootstrapLoader(
         cast(object, provider),  # type: ignore[arg-type]
+        minimum_profile_count=100,
         clock=lambda: NOW,
     )
 
@@ -406,10 +410,66 @@ def test_bootstrap_retry_keeps_successful_stock_batch_in_memory() -> None:
     assert provider.calls.count("daily:20260730") == 2
 
 
+def test_bootstrap_rejects_daily_rows_from_the_wrong_or_future_date() -> None:
+    class WrongDateProvider(_BatchedBootstrapProvider):
+        def daily_bars(self, **params: object) -> TransportResult:
+            result = super().daily_bars(**params)
+            if not result.records:
+                return result
+            wrong = tuple(
+                {**record, "trade_date": "20260803"}
+                for record in result.records
+            )
+            return replace(result, records=wrong)
+
+    loader = TushareBootstrapLoader(
+        cast(object, WrongDateProvider()),  # type: ignore[arg-type]
+        minimum_profile_count=100,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="日线响应日期不匹配"):
+        loader.load()
+
+
+def test_bootstrap_marks_adjustment_and_resumption_codes_as_mechanical_jumps() -> None:
+    class CorporateActionProvider(_BatchedBootstrapProvider):
+        def adjustment_factors(self, **params: object) -> TransportResult:
+            factor = 1.1 if params["trade_date"] == "20260731" else 1.0
+            return _transport_result(
+                ({"ts_code": "000003.SZ", "adj_factor": factor},)
+            )
+
+        def suspension_events(self, **_params: object) -> TransportResult:
+            return _transport_result(({"ts_code": "000004.SZ"},))
+
+    universe = TushareBootstrapLoader(
+        cast(object, CorporateActionProvider()),  # type: ignore[arg-type]
+        minimum_profile_count=100,
+        clock=lambda: NOW,
+    ).load()
+    by_code = {profile.security.code: profile for profile in universe.profiles}
+
+    assert by_code["000003.SZ"].is_corporate_action_day
+    assert by_code["000004.SZ"].is_corporate_action_day
+
+
+def test_default_universe_cache_rejects_a_truncated_market(tmp_path: Path) -> None:
+    cache = RuntimeUniverseCache(tmp_path / "truncated-market.json")
+
+    with pytest.raises(UniverseCacheError) as captured:
+        cache.save(_universe())
+
+    assert captured.value.reason is UniverseCacheFailure.INCOMPLETE
+
+
 def test_runtime_universe_cache_round_trip_and_failed_replace_keeps_old_file(
     tmp_path: Path,
 ) -> None:
-    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
     universe = _universe()
 
     cache.save(universe)
@@ -431,7 +491,10 @@ def test_runtime_universe_cache_round_trip_and_failed_replace_keeps_old_file(
 def test_runtime_universe_cache_rejects_checksum_damage_and_stale_context(
     tmp_path: Path,
 ) -> None:
-    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
     cache.save(_universe())
     payload = json.loads(cache.path.read_text(encoding="utf-8"))
     payload["universe"]["profiles"][0]["security"]["name"] = "被篡改"
@@ -451,7 +514,10 @@ def test_scan_uses_verified_cache_and_never_calls_ordinary_pro(
     tmp_path: Path,
 ) -> None:
     universe = _universe()
-    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
     cache.save(universe)
     loader = _ForbiddenLoader()
     realtime = _RecordingRealtime(_realtime_result(universe))
@@ -482,7 +548,10 @@ def test_stable_top3_cannot_retain_row_excluded_from_current_scan(
     tmp_path: Path,
 ) -> None:
     universe = _universe()
-    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
     cache.save(universe)
     first_result = _realtime_result(universe)
 
@@ -528,6 +597,62 @@ def test_stable_top3_cannot_retain_row_excluded_from_current_scan(
     assert second.coverage_ratio == pytest.approx(119 / 120)
 
 
+def test_runtime_clears_intraday_baselines_when_trade_date_advances(
+    tmp_path: Path,
+) -> None:
+    universe = _universe()
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
+    cache.save(universe)
+    next_day = NOW + timedelta(days=1)
+    next_result = replace(
+        _realtime_result(universe),
+        records=tuple(
+            {
+                **record,
+                "vol": 100.0,
+                "amount": 1000.0,
+                "source_ts": next_day.isoformat(),
+                "received_ts": next_day.isoformat(),
+            }
+            for record in _realtime_result(universe).records
+        ),
+        provenance=replace(
+            _realtime_result(universe).provenance,
+            source_ts=next_day,
+            received_ts=next_day,
+        ),
+    )
+
+    class SequenceRealtime:
+        def __init__(self) -> None:
+            self.results = [_realtime_result(universe), next_result]
+
+        def execute(self, _request: object) -> TransportResult:
+            return self.results.pop(0)
+
+    current = [NOW]
+    runtime = TushareV1Runtime(
+        cast(TushareBootstrapLoader, _ForbiddenLoader()),
+        FullMarketScanCoordinator(
+            SequenceRealtime(),
+            clock=lambda: current[0],
+        ),
+        universe_cache=cache,
+        clock=lambda: current[0],
+    )
+
+    first = runtime.scan_once()
+    current[0] = next_day
+    second = runtime.scan_once()
+
+    assert first.health is HealthState.HEALTHY
+    assert second.failure_reason != "sequence"
+    assert second.health is HealthState.HEALTHY
+
+
 def test_missing_cache_stops_safely_without_pro_or_realtime_call(
     tmp_path: Path,
 ) -> None:
@@ -536,7 +661,10 @@ def test_missing_cache_stops_safely_without_pro_or_realtime_call(
     runtime = TushareV1Runtime(
         cast(TushareBootstrapLoader, loader),
         FullMarketScanCoordinator(realtime, clock=lambda: NOW),
-        universe_cache=RuntimeUniverseCache(tmp_path / "missing.json"),
+        universe_cache=RuntimeUniverseCache(
+            tmp_path / "missing.json",
+            minimum_profile_count=100,
+        ),
         clock=lambda: NOW,
     )
 
@@ -552,7 +680,10 @@ def test_concept_cache_keeps_last_known_good_after_failed_refresh(
     tmp_path: Path,
 ) -> None:
     """A failed concept refresh must never erase verified concept memberships."""
-    cache = RuntimeUniverseCache(tmp_path / "runtime-universe-v1.json")
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
     base = _universe()
     concept_membership = SectorMembership(
         security=_security(1),

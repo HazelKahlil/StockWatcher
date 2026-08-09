@@ -21,11 +21,11 @@ from stock_watcher.services.secret_service import SecretService
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.storage.web import (
     AuditLogRepository,
+    LastActiveAdminError,
     UserRepository,
-    generate_opaque_token,
 )
 
-from .auth import SESSION_COOKIE_NAME, AuthError, AuthService
+from .auth import SESSION_COOKIE_NAME, AuthError, AuthService, csrf_value_for_session
 from .redaction import redact_value
 
 
@@ -249,16 +249,8 @@ def state_router() -> APIRouter:
         session: dict[str, Any] = Depends(current_session),
         auth: AuthService = Depends(get_auth),
     ) -> dict[str, Any]:
-        # Rotate and return the plaintext CSRF value; only its hash is stored.
-        from hashlib import sha256
-
-        csrf = generate_opaque_token()
-        with auth.sessions.store.transaction() as connection:
-            connection.execute(
-                "UPDATE web_sessions SET csrf_token_hash = ? "
-                "WHERE session_token_hash = ?",
-                (sha256(csrf.encode("utf-8")).hexdigest(), session["session_token_hash"]),
-            )
+        token = request.cookies.get(SESSION_COOKIE_NAME) or ""
+        csrf = csrf_value_for_session(token)
         user = {
             "user_id": session["user_id"],
             "username": session["username"],
@@ -472,7 +464,10 @@ def commands_router() -> APIRouter:
         auth: AuthService = Depends(get_auth),
         audit: AuditLogRepository = Depends(get_audit),
     ) -> Response:
-        auth.command_limiter.check(f"cmd:{session['user_id']}")
+        try:
+            auth.command_limiter.consume(f"cmd:{session['user_id']}")
+        except AuthError as error:
+            return error_response(request, str(error), error.status_code, "rate_limited")
         idempotency = request.headers.get("Idempotency-Key") or str(uuid.uuid4())
         command = commands.create(
             command_type=CommandType.MANUAL_REFRESH,
@@ -511,6 +506,17 @@ def commands_router() -> APIRouter:
         command = commands.get(command_id)
         if command is None:
             raise ApiError("命令不存在", 404, "not_found")
+        is_owner = int(command["requested_by"]) == int(cast(int, session["user_id"]))
+        is_admin = session.get("role") == "admin"
+        if not is_owner and not is_admin:
+            if command["command_type"] != CommandType.MANUAL_REFRESH.value:
+                raise ApiError("命令不存在", 404, "not_found")
+            return {
+                "command_id": command["command_id"],
+                "command_type": command["command_type"],
+                "status": command["status"],
+                "coalesced": True,
+            }
         return {
             "command_id": command["command_id"],
             "command_type": command["command_type"],
@@ -807,10 +813,18 @@ def admin_router() -> APIRouter:
                 return error_response(
                     request, str(error), error.status_code, "invalid_password"
                 )
-        updated = users.update(user_id, **updates)
+        try:
+            updated = users.update(user_id, protect_last_admin=True, **updates)
+        except LastActiveAdminError:
+            return error_response(
+                request,
+                "必须至少保留一个启用的管理员",
+                409,
+                "last_admin_required",
+            )
         if updated is None:
             return error_response(request, "用户不存在", 404, "not_found")
-        if active is False:
+        if active is False or password:
             auth.revoke_user_sessions(user_id)
         auth.audit.record(
             actor_user_id=session["user_id"],

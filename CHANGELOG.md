@@ -1,5 +1,20 @@
 # Changelog
 
+## [web-internal-test-v1-review-hardening] - 2026-08-09
+
+### Fixed
+
+- 加固全市场完整性、日线交易日、机械跳变、跨日滚动基线和旧数据恢复门。
+- 为 Worker 业务写入增加 lease/holder/fencing/expiry 同事务保护，并修复命令 attempt、忙碌
+  claim、关停等待、WebSocket 重放/权限/慢客户端和过期 readiness。
+- schema 升至 v8，保留每次 `command.updated` 状态迁移；修复 Token 三次轮换、命令限流、
+  多标签页 CSRF、密码改动会话撤销、最后管理员竞态和命令详情越权。
+- restore 改为完整替换 reports；provider preflight 严格验证全市场覆盖和真实源时间。
+
+### Status
+
+- 只完成本机代码返修，未部署；交易日现场验收待执行，状态保持 `BLOCKED / NOT_ACCEPTED`。
+
 ## [web-internal-test-v1] - 2026-08-07
 
 ### Added

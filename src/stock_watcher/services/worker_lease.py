@@ -55,7 +55,7 @@ class WorkerLease:
         self.acquired_at: datetime | None = None
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
+    def _connection(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Use a short-lived connection for fencing writes.
 
         Lease renewal is liveness infrastructure. It must not share a
@@ -69,6 +69,8 @@ class WorkerLease:
         try:
             connection.execute("PRAGMA busy_timeout=2000")
             connection.execute("PRAGMA foreign_keys=ON")
+            if immediate:
+                connection.execute("BEGIN IMMEDIATE")
             yield connection
             connection.commit()
         except BaseException:
@@ -88,7 +90,7 @@ class WorkerLease:
         """
         now = _shanghai(self._clock())
         expires_at = now + timedelta(seconds=self.config.ttl_seconds)
-        with self._connection() as connection:
+        with self._connection(immediate=True) as connection:
             row = connection.execute(
                 "SELECT holder_id, expires_at, fencing_token "
                 "FROM service_leases WHERE lease_name = ?",
@@ -148,6 +150,24 @@ class WorkerLease:
                         f"lease {self.config.lease_name} held by {holder_id}"
                     )
         self.acquired_at = now
+
+    def assert_owned(self, connection: sqlite3.Connection) -> None:
+        """Fence one business transaction to this live lease generation."""
+        if not self.held:
+            raise LeaseLostError("lease was never acquired")
+        now = _shanghai(self._clock()).isoformat()
+        row = connection.execute(
+            "SELECT 1 FROM service_leases WHERE lease_name = ? "
+            "AND holder_id = ? AND fencing_token = ? AND expires_at > ?",
+            (
+                self.config.lease_name,
+                self.holder_id,
+                self.fencing_token,
+                now,
+            ),
+        ).fetchone()
+        if row is None:
+            raise LeaseLostError("lease is no longer owned by this holder")
 
     def renew(self) -> None:
         """Heartbeat and fencing check; raises LeaseLostError on mismatch."""

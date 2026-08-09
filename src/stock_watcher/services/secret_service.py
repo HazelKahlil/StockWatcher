@@ -248,6 +248,11 @@ class SecretService:
         now = _shanghai(self._clock())
         with self.store.transaction() as connection:
             connection.execute(
+                "DELETE FROM encrypted_secrets "
+                "WHERE secret_name = ? AND slot = 'previous'",
+                (TUSHARE_PRIMARY_SECRET,),
+            )
+            connection.execute(
                 "UPDATE encrypted_secrets SET slot = 'previous', status = 'previous' "
                 "WHERE secret_name = ? AND slot = 'active'",
                 (TUSHARE_PRIMARY_SECRET,),

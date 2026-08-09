@@ -5,7 +5,7 @@ import re
 import shutil
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -21,7 +21,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 7
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 8
 
     _SQLITE_MAGIC = b"SQLite format 3\x00"
     last_recovery: dict[str, object] | None = None
@@ -29,6 +29,11 @@ class SQLiteStore:
     _wal_configured: bool = False
     _wal_lock: threading.Lock = field(default_factory=threading.Lock)
     _thread_local: threading.local = field(default_factory=threading.local)
+    _write_guard: Callable[[sqlite3.Connection], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def connect(self) -> sqlite3.Connection:
         """Return one connection with the shared SQLite runtime settings.
@@ -60,7 +65,7 @@ class SQLiteStore:
         return connection
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Yield one connection with an active read-write transaction.
 
         Web mutations and the Worker's business writes plus their outbox
@@ -71,7 +76,24 @@ class SQLiteStore:
         self.initialize()
         with self.connect() as connection:
             with connection:
+                if immediate or self._write_guard is not None:
+                    connection.execute("BEGIN IMMEDIATE")
+                if self._write_guard is not None:
+                    self._write_guard(connection)
                 yield connection
+
+    def bind_write_guard(
+        self,
+        guard: Callable[[sqlite3.Connection], None] | None,
+    ) -> None:
+        """Fence subsequent transactions to the current Worker lease.
+
+        The Web process uses an independent ``SQLiteStore`` and never binds a
+        guard. The Worker binds its lease assertion only after acquisition, so
+        every guarded transaction first obtains SQLite's write lock and then
+        verifies holder, fencing token and expiry in that same transaction.
+        """
+        self._write_guard = guard
 
     def initialize(self) -> None:
         self.last_recovery = None
@@ -166,7 +188,7 @@ class SQLiteStore:
             source.backup(target)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3, 4, 5, 6):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -184,6 +206,8 @@ class SQLiteStore:
                 self._apply_v6_migration(connection)
             if version <= 6:
                 self._apply_v7_migration(connection)
+            if version <= 7:
+                self._apply_v8_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -372,7 +396,8 @@ class SQLiteStore:
         encrypted secrets, outbox events, public state, audit log).
 
         The schema contract mirrors ``database/007_web_internal_test.sql`` and
-        is purely additive; business tables from v1-v6 are never altered.
+        is purely additive; business tables from v1-v6 are never altered. The
+        following v8 migration only narrows one outbox dedupe index.
         """
         connection.execute(
             "CREATE TABLE IF NOT EXISTS web_users ("
@@ -569,6 +594,17 @@ class SQLiteStore:
             "ON web_audit_log(actor_user_id, occurred_at)"
         )
 
+    @staticmethod
+    def _apply_v8_migration(connection: sqlite3.Connection) -> None:
+        """Allow every durable command status transition to reach clients."""
+        connection.execute("DROP INDEX IF EXISTS idx_web_events_source_dedupe")
+        connection.execute(
+            "CREATE UNIQUE INDEX idx_web_events_source_dedupe "
+            "ON web_events(event_type, source_kind, source_id) "
+            "WHERE source_kind IS NOT NULL AND source_id IS NOT NULL "
+            "AND event_type <> 'command.updated'"
+        )
+
 
     @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
@@ -627,20 +663,19 @@ class SQLiteStore:
     ) -> None:
         """Create a process session and close any prior live session as unclean."""
         self.initialize()
-        with self.connect() as connection:
-            with connection:
-                previous = connection.execute(
+        with self.transaction() as connection:
+            previous = connection.execute(
                     "SELECT session_id, last_heartbeat_at, last_scan_at "
                     "FROM runtime_sessions WHERE ended_at IS NULL AND session_id <> ?",
                     (session_id,),
                 ).fetchall()
-                for previous_id, heartbeat, last_scan in previous:
-                    connection.execute(
+            for previous_id, heartbeat, last_scan in previous:
+                connection.execute(
                         "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, "
                         "graceful_exit = 0, previous_unclean_exit = 1 WHERE session_id = ?",
                         (started_at, "unclean_exit", previous_id),
                     )
-                    connection.execute(
+                connection.execute(
                         "UPDATE scan_attempts SET completed_at = ?, state = ?, detail = ? "
                         "WHERE session_id = ? AND completed_at IS NULL",
                         (
@@ -650,7 +685,7 @@ class SQLiteStore:
                             previous_id,
                         ),
                     )
-                    self._insert_runtime_event(
+                self._insert_runtime_event(
                         connection,
                         session_id=previous_id,
                         occurred_at=started_at,
@@ -660,12 +695,8 @@ class SQLiteStore:
                             "last_scan_at": last_scan,
                         },
                     )
-                previous_id = (
-                    previous[0][0]
-                    if previous
-                    else None
-                )
-                connection.execute(
+            previous_id = previous[0][0] if previous else None
+            connection.execute(
                     "INSERT OR REPLACE INTO runtime_sessions "
                     "(session_id, pid, ppid, app_path, source_commit, started_at, "
                     "last_heartbeat_at, ended_at, exit_reason, graceful_exit, last_scan_at, "
@@ -714,22 +745,21 @@ class SQLiteStore:
         detail: dict[str, Any] | None = None,
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
-            with connection:
-                self._insert_runtime_event(
+        with self.transaction() as connection:
+            self._insert_runtime_event(
                     connection,
                     session_id=session_id,
                     occurred_at=occurred_at,
                     event_type=event_type,
                     detail=detail or {},
                 )
-                if event_type == "sleep_detected":
-                    connection.execute(
+            if event_type == "sleep_detected":
+                connection.execute(
                         "UPDATE runtime_sessions SET last_sleep_at = ? WHERE session_id = ?",
                         (occurred_at, session_id),
                     )
-                elif event_type == "wake_detected":
-                    connection.execute(
+            elif event_type == "wake_detected":
+                connection.execute(
                         "UPDATE runtime_sessions SET last_wake_at = ? WHERE session_id = ?",
                         (occurred_at, session_id),
                     )
@@ -767,7 +797,7 @@ class SQLiteStore:
         last_wake_at: str | None = None,
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE runtime_sessions SET last_heartbeat_at = ?, "
                 "last_scan_at = COALESCE(?, last_scan_at), "
@@ -796,7 +826,7 @@ class SQLiteStore:
         graceful_exit: bool,
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE runtime_sessions SET ended_at = ?, exit_reason = ?, graceful_exit = ? "
                 "WHERE session_id = ? AND ended_at IS NULL",
@@ -860,7 +890,7 @@ class SQLiteStore:
         detail: str = "scan started",
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             connection.execute(
                 "INSERT INTO scan_attempts "
                 "(attempt_id, session_id, started_at, last_heartbeat_at, completed_at, state, "
@@ -879,7 +909,7 @@ class SQLiteStore:
         timer_active: bool | None = None,
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE scan_attempts SET last_heartbeat_at = ?, "
                 "detail = COALESCE(?, detail), timer_active = COALESCE(?, timer_active) "
@@ -904,7 +934,7 @@ class SQLiteStore:
         recovery_count: int = 0,
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE scan_attempts SET completed_at = ?, last_heartbeat_at = ?, state = ?, "
                 "detail = ?, recovery_count = ? WHERE attempt_id = ? AND completed_at IS NULL",
@@ -1182,7 +1212,7 @@ class SQLiteStore:
 
     def record_health_metric(self, metadata: dict[str, str]) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             connection.execute(
                 "INSERT INTO health_metrics "
                 "(source_ts, received_ts, state, provider_version, config_version, detail) "
@@ -1218,7 +1248,7 @@ class SQLiteStore:
         if missing := required - task.keys():
             raise ValueError(f"automation task missing: {sorted(missing)}")
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             connection.execute(
                 "INSERT OR IGNORE INTO automation_tasks "
                 "(task_key, task_type, trade_date, target_at, deadline_at, state, "
@@ -1243,7 +1273,7 @@ class SQLiteStore:
         increment_attempt: bool = False,
     ) -> None:
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE automation_tasks SET state = ?, updated_at = ?, detail = ?, "
                 "snapshot_id = COALESCE(?, snapshot_id), "
@@ -1320,7 +1350,7 @@ class SQLiteStore:
         if missing := required - record.keys():
             raise ValueError(f"scan run missing: {sorted(missing)}")
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "INSERT INTO scan_runs "
                 "(started_at, completed_at, trigger_type, task_key, health, source_ts, "
@@ -1478,35 +1508,34 @@ class SQLiteStore:
         """
         self.initialize()
         cutoff = before.isoformat()
-        with self.connect() as connection:
-            with connection:
-                alert_ids = [
-                    int(row[0])
-                    for row in connection.execute(
-                        "SELECT id FROM alert_events WHERE displayed_at < ?",
-                        (cutoff,),
-                    )
-                ]
-                if alert_ids:
-                    connection.executemany(
-                        "DELETE FROM alert_events WHERE id = ?",
-                        ((alert_id,) for alert_id in alert_ids),
-                    )
-                connection.execute(
-                    "DELETE FROM candidate_snapshots "
-                    "WHERE source_ts < ? AND id NOT IN "
-                    "(SELECT DISTINCT snapshot_id FROM alert_events)",
+        with self.transaction() as connection:
+            alert_ids = [
+                int(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM alert_events WHERE displayed_at < ?",
                     (cutoff,),
                 )
-                connection.execute(
-                    "DELETE FROM scan_runs WHERE completed_at < ?",
-                    (cutoff,),
+            ]
+            if alert_ids:
+                connection.executemany(
+                    "DELETE FROM alert_events WHERE id = ?",
+                    ((alert_id,) for alert_id in alert_ids),
                 )
-                connection.execute(
-                    "DELETE FROM automation_tasks WHERE deadline_at < ? "
-                    "AND state IN ('succeeded', 'failed')",
-                    (cutoff,),
-                )
+            connection.execute(
+                "DELETE FROM candidate_snapshots "
+                "WHERE source_ts < ? AND id NOT IN "
+                "(SELECT DISTINCT snapshot_id FROM alert_events)",
+                (cutoff,),
+            )
+            connection.execute(
+                "DELETE FROM scan_runs WHERE completed_at < ?",
+                (cutoff,),
+            )
+            connection.execute(
+                "DELETE FROM automation_tasks WHERE deadline_at < ? "
+                "AND state IN ('succeeded', 'failed')",
+                (cutoff,),
+            )
         return len(alert_ids)
 
     def record_daily_summary(self, summary: dict[str, Any]) -> None:
@@ -1525,7 +1554,7 @@ class SQLiteStore:
         if missing := required - summary.keys():
             raise ValueError(f"daily summary missing: {sorted(missing)}")
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO daily_summaries "
                 "(trade_date, generated_at, alert_count, top_sectors_json, "
@@ -1612,7 +1641,7 @@ class SQLiteStore:
         if self.read_only:
             raise RuntimeError("cannot prune daily summaries from a read-only store")
         self.initialize()
-        with self.connect() as connection:
+        with self.transaction() as connection:
             cursor = connection.execute(
                 "DELETE FROM daily_summaries WHERE trade_date < ?",
                 (before.isoformat(),),

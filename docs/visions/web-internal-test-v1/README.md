@@ -71,3 +71,28 @@
 - 当前仍无活动 Tushare Token；Worker preflight 安全退出并报告 `no active token`，因此
   尚未产生真实候选。管理员仍需通过 HTTPS Admin 页面输入 Token，随后再做 1/100/300/800/full
   preflight 与完整交易日 18 轮验收；状态继续保持 `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-09 全仓 Review 返修（本机基准）
+
+- Human Owner 暂缓 VPS、Windows 和中国大陆网络验证；本轮只修本机 Mac 代码，不部署、
+  不重启线上容器、不改账号/DNS，也不读取或回显任何凭据。
+- 行情与候选 fail-closed：生产证券池至少 4500 只、行业覆盖至少 95%；日线逐行匹配请求
+  交易日；缺最新日线、复权因子变化和当日复牌进入机械跳变排除；跨交易日清空盘中滚动
+  基线，混合日期和日期回退停止候选；强制刷新重新读取证券列表与日线。
+- Worker/SQLite：租约获取使用 `BEGIN IMMEDIATE`；Worker 业务事务在同一写事务内校验
+  holder、fencing token 和 expiry；过期租约使 readiness 返回 503；命令完成绑定 attempt，
+  Worker 忙时不提前 claim，关停时取消并等待命令线程，未退出则不主动释放租约。
+- WebSocket/命令：hello 不再推进浏览器游标；过期游标可 resync；隐藏事件通过安全 cursor
+  前进；事件按角色和命令 requester 过滤；慢客户端有发送超时。schema v8 仅放宽
+  `command.updated` 的 source dedupe，保留每次状态迁移。
+- 账号与秘密：同一 session 使用稳定 CSRF，命令限流真实消费额度；密码修改撤销该用户全部
+  session；最后一个启用管理员在原子事务内保护；Token 第三次轮换先替换旧 previous；CLI
+  删除 argv 密码参数；命令详情仅 requester/admin 可见，共享手动刷新只暴露最小状态。
+- 运维：restore 完整替换 reports 目录，避免遗留旧 PDF；provider preflight 修复 `full`
+  解析，并校验证券数量/唯一性/行业覆盖、实时覆盖、唯一代码、真实 `source_ts`、交易日、
+  交易时段、新鲜度和扫描跨度。
+- 本机代码验证：`413 passed / 25 skipped / 11 deselected`；11 项中 9 项为当前受限沙箱明确
+  排除（6 个 QLocalServer socket、3 个已安装 App 真实数据库合同），另 2 项为 live_tushare；
+  Ruff、Mypy（136 source files）、原生 JS 语法、workspace 29 项和 `git diff --check` 通过。
+- 当前仍为 `BLOCKED / NOT_ACCEPTED`：静态/回归验证不能替代下一交易日的真实全市场、Top3、
+  09:45/14:45、强异动和 15:30 现场验收。

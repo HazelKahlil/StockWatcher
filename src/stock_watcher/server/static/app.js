@@ -80,9 +80,9 @@ export function connectEvents() {
   ws.addEventListener('message', (message) => {
     let event;
     try { event = JSON.parse(message.data); } catch { return; }
-    if (event.event_type === 'server.hello') {
-      lastEventId = event.payload.latest_event_id || 0;
-    } else if (event.event_id > lastEventId) {
+    if (event.event_type === 'server.resync_required') {
+      lastEventId = Number(event.payload?.latest_event_id || 0);
+    } else if (event.event_type !== 'server.hello' && event.event_id > lastEventId) {
       lastEventId = event.event_id;
     }
     notifyListeners(event);

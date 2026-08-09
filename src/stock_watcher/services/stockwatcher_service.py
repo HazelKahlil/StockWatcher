@@ -219,6 +219,7 @@ class StockWatcherService:
         secrets: SecretService | None = None,
         clock: Callable[[], datetime] | None = None,
         source_commit: str | None = None,
+        auto_start_session: bool = True,
     ) -> None:
         self.store = store
         self.config = config or ServiceConfig()
@@ -268,13 +269,27 @@ class StockWatcherService:
         self.last_fetch_at: datetime | None = None
         self.last_fetch_detail = "尚未完成实时扫描。"
         self._state_version = 0
+        self._snapshot_id: int | None = None
         self._published_state: dict[str, Any] | None = None
         self._scan_lock = threading.Lock()
+        self._command_context = threading.local()
         self._holder_id = ""
         self._fencing_token = 0
-        self._start_runtime_session()
+        if auto_start_session:
+            self._start_runtime_session()
 
     # -- lifecycle -------------------------------------------------------
+
+    def start(self) -> None:
+        """Start runtime evidence after the Worker has acquired its lease."""
+        if not self._runtime_session_active:
+            self._start_runtime_session()
+
+    def cancel_inflight(self) -> None:
+        """Invalidate any in-flight provider response before shutdown."""
+        runtime = self._runtime
+        if runtime is not None:
+            runtime.request_scan_cancellation()
 
     def _start_runtime_session(self) -> None:
         try:
@@ -437,7 +452,7 @@ class StockWatcherService:
         if runtime is None or runtime.universe is None:
             return False
         try:
-            runtime.prepare()
+            runtime.prepare(force_refresh=True)
             self.status_issues = tuple(
                 dict.fromkeys(
                     (
@@ -600,6 +615,8 @@ class StockWatcherService:
         self.health_detail = outcome.detail
         self.last_fetch_detail = outcome.detail
         if outcome.failure_reason is not None:
+            if not self._failure_active:
+                runtime.reset_for_external_recovery()
             self._failure_active = True
         elif outcome.health is HealthState.HEALTHY:
             self._failure_active = False
@@ -622,7 +639,12 @@ class StockWatcherService:
             if fixed_task is not None
             else self._schedule.crossed_fixed_trigger(now, completed_at)
         )
-        snapshot_id = self._evaluate_alerts(
+        snapshot_id = (
+            self._persist_scan_snapshot(completed_at)
+            if outcome.health is HealthState.HEALTHY and outcome.batch is not None
+            else None
+        )
+        alert_snapshot_id = self._evaluate_alerts(
             completed_at,
             outcome.strong_event,
             forced_fixed=(
@@ -632,7 +654,9 @@ class StockWatcherService:
             ),
             selection_audit=outcome.selection_audit,
             scan_run_id=scan_run_id,
+            snapshot_id=snapshot_id,
         )
+        snapshot_id = alert_snapshot_id or snapshot_id
         if fixed_task is not None:
             if snapshot_id is not None:
                 self._mark_task(
@@ -695,18 +719,21 @@ class StockWatcherService:
         forced_fixed: AlertTrigger | None = None,
         selection_audit: object | None = None,
         scan_run_id: int | None = None,
+        snapshot_id: int | None = None,
     ) -> int | None:
         if self.batch is None or len(self.batch.candidates) != 3:
             return None
         fixed = forced_fixed or self._schedule.fixed_trigger(now)
         if fixed is not None:
+            if self.state is not HealthState.HEALTHY:
+                return None
             existing = next(
                 (row for row in self._today_alerts(now) if row.get("trigger_type") == fixed.value),
                 None,
             )
             if existing is not None:
-                snapshot_id = existing.get("snapshot_id")
-                return snapshot_id if isinstance(snapshot_id, int) else None
+                existing_snapshot_id = existing.get("snapshot_id")
+                return existing_snapshot_id if isinstance(existing_snapshot_id, int) else None
             decision = self._alert_policy.decide(self.batch, now, fixed)
             if decision.should_alert:
                 title = (
@@ -723,6 +750,7 @@ class StockWatcherService:
                     decision.reason,
                     title,
                     subtitle,
+                    snapshot_id=snapshot_id,
                 )
             return None
         if strong_event is None:
@@ -777,6 +805,7 @@ class StockWatcherService:
                 "盘中强异动",
                 subtitle,
                 detail=detail,
+                snapshot_id=snapshot_id,
             )
         return None
 
@@ -825,10 +854,20 @@ class StockWatcherService:
         subtitle: str,
         *,
         detail: dict[str, object] | None = None,
+        snapshot_id: int | None = None,
     ) -> int:
         assert self.batch is not None
+        alert_detail = {
+            **(detail or {}),
+            "title": title,
+            "subtitle": subtitle,
+            "delayed": self.state is not HealthState.HEALTHY,
+        }
+        created_snapshot = snapshot_id is None
         with self.store.transaction() as connection:
-            snapshot_id = self.store.record_batch_in(connection, self.batch)
+            if snapshot_id is None:
+                snapshot_id = self.store.record_batch_in(connection, self.batch)
+            self._snapshot_id = snapshot_id
             alert_id = self.store.record_alert_event_in(
                 connection,
                 snapshot_id=snapshot_id,
@@ -836,7 +875,7 @@ class StockWatcherService:
                 decision=decision,
                 channel="web-worker",
                 trigger_type=trigger.value,
-                detail=detail,
+                detail=alert_detail,
             )
             candidates = self._candidate_payload(self.batch)
             triggering_codes = (
@@ -855,7 +894,7 @@ class StockWatcherService:
                     "triggering_codes": triggering_codes,
                     "strength": None,
                     "funds_unconfirmed": (
-                        detail.get("funds_unconfirmed") if detail else None
+                        alert_detail.get("funds_unconfirmed")
                     ),
                 },
                 source_kind="alert",
@@ -869,18 +908,49 @@ class StockWatcherService:
                 source_ts=self.batch.source_ts.isoformat(),
                 payload=self._public_payload(now, event_id=event_id),
             )
-        self._emit(
-            event_type="candidates.updated",
-            payload={
-                "snapshot_id": snapshot_id,
-                "state_version": state_version,
-                "source_ts": self.batch.source_ts.isoformat(),
-                "overall_weak": self.batch.overall_weak,
-                "candidates": candidates,
-            },
-            source_kind="snapshot",
-            source_id=str(snapshot_id),
-        )
+        if created_snapshot:
+            self._emit(
+                event_type="candidates.updated",
+                payload={
+                    "snapshot_id": snapshot_id,
+                    "state_version": state_version,
+                    "source_ts": self.batch.source_ts.isoformat(),
+                    "overall_weak": self.batch.overall_weak,
+                    "candidates": candidates,
+                },
+                source_kind="snapshot",
+                source_id=str(snapshot_id),
+            )
+        return snapshot_id
+
+    def _persist_scan_snapshot(self, now: datetime) -> int | None:
+        """Persist every healthy automatic result for factor-level audit."""
+        if self.batch is None or len(self.batch.candidates) != 3:
+            return None
+        with self.store.transaction() as connection:
+            snapshot_id = self.store.record_batch_in(connection, self.batch)
+            self._snapshot_id = snapshot_id
+            state_version = self._bump_state_version()
+            event_id = self._outbox.append(
+                connection,
+                event_type="candidates.updated",
+                payload={
+                    "snapshot_id": snapshot_id,
+                    "state_version": state_version,
+                    "source_ts": self.batch.source_ts.isoformat(),
+                    "overall_weak": self.batch.overall_weak,
+                    "candidates": self._candidate_payload(self.batch),
+                },
+                source_kind="snapshot",
+                source_id=str(snapshot_id),
+            )
+            self.store.upsert_public_state(
+                connection,
+                state_version=state_version,
+                snapshot_id=snapshot_id,
+                source_ts=self.batch.source_ts.isoformat(),
+                payload=self._public_payload(now, event_id=event_id),
+            )
         return snapshot_id
 
     def _candidate_payload(self, batch: CandidateBatch) -> list[dict[str, Any]]:
@@ -1297,20 +1367,28 @@ class StockWatcherService:
 
     def handle_command(self, command: dict[str, Any]) -> None:
         """Execute one claimed durable command (called by the Worker)."""
-        command_type = CommandType(str(command["command_type"]))
-        command_id = str(command["command_id"])
-        if command_type is CommandType.MANUAL_REFRESH:
-            self._manual_refresh(command)
-        elif command_type is CommandType.UNIVERSE_REFRESH:
-            self._universe_refresh(command)
-        elif command_type is CommandType.SUMMARY_GENERATE:
-            self._summary_generate(command)
-        elif command_type in {CommandType.TOKEN_TEST, CommandType.TOKEN_UPDATE}:
-            self._token_command(command, update=command_type is CommandType.TOKEN_UPDATE)
-        else:
-            self._finish_command(command_id, CommandStatus.FAILED, error_code="unsupported")
+        self._command_context.command = command
+        try:
+            command_type = CommandType(str(command["command_type"]))
+            command_id = str(command["command_id"])
+            if command_type is CommandType.MANUAL_REFRESH:
+                self._manual_refresh(command)
+            elif command_type is CommandType.UNIVERSE_REFRESH:
+                self._universe_refresh(command)
+            elif command_type is CommandType.SUMMARY_GENERATE:
+                self._summary_generate(command)
+            elif command_type in {CommandType.TOKEN_TEST, CommandType.TOKEN_UPDATE}:
+                self._token_command(command, update=command_type is CommandType.TOKEN_UPDATE)
+            else:
+                self._finish_command(command_id, CommandStatus.FAILED, error_code="unsupported")
+        finally:
+            self._command_context.command = None
 
     def _manual_refresh(self, command: dict[str, Any]) -> None:
+        with self._scan_lock:
+            self._manual_refresh_locked(command)
+
+    def _manual_refresh_locked(self, command: dict[str, Any]) -> None:
         command_id = str(command["command_id"])
         started = monotonic_time()
         deadline = started + self.config.manual_timeout_seconds
@@ -1386,6 +1464,12 @@ class StockWatcherService:
         )
         self.state = outcome.health
         self.health_detail = outcome.detail
+        if outcome.failure_reason is not None:
+            if not self._failure_active:
+                runtime.reset_for_external_recovery()
+            self._failure_active = True
+        elif outcome.health is HealthState.HEALTHY:
+            self._failure_active = False
         if outcome.batch is not None:
             self.batch = outcome.batch
         if outcome.health is HealthState.HEALTHY:
@@ -1432,6 +1516,7 @@ class StockWatcherService:
             return None
         with self.store.transaction() as connection:
             snapshot_id = self.store.record_batch_in(connection, self.batch)
+            self._snapshot_id = snapshot_id
             state_version = self._bump_state_version()
             self.store.upsert_public_state(
                 connection,
@@ -1628,11 +1713,20 @@ class StockWatcherService:
     ) -> None:
         holder_id = getattr(self, "_holder_id", "")
         fencing_token = getattr(self, "_fencing_token", 0)
+        context_command = getattr(self._command_context, "command", None)
+        if not isinstance(context_command, dict):
+            return
+        command: dict[str, Any] = context_command
+        attempt_value = command.get("attempts")
+        if not isinstance(attempt_value, int) or attempt_value < 1:
+            return
+        expected_attempt = attempt_value
         try:
             completed = self._commands.complete(
                 command_id,
                 holder_id=holder_id,
                 fencing_token=fencing_token,
+                expected_attempt=expected_attempt,
                 status=status,
                 result=result,
                 error_code=error_code,
@@ -1645,9 +1739,11 @@ class StockWatcherService:
                 event_type="command.updated",
                 payload={
                     "command_id": command_id,
-                    "command_type": "unknown",
+                    "command_type": command.get("command_type", "unknown"),
                     "status": status.value,
                     "error_code": error_code,
+                    "requested_by": command.get("requested_by"),
+                    "attempts": expected_attempt,
                 },
                 source_kind="command",
                 source_id=command_id,
@@ -1665,7 +1761,7 @@ class StockWatcherService:
             "service_state": self.state.value.casefold(),
             "market_state": self._market_state_label(now),
             "state_version": self._state_version,
-            "snapshot_id": None,
+            "snapshot_id": self._snapshot_id,
             "candidates": self._candidate_payload(batch) if batch is not None else [],
             "overall_weak": bool(batch.overall_weak) if batch is not None else False,
             "source_ts": batch.source_ts.isoformat() if batch is not None else None,
@@ -1697,7 +1793,7 @@ class StockWatcherService:
         """Persist the projection (no snapshot change) and emit state.changed."""
         with self.store.transaction() as connection:
             state_version = self._bump_state_version()
-            snapshot_id = None
+            snapshot_id = self._snapshot_id
             self.store.upsert_public_state(
                 connection,
                 state_version=state_version,

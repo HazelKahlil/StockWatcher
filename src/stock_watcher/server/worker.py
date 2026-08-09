@@ -80,6 +80,7 @@ class WorkerRuntime:
                 if settings.source_commit != "unknown"
                 else source_commit()
             ),
+            auto_start_session=False,
         )
         self._stop = threading.Event()
         self._lease_lost = threading.Event()
@@ -108,6 +109,8 @@ class WorkerRuntime:
         )
         self.service._holder_id = self.lease.holder_id  # noqa: SLF001
         self.service._fencing_token = self.lease.fencing_token  # noqa: SLF001
+        self.store.bind_write_guard(self.lease.assert_owned)
+        self.service.start()
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
             daemon=True,
@@ -149,6 +152,12 @@ class WorkerRuntime:
             # exit evidence before reacquiring the lease.
             logger.error("lease lost; exiting without blocking cleanup")
             return 1
+        self.service.cancel_inflight()
+        if self._scan_thread is not None:
+            self._scan_thread.join(timeout=self.lease.config.ttl_seconds / 2)
+            if self._scan_thread.is_alive():
+                logger.error("command thread did not stop; preserving lease until expiry")
+                return 1
         self.service.stop(exit_reason="worker_shutdown", graceful=True)
         try:
             self.lease.release()
@@ -192,6 +201,8 @@ class WorkerRuntime:
         tick = self.service.tick()
         if tick.skipped_reason is not None:
             logger.debug("tick skipped: %s", tick.skipped_reason)
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return
         claimed = self.commands.claim_next(
             holder_id=self.lease.holder_id,
             fencing_token=self.lease.fencing_token,
@@ -199,25 +210,13 @@ class WorkerRuntime:
         if claimed is not None:
             command = claimed
             self._emit_command(command)
-            if self._scan_thread is None or not self._scan_thread.is_alive():
-                self._scan_thread = threading.Thread(
-                    target=self._run_command_safe,
-                    args=(command,),
-                    daemon=True,
-                    name="worker-command",
-                )
-                self._scan_thread.start()
-            else:
-                # A long-running command is in flight; keep this one queued by
-                # restoring it so it is claimed on the next tick.
-                self.commands.complete(
-                    str(command["command_id"]),
-                    holder_id=self.lease.holder_id,
-                    fencing_token=self.lease.fencing_token,
-                    status=CommandStatus.FAILED,
-                    error_code="busy",
-                    error_detail="previous command still running",
-                )
+            self._scan_thread = threading.Thread(
+                target=self._run_command_safe,
+                args=(command,),
+                daemon=True,
+                name="worker-command",
+            )
+            self._scan_thread.start()
 
     def _run_command_safe(self, command: dict[str, object]) -> None:
         try:
@@ -225,10 +224,12 @@ class WorkerRuntime:
         except Exception as error:
             logger.error("command %s failed: %s", command.get("command_id"), redact(str(error)))
             try:
+                attempt = command.get("attempts")
                 self.commands.complete(
                     str(command["command_id"]),
                     holder_id=self.lease.holder_id,
                     fencing_token=self.lease.fencing_token,
+                    expected_attempt=attempt if isinstance(attempt, int) else 0,
                     status=CommandStatus.FAILED,
                     error_code=type(error).__name__,
                     error_detail=redact(str(error)),
@@ -246,6 +247,8 @@ class WorkerRuntime:
                     "status": command.get("status"),
                     "coalesced": bool(command.get("coalesced", False)),
                     "error_code": command.get("error_code"),
+                    "requested_by": command.get("requested_by"),
+                    "attempts": command.get("attempts"),
                 },
                 source_kind="command",
                 source_id=str(command.get("command_id") or ""),

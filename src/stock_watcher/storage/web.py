@@ -19,6 +19,10 @@ SESSION_CSRF_BYTES = 32
 SESSION_RETENTION_DAYS = 30
 
 
+class LastActiveAdminError(RuntimeError):
+    """A mutation would remove the final enabled administrator."""
+
+
 def _now() -> datetime:
     return datetime.now(SHANGHAI)
 
@@ -113,6 +117,7 @@ class UserRepository:
         active: bool | None = None,
         password_hash: str | None = None,
         last_login_at: str | None = None,
+        protect_last_admin: bool = False,
     ) -> dict[str, Any] | None:
         updates: list[str] = []
         values: list[Any] = []
@@ -137,7 +142,28 @@ class UserRepository:
         updates.append("updated_at = ?")
         values.append(_now().isoformat())
         values.append(user_id)
-        with self.store.transaction() as connection:
+        with self.store.transaction(immediate=protect_last_admin) as connection:
+            if protect_last_admin:
+                current = connection.execute(
+                    "SELECT role, active FROM web_users WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
+                if current is None:
+                    return None
+                proposed_role = role if role is not None else str(current[0])
+                proposed_active = bool(active) if active is not None else bool(current[1])
+                removes_active_admin = (
+                    str(current[0]) == "admin"
+                    and bool(current[1])
+                    and (proposed_role != "admin" or not proposed_active)
+                )
+                if removes_active_admin:
+                    count = connection.execute(
+                        "SELECT COUNT(*) FROM web_users "
+                        "WHERE role = 'admin' AND active = 1"
+                    ).fetchone()
+                    if count is None or int(count[0]) <= 1:
+                        raise LastActiveAdminError("last active admin is protected")
             cursor = connection.execute(
                 f"UPDATE web_users SET {', '.join(updates)} WHERE user_id = ?",
                 values,

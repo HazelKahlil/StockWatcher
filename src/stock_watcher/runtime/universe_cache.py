@@ -117,12 +117,20 @@ class _Document(_UnsignedDocument):
 class RuntimeUniverseCache:
     """Credential-free, checksummed static context for critical realtime scans."""
 
-    minimum_profile_count = 100
+    default_minimum_profile_count = 4_500
     maximum_age = timedelta(days=8)
     maximum_degraded_age = timedelta(days=30)
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        minimum_profile_count: int = default_minimum_profile_count,
+    ) -> None:
+        if minimum_profile_count < 1:
+            raise ValueError("minimum_profile_count must be positive")
         self.path = path
+        self.minimum_profile_count = minimum_profile_count
 
     def load(
         self,
@@ -170,7 +178,10 @@ class RuntimeUniverseCache:
         """
         if self.path.exists() or not seed_path.is_file():
             return False
-        seed = RuntimeUniverseCache(seed_path)
+        seed = RuntimeUniverseCache(
+            seed_path,
+            minimum_profile_count=self.minimum_profile_count,
+        )
         seed.load(now=_shanghai(now), allow_stale=True)
         temporary = self.path.with_suffix(self.path.suffix + ".seed.tmp")
         try:
@@ -224,11 +235,16 @@ class RuntimeUniverseCache:
             raise UniverseCacheError(UniverseCacheFailure.IO) from None
 
 
-def universe_is_current(universe: RuntimeUniverse, *, now: datetime) -> bool:
+def universe_is_current(
+    universe: RuntimeUniverse,
+    *,
+    now: datetime,
+    minimum_profiles: int = RuntimeUniverseCache.default_minimum_profile_count,
+) -> bool:
     try:
         _validate_structure(
             universe,
-            minimum_profiles=RuntimeUniverseCache.minimum_profile_count,
+            minimum_profiles=minimum_profiles,
         )
         _validate_freshness(
             universe,
@@ -241,12 +257,17 @@ def universe_is_current(universe: RuntimeUniverse, *, now: datetime) -> bool:
     return True
 
 
-def universe_is_usable(universe: RuntimeUniverse, *, now: datetime) -> bool:
+def universe_is_usable(
+    universe: RuntimeUniverse,
+    *,
+    now: datetime,
+    minimum_profiles: int = RuntimeUniverseCache.default_minimum_profile_count,
+) -> bool:
     """Whether verified static context is safe for degraded realtime use."""
     try:
         _validate_structure(
             universe,
-            minimum_profiles=RuntimeUniverseCache.minimum_profile_count,
+            minimum_profiles=minimum_profiles,
         )
         _validate_freshness(
             universe,

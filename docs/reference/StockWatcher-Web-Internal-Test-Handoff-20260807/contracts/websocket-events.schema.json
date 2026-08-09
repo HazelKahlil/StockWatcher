@@ -45,6 +45,23 @@
         {
           "properties": {
             "event_type": {
+              "const": "server.cursor"
+            },
+            "payload": {
+              "$ref": "#/$defs/cursorPayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
               "const": "server.resync_required"
             },
             "payload": {
@@ -322,6 +339,19 @@
           "minimum": 0
         },
         "latest_event_id": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "cursorPayload": {
+      "type": "object",
+      "required": [
+        "last_event_id"
+      ],
+      "properties": {
+        "last_event_id": {
           "type": "integer",
           "minimum": 0
         }

@@ -18,6 +18,7 @@ import shutil
 import sys
 import time
 from datetime import datetime
+from datetime import time as wall_time
 from pathlib import Path
 from typing import Any
 
@@ -66,8 +67,6 @@ def cmd_migrate(settings: ServerSettings, args: argparse.Namespace) -> int:
 def _read_password(args: argparse.Namespace) -> str:
     if args.password_stdin:
         return str(sys.stdin.readline().rstrip("\n"))
-    if args.password is not None:
-        return str(args.password)
     value = getpass.getpass("Password (min 12 chars, stdin): ")
     return str(value)
 
@@ -186,9 +185,7 @@ def cmd_restore(settings: ServerSettings, args: argparse.Namespace) -> int:
     store = SQLiteStore(settings.db_path)
     store.rollback(db_backup)
     reports_backup = backup_dir / "reports"
-    if reports_backup.is_dir():
-        settings.report_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(reports_backup, settings.report_dir, dirs_exist_ok=True)
+    _replace_report_directory(reports_backup, settings.report_dir)
     with store.connect() as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
         version = connection.execute(
@@ -210,6 +207,38 @@ def cmd_restore(settings: ServerSettings, args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def _replace_report_directory(source: Path, target: Path) -> None:
+    """Atomically replace reports so stale PDFs cannot survive a restore."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(f"{target.name}.restore-tmp")
+    previous = target.with_name(f"{target.name}.restore-old")
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(previous, ignore_errors=True)
+    if source.is_dir():
+        shutil.copytree(source, staging)
+    else:
+        staging.mkdir()
+    if target.exists():
+        target.replace(previous)
+    try:
+        staging.replace(target)
+    except BaseException:
+        if previous.exists() and not target.exists():
+            previous.replace(target)
+        raise
+    shutil.rmtree(previous, ignore_errors=True)
+
+
+def _parse_preflight_scales(value: str, *, full_count: int) -> list[int]:
+    tokens = [part.strip().casefold() for part in value.split(",")]
+    scales = [int(part) for part in tokens if part and part != "full"]
+    if any(scale < 1 for scale in scales):
+        raise ValueError("preflight scales must be positive")
+    if "full" in tokens:
+        scales.append(full_count)
+    return list(dict.fromkeys(scales))
 
 
 def cmd_provider_preflight(settings: ServerSettings, args: argparse.Namespace) -> int:
@@ -281,19 +310,38 @@ def cmd_provider_preflight(settings: ServerSettings, args: argparse.Namespace) -
             row for row in (stocks.records or []) if isinstance(row, dict)
         ]
         codes = [
-            str(row.get("ts_code", ""))
+            str(row.get("ts_code", "")).strip().upper()
             for row in stock_rows
             if isinstance(row, dict) and row.get("ts_code")
         ]
+        unique_codes = set(codes)
+        industry_count = sum(1 for row in stock_rows if str(row.get("industry") or "").strip())
+        static_ok = (
+            len(codes) >= 4_500
+            and len(unique_codes) == len(codes)
+            and all(code.rpartition(".")[2] in {"SH", "SZ", "BJ"} for code in codes)
+            and industry_count / len(codes) >= 0.95
+        )
+        report["layers"][-1].update(
+            {
+                "ok": static_ok,
+                "unique_codes": len(unique_codes),
+                "industry_coverage_ratio": (
+                    round(industry_count / len(codes), 6) if codes else 0.0
+                ),
+            }
+        )
+        if not static_ok:
+            report["error"] = "static_pro coverage or uniqueness invalid"
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1
         realtime = NativeRealtimeTransport(
             ds.native_realtime_profile,
             lambda: token,
             request_budget=budget,
         )
-        scales = [int(value) for value in str(args.scales).split(",") if value.strip()]
-        if "full" in str(args.scales).split(","):
-            scales.append(len(codes))
-        for size in dict.fromkeys(scales):
+        scales = _parse_preflight_scales(str(args.scales), full_count=len(codes))
+        for size in scales:
             batch = codes[:size]
             started = time.monotonic()
             try:
@@ -322,31 +370,69 @@ def cmd_provider_preflight(settings: ServerSettings, args: argparse.Namespace) -
                 rows: list[Any] = [
                     row for row in (response.records or []) if isinstance(row, dict)
                 ]
-                source_age = None
-                source_span = None
+                source_age: float | None = None
+                source_span: float | None = None
                 timestamps: list[datetime] = []
                 for row in rows:
-                    stamp_value = row.get("received_ts") or row.get("source_ts")
+                    stamp_value = row.get("source_ts")
                     if not stamp_value:
                         continue
                     try:
-                        timestamps.append(datetime.fromisoformat(str(stamp_value)))
+                        stamp = datetime.fromisoformat(str(stamp_value))
                     except ValueError:
                         continue
+                    if stamp.tzinfo is None:
+                        continue
+                    timestamps.append(stamp.astimezone(SHANGHAI))
+                observed_codes = [
+                    str(row.get("ts_code") or "").strip().upper() for row in rows
+                ]
+                expected_codes = set(batch)
+                observed_unique = set(observed_codes)
+                now = datetime.now(SHANGHAI)
                 if timestamps:
                     source_age = max(
-                        (datetime.now(SHANGHAI) - ts).total_seconds()
+                        (now - ts).total_seconds()
                         for ts in timestamps
                     )
                     source_span = (max(timestamps) - min(timestamps)).total_seconds()
+                source_times_valid = bool(timestamps) and len(timestamps) == len(rows) and all(
+                    ts.date() == now.date()
+                    and (
+                        wall_time(9, 30) <= ts.timetz().replace(tzinfo=None) <= wall_time(11, 30)
+                        or wall_time(13, 0)
+                        <= ts.timetz().replace(tzinfo=None)
+                        <= wall_time(15, 0)
+                    )
+                    for ts in timestamps
+                )
+                coverage = (
+                    len(observed_unique & expected_codes) / len(expected_codes)
+                    if expected_codes
+                    else 0.0
+                )
+                realtime_ok = (
+                    len(rows) == len(observed_codes)
+                    and len(observed_unique) == len(observed_codes)
+                    and observed_unique <= expected_codes
+                    and coverage >= 0.99
+                    and source_times_valid
+                    and source_age is not None
+                    and -10.0 <= source_age <= ds.source_fresh_seconds
+                    and source_span is not None
+                    and source_span <= ds.full_scan_max_seconds
+                )
                 report["layers"].append(
                     {
                         "layer": f"realtime_{size}",
                         "endpoint": "tushare.realtime_quote(src=sina)",
                         "verify_url": str(ds.native_realtime_profile.verify_url),
-                        "ok": len(rows) > 0,
+                        "ok": realtime_ok,
                         "requested": size,
                         "rows": len(rows),
+                        "unique_codes": len(observed_unique),
+                        "coverage_ratio": round(coverage, 6),
+                        "source_times_valid": source_times_valid,
                         "elapsed_seconds": round(time.monotonic() - started, 3),
                         "max_source_age_seconds": (
                             round(source_age, 2) if source_age is not None else None
@@ -356,8 +442,8 @@ def cmd_provider_preflight(settings: ServerSettings, args: argparse.Namespace) -
                         ),
                     }
                 )
-                if not rows:
-                    report["error"] = f"realtime_{size} empty"
+                if not realtime_ok:
+                    report["error"] = f"realtime_{size} validation failed"
                     break
             except Exception as error:
                 report["layers"].append(
@@ -392,11 +478,6 @@ def parse_args() -> argparse.ArgumentParser:
     create = sub.add_parser("create-user", help="create the first Admin or a Tester")
     create.add_argument("--username", required=True)
     create.add_argument("--role", choices=["tester", "admin"], default="tester")
-    create.add_argument(
-        "--password",
-        default=None,
-        help="read from --password-stdin or interactive prompt; never pass on argv",
-    )
     create.add_argument(
         "--password-stdin",
         action="store_true",
