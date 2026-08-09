@@ -1,6 +1,8 @@
 import os
+import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -218,3 +220,27 @@ def test_sqlite_wal_backup_and_rollback(tmp_path: Path) -> None:
     store.put_note("mode", "changed")
     store.rollback(backup)
     assert store.get_note("mode") == "simulated"
+
+
+def test_sqlite_rollback_quarantines_stale_wal_sidecars(tmp_path: Path) -> None:
+    current = tmp_path / "watcher.sqlite3"
+    backup = tmp_path / "watcher.backup.sqlite3"
+    for path, value in ((current, "changed"), (backup, "simulated")):
+        connection = sqlite3.connect(path)
+        connection.execute("CREATE TABLE notes (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute("INSERT INTO notes VALUES ('mode', ?)", (value,))
+        connection.commit()
+        connection.close()
+    Path(f"{current}-wal").write_bytes(b"stale-wal")
+    Path(f"{current}-shm").write_bytes(b"stale-shm")
+
+    SQLiteStore(current).rollback(backup)
+
+    with closing(sqlite3.connect(current)) as connection:
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'mode'"
+        ).fetchone() == ("simulated",)
+    previous = current.with_name(f"{current.name}.restore-old")
+    assert previous.is_file()
+    assert Path(f"{previous}-wal").read_bytes() == b"stale-wal"
+    assert Path(f"{previous}-shm").read_bytes() == b"stale-shm"

@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -137,6 +137,48 @@ class SQLiteStore:
         except OSError:
             return False
 
+    @staticmethod
+    def _database_sidecars(path: Path) -> tuple[Path, Path]:
+        return Path(f"{path}-wal"), Path(f"{path}-shm")
+
+    @classmethod
+    def _remove_database_sidecars(cls, path: Path) -> None:
+        for sidecar in cls._database_sidecars(path):
+            sidecar.unlink(missing_ok=True)
+
+    @classmethod
+    def _remove_database_family(cls, path: Path) -> None:
+        path.unlink(missing_ok=True)
+        cls._remove_database_sidecars(path)
+
+    @classmethod
+    def _move_database_family(cls, source: Path, destination: Path) -> None:
+        if source.exists():
+            source.replace(destination)
+        for source_sidecar, destination_sidecar in zip(
+            cls._database_sidecars(source),
+            cls._database_sidecars(destination),
+            strict=True,
+        ):
+            if source_sidecar.exists():
+                source_sidecar.replace(destination_sidecar)
+
+    @staticmethod
+    def _validate_database_file(path: Path) -> None:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
+            if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+                raise RuntimeError("database snapshot failed integrity check")
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise RuntimeError("database snapshot failed foreign key check")
+
+    def _close_thread_connection(self) -> None:
+        connection = getattr(self._thread_local, "connection", None)
+        if connection is not None:
+            connection.close()
+            del self._thread_local.connection
+        self._wal_configured = False
+        self._integrity_verified_version = None
+
     def _restore_from_backup(self) -> None:
         """Recover a damaged database file from the newest valid pre-migration backup.
 
@@ -184,8 +226,16 @@ class SQLiteStore:
         if not self.path.exists() or version == 0:
             return
         backup = self.path.with_suffix(f"{self.path.suffix}.pre-v{version + 1}.bak")
-        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
+        staging = backup.with_name(f"{backup.name}.tmp")
+        self._remove_database_family(staging)
+        with closing(sqlite3.connect(self.path)) as source, closing(
+            sqlite3.connect(staging)
+        ) as target:
             source.backup(target)
+            target.commit()
+        self._validate_database_file(staging)
+        self._remove_database_sidecars(backup)
+        staging.replace(backup)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
         if version not in (0, 1, 2, 3, 4, 5, 6, 7):
@@ -1429,11 +1479,32 @@ class SQLiteStore:
     def rollback(self, backup: Path) -> None:
         if not backup.exists():
             raise FileNotFoundError(backup)
-        with sqlite3.connect(backup) as source, self.connect() as target:
-            source.backup(target)
-        with self.connect() as connection:
-            if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-                raise RuntimeError("rollback database failed integrity check")
+        staging = self.path.with_name(f"{self.path.name}.restore-tmp")
+        previous = self.path.with_name(f"{self.path.name}.restore-old")
+        self._remove_database_family(staging)
+        shutil.copy2(backup, staging)
+        self._validate_database_file(staging)
+
+        # A restore is a controlled offline operation. Replacing the main file
+        # while old WAL/SHM sidecars survive can replay pages from the damaged
+        # database into the restored snapshot when Web or Worker starts again.
+        self._close_thread_connection()
+        current_family_exists = self.path.exists() or any(
+            sidecar.exists() for sidecar in self._database_sidecars(self.path)
+        )
+        if current_family_exists:
+            self._remove_database_family(previous)
+            self._move_database_family(self.path, previous)
+        try:
+            staging.replace(self.path)
+            self.read_only = False
+            self._validate_database_file(self.path)
+        except BaseException:
+            self._remove_database_family(self.path)
+            self._move_database_family(previous, self.path)
+            raise
+        finally:
+            self._remove_database_family(staging)
 
     def list_recent_snapshots(self, limit: int = 20) -> list[dict[str, str | int]]:
         """Read visible candidate batches without initializing or mutating storage.
