@@ -209,9 +209,56 @@ def cmd_restore(settings: ServerSettings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _remove_report_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _replace_mounted_report_directory(source: Path, target: Path) -> None:
+    """Replace a report volume's contents without renaming its mount point."""
+    staging = target / ".restore-tmp"
+    previous = target / ".restore-old"
+    _remove_report_path(staging)
+    _remove_report_path(previous)
+    if source.is_dir():
+        shutil.copytree(source, staging)
+    else:
+        staging.mkdir()
+    previous.mkdir()
+
+    preserved = {staging, previous}
+    for path in list(target.iterdir()):
+        if path not in preserved:
+            path.replace(previous / path.name)
+    try:
+        for path in list(staging.iterdir()):
+            path.replace(target / path.name)
+    except BaseException:
+        for path in list(target.iterdir()):
+            if path not in preserved:
+                _remove_report_path(path)
+        for path in list(previous.iterdir()):
+            path.replace(target / path.name)
+        raise
+    finally:
+        _remove_report_path(staging)
+    _remove_report_path(previous)
+
+
 def _replace_report_directory(source: Path, target: Path) -> None:
-    """Atomically replace reports so stale PDFs cannot survive a restore."""
+    """Replace reports so stale PDFs cannot survive a controlled restore.
+
+    A Docker named volume makes ``target`` a mount point, which cannot be
+    renamed even while its contents remain writable. Web and Worker are
+    stopped during restore, so stage and roll back entries inside that volume.
+    Normal host directories retain the atomic sibling-directory swap.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.is_mount():
+        _replace_mounted_report_directory(source, target)
+        return
     staging = target.with_name(f"{target.name}.restore-tmp")
     previous = target.with_name(f"{target.name}.restore-old")
     shutil.rmtree(staging, ignore_errors=True)

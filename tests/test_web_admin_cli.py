@@ -26,6 +26,32 @@ def test_restore_replaces_reports_without_leaving_stale_files(tmp_path: Path) ->
     assert not (target / "stale.pdf").exists()
 
 
+def test_restore_replaces_reports_inside_mounted_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "backup" / "reports"
+    source.mkdir(parents=True)
+    (source / "current.pdf").write_bytes(b"current")
+    (source / "nested").mkdir()
+    (source / "nested" / "summary.pdf").write_bytes(b"summary")
+    target = tmp_path / "runtime" / "reports"
+    target.mkdir(parents=True)
+    (target / "stale.pdf").write_bytes(b"stale")
+    (target / "stale-dir").mkdir()
+    (target / "stale-dir" / "old.pdf").write_bytes(b"old")
+    monkeypatch.setattr(Path, "is_mount", lambda path: path == target)
+
+    _replace_report_directory(source, target)
+
+    assert (target / "current.pdf").read_bytes() == b"current"
+    assert (target / "nested" / "summary.pdf").read_bytes() == b"summary"
+    assert not (target / "stale.pdf").exists()
+    assert not (target / "stale-dir").exists()
+    assert not (target / ".restore-tmp").exists()
+    assert not (target / ".restore-old").exists()
+
+
 def test_create_user_password_cannot_be_passed_on_argv() -> None:
     parser = parse_args()
     with pytest.raises(SystemExit):
