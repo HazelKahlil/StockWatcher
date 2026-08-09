@@ -96,11 +96,17 @@
   重新迁移到 schema v8 成功。
 - 恢复演练暴露 reports 命名卷挂载点不能整体重命名；提交 `ec00089` 改为在挂载卷内 staging
   和 rollback，定向测试、Ruff、Mypy 通过，真实容器恢复返回 `reports_restored=true`。
+- `ec00089` 启动后数分钟再次出现 `database disk image is malformed` 和 Worker lease
+  重启；服务立即停止并保存主库、WAL/SHM 与日志现场，没有把 unhealthy 状态当成部署成功。
+- 提交 `7ea43cc` 将数据库 restore 改为校验备份、同卷 staging、关闭当前线程连接、隔离旧
+  主库及 WAL/SHM、原子替换并再次校验；迁移备份也不再复用旧 sidecar。SQLite/Worker/Web/
+  readiness 扩大回归 42 项通过，Ruff、Mypy 与 `git diff --check` 通过。
 - 本机代码验证：`413 passed / 25 skipped / 11 deselected`；11 项中 9 项为当前受限沙箱明确
   排除（6 个 QLocalServer socket、3 个已安装 App 真实数据库合同），另 2 项为 live_tushare；
   Ruff、Mypy（136 source files）、原生 JS 语法、workspace 29 项和 `git diff --check` 通过。
-- 本机 Docker 当前运行镜像 `stockwatcher-web:web-internal-test-v1-ec00089`；Web、Worker、
-  tunnel gateway、cloudflared、origin、公开 HTTPS live/ready 均通过，运行源码为 `ec00089`。
-  部署后 schema v8 备份再次验证 `integrity_check=ok` 且外键问题为 0。
+- 本机 Docker 当前运行镜像 `stockwatcher-web:web-internal-test-v1-7ea43cc`；Web、Worker、
+  tunnel gateway、cloudflared、origin、公开 HTTPS live/ready 均通过，运行源码为 `7ea43cc`。
+  恢复来源为已验证的 schema v8 备份，启动后已跨过此前复发窗口且未再出现 malformed/lease
+  丢失日志。
 - 当前仍为 `BLOCKED / NOT_ACCEPTED`：静态/回归验证不能替代下一交易日的真实全市场、Top3、
   09:45/14:45、强异动和 15:30 现场验收。

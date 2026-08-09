@@ -12,10 +12,12 @@
 - restore 改为完整替换 reports；provider preflight 严格验证全市场覆盖和真实源时间。
 - 真实 Docker 恢复演练补齐 reports 命名卷挂载点路径：在卷内 staging/rollback，避免重命名
   挂载点导致恢复失败，同时确保旧报告不会残留。
+- SQLite restore 改为同卷 staging 后原子替换主库，并把旧主库及 WAL/SHM 隔离为
+  `.restore-old`；迁移备份也先清理旧 sidecar，避免恢复后重放不属于新快照的页面。
 
 ### Status
 
-- 本机 Docker 已加载 `ec00089`；schema v8、SQLite 完整性、外键、Web/Worker/Tunnel、公开
+- 本机 Docker 已加载 `7ea43cc`；schema v8、SQLite 完整性、外键、Web/Worker/Tunnel、公开
   readiness 和部署后备份均已验证。交易日现场验收待执行，状态保持 `BLOCKED / NOT_ACCEPTED`。
 
 ## [web-internal-test-v1] - 2026-08-07
