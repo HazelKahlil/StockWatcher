@@ -135,7 +135,8 @@
 - 首次 Web 启动没有静态基础缓存时，Worker 会按退避策略建立一次证券池/日线/板块缓存，
   不再每 10 秒重复强制刷新；供应商限流、Token 或缓存失败会保留为可解释的失败状态。
 - Worker 在取得唯一租约后立即启动独立心跳，再写运行时启动证据；完整测试负载下不会因
-  初始化延迟而错过租约续期。
-- 代码验证：`429 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
+  初始化延迟而错过租约续期。已过期租约不能由原 Worker 复活，运行时写入发现 fencing
+  失效会立即停止业务线程并交给容器重启。
+- 代码验证：`431 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
   validator 与 `git diff --check` 全绿。新部署与交易日真实 Top3 验收仍待完成，状态继续保持
   `BLOCKED / NOT_ACCEPTED`。

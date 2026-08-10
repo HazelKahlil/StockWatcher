@@ -85,6 +85,25 @@ def test_expired_lease_is_stolen_with_fencing_bump(tmp_path: Path) -> None:
         first.renew()
 
 
+def test_expired_lease_cannot_be_revived_by_original_holder(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    current = [datetime(2026, 8, 7, 9, 30, tzinfo=SHANGHAI)]
+    lease = WorkerLease(
+        store,
+        source_commit="x" * 40,
+        holder_id="holder-a",
+        config=LeaseConfig(ttl_seconds=20.0),
+        clock=lambda: current[0],
+    )
+    lease.acquire()
+    current[0] += timedelta(seconds=21)
+
+    with pytest.raises(LeaseLostError):
+        lease.renew()
+
+    assert not lease.held
+
+
 from stock_watcher.services.worker_lease import LeaseLostError  # noqa: E402
 
 

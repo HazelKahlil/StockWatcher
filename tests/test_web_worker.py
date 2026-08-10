@@ -15,8 +15,10 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+import stock_watcher.server.worker as worker_module
 from stock_watcher.server.redaction import redact
 from stock_watcher.server.worker import WorkerRuntime
+from stock_watcher.services import LeaseLostError
 
 
 def _prepare(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
@@ -236,6 +238,25 @@ def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
             process.wait(timeout=20)
         except subprocess.TimeoutExpired:
             process.kill()
+
+
+def test_runtime_heartbeat_stops_worker_after_lease_loss(monkeypatch: Any) -> None:
+    """A fenced runtime write must stop all business work immediately."""
+
+    class Service:
+        def heartbeat(self) -> None:
+            raise LeaseLostError("expired")
+
+    runtime = cast(Any, WorkerRuntime.__new__(WorkerRuntime))
+    runtime.service = Service()
+    runtime._stop = threading.Event()
+    runtime._lease_lost = threading.Event()
+    monkeypatch.setattr(worker_module, "HEARTBEAT_SECONDS", 0.01)
+
+    runtime._runtime_heartbeat_loop()
+
+    assert runtime._lease_lost.is_set()
+    assert runtime._stop.is_set()
 
 
 def test_worker_keeps_command_queued_while_automatic_scan_is_busy() -> None:

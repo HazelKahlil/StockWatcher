@@ -234,6 +234,11 @@ class WorkerRuntime:
         while not self._stop.is_set():
             try:
                 self.service.heartbeat()
+            except LeaseLostError as error:
+                logger.error("worker runtime heartbeat lost lease: %s", redact(str(error)))
+                self._lease_lost.set()
+                self._stop.set()
+                return
             except Exception as error:
                 logger.warning(
                     "worker runtime heartbeat failed: %s",

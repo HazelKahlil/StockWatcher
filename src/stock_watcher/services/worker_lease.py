@@ -178,16 +178,19 @@ class WorkerLease:
         with self._connection() as connection:
             cursor = connection.execute(
                 "UPDATE service_leases SET heartbeat_at = ?, expires_at = ? "
-                "WHERE lease_name = ? AND holder_id = ? AND fencing_token = ?",
+                "WHERE lease_name = ? AND holder_id = ? AND fencing_token = ? "
+                "AND expires_at > ?",
                 (
                     now.isoformat(),
                     expires_at.isoformat(),
                     self.config.lease_name,
                     self.holder_id,
                     self.fencing_token,
+                    now.isoformat(),
                 ),
             )
         if cursor.rowcount != 1:
+            self.acquired_at = None
             raise LeaseLostError("lease is no longer owned by this holder")
 
     def release(self) -> None:
