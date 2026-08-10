@@ -72,7 +72,7 @@ class ServerSettings:
         os.environ.get("STOCKWATCHER_WORKER_LOOP_STALE_SECONDS", "30")
     )
     worker_scan_timeout_seconds: float = float(
-        os.environ.get("STOCKWATCHER_WORKER_SCAN_TIMEOUT_SECONDS", "120")
+        os.environ.get("STOCKWATCHER_WORKER_SCAN_TIMEOUT_SECONDS", "300")
     )
     worker_watchdog_grace_seconds: float = float(
         os.environ.get("STOCKWATCHER_WORKER_WATCHDOG_GRACE_SECONDS", "8")

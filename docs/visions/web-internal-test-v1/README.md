@@ -132,6 +132,10 @@
   明确记录“本次未产生新候选”，不包装旧 Top3。
 - 网页刷新进度显示 queued/running/失败状态，失败会明确说明本次没有新候选；前端等待时间与
   后端命令生命周期对齐，避免 75 秒后静默放弃轮询。
-- 代码验证：`428 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
+- 首次 Web 启动没有静态基础缓存时，Worker 会按退避策略建立一次证券池/日线/板块缓存，
+  不再每 10 秒重复强制刷新；供应商限流、Token 或缓存失败会保留为可解释的失败状态。
+- Worker 在取得唯一租约后立即启动独立心跳，再写运行时启动证据；完整测试负载下不会因
+  初始化延迟而错过租约续期。
+- 代码验证：`429 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
   validator 与 `git diff --check` 全绿。新部署与交易日真实 Top3 验收仍待完成，状态继续保持
   `BLOCKED / NOT_ACCEPTED`。

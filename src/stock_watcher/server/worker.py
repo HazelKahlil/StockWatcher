@@ -21,6 +21,7 @@ from stock_watcher.services import (
     EventOutbox,
     LeaseAcquireError,
     LeaseConfig,
+    LeaseLostError,
     SecretService,
     WorkerLease,
 )
@@ -35,6 +36,7 @@ logger = logging.getLogger("stock_watcher.worker")
 
 LEASE_NAME = "stockwatcher-worker"
 HEARTBEAT_SECONDS = 5.0
+PROGRESS_EVENT_SECONDS = 7.0
 TICK_INTERVAL_SECONDS = 10.0
 
 
@@ -121,13 +123,19 @@ class WorkerRuntime:
         self.service._holder_id = self.lease.holder_id  # noqa: SLF001
         self.service._fencing_token = self.lease.fencing_token  # noqa: SLF001
         self.store.bind_write_guard(self.lease.assert_owned)
-        self.service.start()
+        # Lease renewal must begin immediately after acquisition.  Service
+        # startup persists runtime evidence and may be slow under SQLite load;
+        # delaying this thread would consume the lease TTL before work begins.
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
             daemon=True,
             name="worker-lease-heartbeat",
         )
         self._heartbeat_thread.start()
+        self.service.start()
+        # Later progress markers use an offset cadence so they do not repeatedly
+        # contend with the five-second lease renewal boundary.
+        self._record_loop_progress()
         self._runtime_heartbeat_thread = threading.Thread(
             target=self._runtime_heartbeat_loop,
             daemon=True,
@@ -197,10 +205,22 @@ class WorkerRuntime:
     def _heartbeat_loop(self) -> None:
         """Renew the fencing lease without any other potentially slow work."""
         while not self._stop.is_set():
-            try:
-                self.lease.renew()
-            except Exception as error:
-                logger.error("worker heartbeat failed: %s", redact(str(error)))
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    self.lease.renew()
+                    last_error = None
+                    break
+                except LeaseLostError as error:
+                    last_error = error
+                    break
+                except Exception as error:
+                    last_error = error
+                    if attempt < 2 and not self._stop.wait(0.25):
+                        continue
+                    break
+            if last_error is not None:
+                logger.error("worker heartbeat failed: %s", redact(str(last_error)))
                 self._lease_lost.set()
                 self._stop.set()
                 return
@@ -209,6 +229,8 @@ class WorkerRuntime:
 
     def _runtime_heartbeat_loop(self) -> None:
         """Persist runtime evidence without being able to starve lease renewal."""
+        if self._stop.wait(HEARTBEAT_SECONDS / 2):
+            return
         while not self._stop.is_set():
             try:
                 self.service.heartbeat()
@@ -234,7 +256,7 @@ class WorkerRuntime:
 
     def _record_loop_progress(self) -> None:
         now = time_module.monotonic()
-        if now - self._last_progress_event_at < HEARTBEAT_SECONDS:
+        if now - self._last_progress_event_at < PROGRESS_EVENT_SECONDS:
             return
         self._last_progress_event_at = now
         with self._scan_state_lock:

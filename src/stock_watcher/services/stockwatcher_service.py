@@ -8,6 +8,7 @@ rules. It never imports the desktop UI package, PySide6, pyobjc or keyring.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from collections.abc import Callable
@@ -69,6 +70,7 @@ from .event_outbox import EventOutbox
 from .secret_service import SecretService
 
 SHANGHAI_TZ = SHANGHAI
+logger = logging.getLogger("stock_watcher.service")
 
 
 def _shanghai(value: datetime) -> datetime:
@@ -182,7 +184,8 @@ class ServiceConfig:
     universe_cache_path: Path | None = None
     request_budget: ApplicationRequestBudget | None = None
     scan_interval_seconds: float = 10.0
-    manual_timeout_seconds: float = 60.0
+    manual_timeout_seconds: float = 240.0
+    universe_retry_seconds: float = 60.0
     stall_threshold_seconds: float = 90.0
     provider_version: str = "web-internal-test-v1"
 
@@ -254,6 +257,7 @@ class StockWatcherService:
         self._summary_date: str | None = None
         self._summary_retry_at: datetime | None = None
         self._summary_issue: str | None = None
+        self._universe_retry_at: datetime | None = None
         self._history_pruned_date: date | None = None
         self._history_prune_issue: str | None = None
         self._failure_active = False
@@ -449,10 +453,17 @@ class StockWatcherService:
 
     def _start_universe_refresh(self, now: datetime) -> bool:
         runtime = self._runtime
-        if runtime is None or runtime.universe is None:
+        # ``universe is None`` is the cold-start state for a Web volume with
+        # no packaged desktop seed. It must be prepared here; treating it as
+        # ineligible made every first Web scan skip forever.
+        if runtime is None:
+            return False
+        if self._universe_retry_at is not None and now < self._universe_retry_at:
             return False
         try:
+            logger.info("refreshing runtime universe cache")
             runtime.prepare(force_refresh=True)
+            self._universe_retry_at = None
             self.status_issues = tuple(
                 dict.fromkeys(
                     (
@@ -461,16 +472,30 @@ class StockWatcherService:
                     )
                 )
             )
+            logger.info("runtime universe cache refreshed")
             return True
+        except ProviderError as error:
+            self._universe_retry_at = now + timedelta(seconds=self.config.universe_retry_seconds)
+            detail = f"基础缓存刷新失败：{error.reason.value}；将在稍后重试。"
+            self.last_fetch_detail = detail
+            self.health_detail = detail
+            self.status_issues = tuple(dict.fromkeys((*self.status_issues, detail)))
+            logger.warning("runtime universe refresh failed: %s", error.reason.value)
+            return False
         except Exception as error:
+            self._universe_retry_at = now + timedelta(seconds=self.config.universe_retry_seconds)
+            detail = f"基础缓存刷新失败：{type(error).__name__}；将在稍后重试。"
+            self.last_fetch_detail = detail
+            self.health_detail = detail
             self.status_issues = tuple(
                 dict.fromkeys(
                     (
                         *self.status_issues,
-                        f"基础缓存刷新失败，将在后台重试：{type(error).__name__}",
+                        detail,
                     )
                 )
             )
+            logger.warning("runtime universe refresh failed: %s", type(error).__name__)
             return False
 
     def _universe_is_current(self, now: datetime) -> bool:
@@ -578,7 +603,11 @@ class StockWatcherService:
                 self._record_scan_skip(
                     now,
                     trigger_type=requested_trigger,
-                    detail="基础缓存未准备完成，本轮未发起实时请求。",
+                    detail=(
+                        self.last_fetch_detail
+                        if self.last_fetch_detail.startswith("基础缓存刷新失败：")
+                        else "基础缓存未准备完成，本轮未发起实时请求。"
+                    ),
                     health=HealthState.WARMING,
                     task_key=fixed_task.task_key if fixed_task else None,
                 )
@@ -1415,16 +1444,26 @@ class StockWatcherService:
                     return
             if outcome is not None and outcome.health is HealthState.STOPPED:
                 break
+            if self._secret_getter() is None:
+                break
             if not self._manual_should_wait():
                 break
             if monotonic_time() >= deadline:
                 break
-            sleep_seconds(0.2)
+            sleep_seconds(1.0)
+        error_code = "timeout"
+        error_detail = "本次获取未在安全时限内完成；未产生新候选。"
+        if self._secret_getter() is None:
+            error_code = "credential-missing"
+            error_detail = "Token 未配置；未产生新候选。"
+        elif self.last_fetch_detail.startswith("基础缓存刷新失败："):
+            error_code = "universe-refresh"
+            error_detail = self.last_fetch_detail
         self._finish_command(
             command_id,
             CommandStatus.FAILED,
-            error_code="timeout",
-            error_detail="本次获取未在60秒内完成",
+            error_code=error_code,
+            error_detail=error_detail,
         )
 
     def _tick_scan(

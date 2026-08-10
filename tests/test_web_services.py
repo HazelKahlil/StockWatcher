@@ -7,6 +7,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -23,6 +24,7 @@ from stock_watcher.services import (
     WrongMasterKeyError,
 )
 from stock_watcher.services.secret_service import MASTER_KEY_BYTES, fingerprint
+from stock_watcher.services.stockwatcher_service import StockWatcherService
 from stock_watcher.storage import SQLiteStore
 
 
@@ -252,6 +254,30 @@ def test_command_has_queued_ignores_terminal_commands(tmp_path: Path) -> None:
         status=CommandStatus.FAILED,
         error_code="test",
     )
+
+
+def test_web_service_can_build_missing_runtime_universe_on_cold_start(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    service = StockWatcherService(store, auto_start_session=False)
+
+    class ColdRuntime:
+        universe: object | None = None
+        prepared = False
+
+        def prepare(self, *, force_refresh: bool) -> object:
+            assert force_refresh
+            self.prepared = True
+            self.universe = object()
+            return self.universe
+
+    runtime = ColdRuntime()
+    cast(Any, service)._runtime = runtime
+    assert service._start_universe_refresh(  # noqa: SLF001
+        datetime(2026, 8, 10, 10, 0, tzinfo=SHANGHAI)
+    )
+    assert runtime.prepared
 
 
 def test_command_crash_recovery_requeues_then_fails(tmp_path: Path) -> None:

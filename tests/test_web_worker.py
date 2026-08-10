@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from stock_watcher.server.redaction import redact
 from stock_watcher.server.worker import WorkerRuntime
 
 
@@ -111,27 +112,39 @@ def test_worker_lease_heartbeat_refreshes(tmp_path: Path) -> None:
         [sys.executable, "-c", code],
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
         cwd=str(Path(__file__).resolve().parents[1]),
     )
     try:
         deadline = time.monotonic() + 30
+        holder = None
         while time.monotonic() < deadline:
-            if _lease_holder(db):
+            holder = _lease_holder(db)
+            if holder:
                 break
+            if first.poll() is not None:
+                stderr = first.stderr.read() if first.stderr is not None else ""
+                raise AssertionError(f"worker exited before lease acquisition: {redact(stderr)}")
             time.sleep(0.5)
-        heartbeat_a = None
+        assert holder, "worker never acquired the lease"
         with sqlite3.connect(db) as connection:
             heartbeat_a = connection.execute(
                 "SELECT heartbeat_at FROM service_leases "
                 "WHERE lease_name = 'stockwatcher-worker'"
             ).fetchone()[0]
-        time.sleep(7)  # longer than the 5s heartbeat interval
-        with sqlite3.connect(db) as connection:
-            heartbeat_b = connection.execute(
-                "SELECT heartbeat_at FROM service_leases "
-                "WHERE lease_name = 'stockwatcher-worker'"
-            ).fetchone()[0]
+        heartbeat_b = heartbeat_a
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and heartbeat_b == heartbeat_a:
+            if first.poll() is not None:
+                stderr = first.stderr.read() if first.stderr is not None else ""
+                raise AssertionError(f"worker exited before heartbeat: {redact(stderr)}")
+            time.sleep(0.25)
+            with sqlite3.connect(db) as connection:
+                heartbeat_b = connection.execute(
+                    "SELECT heartbeat_at FROM service_leases "
+                    "WHERE lease_name = 'stockwatcher-worker'"
+                ).fetchone()[0]
         assert heartbeat_b != heartbeat_a, "lease heartbeat did not refresh"
     finally:
         first.terminate()

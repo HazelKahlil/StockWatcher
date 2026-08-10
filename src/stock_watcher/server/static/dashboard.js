@@ -14,6 +14,7 @@ const refreshFailureLabels = {
   credential_missing: 'Token 未配置，未产生新候选',
   'credential-missing': 'Token 未配置，未产生新候选',
   rate_limited: '行情接口限流，未产生新候选',
+  'universe-refresh': '基础行情缓存暂不可用，未产生新候选',
 };
 let refreshProgressTimer = null;
 let refreshProgressHideTimer = null;
