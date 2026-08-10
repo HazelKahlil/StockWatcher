@@ -74,6 +74,10 @@ def get_store(request: Request) -> SQLiteStore:
     return cast(SQLiteStore, request.app.state.store)
 
 
+def get_read_store(request: Request) -> SQLiteStore:
+    return cast(SQLiteStore, request.app.state.read_store)
+
+
 def get_auth(request: Request) -> AuthService:
     return cast(AuthService, request.app.state.auth)
 
@@ -266,7 +270,7 @@ def state_router() -> APIRouter:
         request: Request,
         session: dict[str, Any] = Depends(current_session),
         public_state: PublicStateBuilder = Depends(get_public_state),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         worker_lease = None
         with store.connect() as connection:
@@ -300,7 +304,7 @@ def state_router() -> APIRouter:
         code: str,
         snapshot_id: int = Query(...),
         session: dict[str, Any] = Depends(current_session),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         detail = store.get_snapshot_detail(snapshot_id, code)
         if detail is None:
@@ -325,7 +329,7 @@ def state_router() -> APIRouter:
         to: str | None = Query(None),
         code: str | None = Query(None),
         session: dict[str, Any] = Depends(current_session),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         rows = store.query_snapshots(
             limit=limit,
@@ -358,7 +362,7 @@ def state_router() -> APIRouter:
         to: str | None = Query(None),
         trigger_type: str | None = Query(None),
         session: dict[str, Any] = Depends(current_session),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         rows = store.query_alert_events(
             limit=limit,
@@ -393,7 +397,7 @@ def state_router() -> APIRouter:
         limit: int = Query(20, ge=1, le=100),
         cursor: str | None = Query(None),
         session: dict[str, Any] = Depends(current_session),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         since = _now().date() - timedelta(days=31)
         rows = store.list_daily_summaries(since=since)
@@ -413,7 +417,7 @@ def state_router() -> APIRouter:
     async def summary_detail(
         trade_date: str,
         session: dict[str, Any] = Depends(current_session),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         summary = store.get_daily_summary(trade_date)
         if summary is None:
@@ -425,7 +429,7 @@ def state_router() -> APIRouter:
         trade_date: str,
         request: Request,
         session: dict[str, Any] = Depends(current_session),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> Response:
         report_dir = Path(request.app.state.settings.report_dir)
         pdf = report_dir / f"{trade_date}-A股盘后回顾.pdf"
@@ -555,7 +559,7 @@ def admin_router() -> APIRouter:
         trade_date: str | None = Query(None),
         limit: int = Query(100, ge=1, le=500),
         session: dict[str, Any] = Depends(require_admin),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         rows = store.list_scan_runs(trade_date or _now().date().isoformat())
         item_keys = (
@@ -581,7 +585,7 @@ def admin_router() -> APIRouter:
     async def scan_audit(
         scan_id: int,
         session: dict[str, Any] = Depends(require_admin),
-        store: SQLiteStore = Depends(get_store),
+        store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
         run = store.get_scan_run(scan_id)
         if run is None:

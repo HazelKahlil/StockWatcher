@@ -83,6 +83,16 @@ def test_web_readiness_rejects_expired_worker_lease(tmp_path: Path) -> None:
     assert response.json()["worker_lease_held"] is False
 
 
+def test_web_readiness_uses_fresh_read_only_store(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+
+    assert app.state.read_store.read_only is True
+    assert app.state.public_state.store is app.state.read_store
+    assert app.state.outbox.read_store is app.state.read_store
+    assert app.state.commands.read_store is app.state.read_store
+
+
 def _seed_live_worker(store: SQLiteStore, now: datetime) -> str:
     session_id = "worker-session"
     with store.transaction() as connection:

@@ -137,6 +137,8 @@
 - Worker 在取得唯一租约后立即启动独立心跳，再写运行时启动证据；完整测试负载下不会因
   初始化延迟而错过租约续期。已过期租约不能由原 Worker 复活，运行时写入发现 fencing
   失效会立即停止业务线程并交给容器重启。
-- 代码验证：`431 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
+- Web 对 Worker 写入的 Top3、命令状态、事件和健康证据使用独立只读短连接，避免容器重启
+  后长连接停留在旧 WAL 视图，出现“Worker 已有 3 只、网页仍为空或命令一直等待”。
+- 代码验证：`433 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
   validator 与 `git diff --check` 全绿。新部署与交易日真实 Top3 验收仍待完成，状态继续保持
   `BLOCKED / NOT_ACCEPTED`。

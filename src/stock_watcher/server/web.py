@@ -50,9 +50,13 @@ def _build_services(settings: ServerSettings) -> dict[str, Any]:
     settings.report_dir.mkdir(parents=True, exist_ok=True)
     store = SQLiteStore(settings.db_path)
     store.initialize()
+    # Worker-owned rows must be read through short-lived read-only connections.
+    # A long-lived Web connection can retain an obsolete WAL view across a
+    # Worker/container restart even though a fresh reader sees the new rows.
+    read_store = SQLiteStore(settings.db_path, read_only=True)
     commit = settings.source_commit if settings.source_commit != "unknown" else source_commit()
-    outbox = EventOutbox(store, source_commit=commit)
-    commands = CommandService(store)
+    outbox = EventOutbox(store, read_store=read_store, source_commit=commit)
+    commands = CommandService(store, read_store=read_store)
     auth = AuthService(
         store,
         absolute_hours=settings.session_absolute_hours,
@@ -69,6 +73,7 @@ def _build_services(settings: ServerSettings) -> dict[str, Any]:
     return {
         "settings": settings,
         "store": store,
+        "read_store": read_store,
         "outbox": outbox,
         "commands": commands,
         "auth": auth,
@@ -76,7 +81,7 @@ def _build_services(settings: ServerSettings) -> dict[str, Any]:
         "audit": AuditLogRepository(store),
         "users": UserRepository(store),
         "user_state": UserStateRepository(store),
-        "public_state": PublicStateBuilder(store),
+        "public_state": PublicStateBuilder(read_store),
     }
 
 
@@ -84,6 +89,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     app_settings = settings or ServerSettings.from_env()
     services = _build_services(app_settings)
     store: SQLiteStore = services["store"]
+    read_store: SQLiteStore = services["read_store"]
     outbox: EventOutbox = services["outbox"]
     auth: AuthService = services["auth"]
     ws_manager = WebSocketManager(
@@ -160,14 +166,13 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     @app.get("/health/ready")
     async def health_ready() -> JSONResponse:
         try:
-            store.initialize()
-            with store.connect() as connection:
+            with read_store.connect() as connection:
                 version = connection.execute(
                     "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
                 ).fetchone()
             if version is None or int(version[0]) != store.CURRENT_SCHEMA_VERSION:
                 return JSONResponse(status_code=503, content={"status": "not_ready"})
-            worker_ready, worker_status = worker_readiness(store, app_settings)
+            worker_ready, worker_status = worker_readiness(read_store, app_settings)
             if not worker_ready:
                 return JSONResponse(
                     status_code=503,

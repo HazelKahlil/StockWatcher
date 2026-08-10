@@ -73,10 +73,12 @@ class CommandService:
         self,
         store: SQLiteStore,
         *,
+        read_store: SQLiteStore | None = None,
         clock: Callable[[], datetime] | None = None,
         default_timeout_seconds: float | None = None,
     ) -> None:
         self.store = store
+        self.read_store = read_store or store
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self.default_timeout_seconds = default_timeout_seconds
 
@@ -167,7 +169,7 @@ class CommandService:
     # -- reads ----------------------------------------------------------
 
     def get(self, command_id: str) -> dict[str, Any] | None:
-        with self.store.connect() as connection:
+        with self.read_store.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM web_commands WHERE command_id = ?",
                 (command_id,),
@@ -181,7 +183,7 @@ class CommandService:
     def list_recent(self, *, limit: int = 50) -> list[dict[str, Any]]:
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
-        with self.store.connect() as connection:
+        with self.read_store.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM web_commands ORDER BY requested_at DESC LIMIT ?",
                 (limit,),
@@ -197,7 +199,7 @@ class CommandService:
         compare-and-set claim path can start them.
         """
         current = _shanghai(now or self._clock())
-        with self.store.connect() as connection:
+        with self.read_store.connect() as connection:
             row = connection.execute(
                 "SELECT 1 FROM web_commands WHERE status = 'queued' "
                 "AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",

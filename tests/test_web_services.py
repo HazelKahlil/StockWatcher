@@ -275,6 +275,21 @@ def test_command_has_queued_ignores_terminal_commands(tmp_path: Path) -> None:
     )
 
 
+def test_command_reads_can_use_fresh_read_only_store(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    seed_user(store)
+    reader = SQLiteStore(store.path, read_only=True)
+    commands = CommandService(store, read_store=reader)
+
+    command = commands.create(
+        command_type=CommandType.MANUAL_REFRESH,
+        requested_by=1,
+    )
+
+    assert commands.read_store is reader
+    assert commands.get(str(command["command_id"])) is not None
+
+
 def test_web_service_can_build_missing_runtime_universe_on_cold_start(
     tmp_path: Path,
 ) -> None:

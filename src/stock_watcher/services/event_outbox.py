@@ -29,12 +29,14 @@ class EventOutbox:
         self,
         store: SQLiteStore,
         *,
+        read_store: SQLiteStore | None = None,
         source_commit: str,
         retention_days: int = EVENT_RETENTION_DAYS,
         retention_max_rows: int = EVENT_RETENTION_MAX_ROWS,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.store = store
+        self.read_store = read_store or store
         self.source_commit = source_commit
         self.retention_days = retention_days
         self.retention_max_rows = retention_max_rows
@@ -102,7 +104,7 @@ class EventOutbox:
         """Return events with id > after_id, oldest first, bounded."""
         if limit < 1 or limit > 500:
             raise ValueError("limit must be between 1 and 500")
-        with self.store.connect() as connection:
+        with self.read_store.connect() as connection:
             rows = connection.execute(
                 "SELECT event_id, event_type, occurred_at, source_commit, "
                 "correlation_id, source_kind, source_id, visibility, payload_json "
@@ -113,7 +115,7 @@ class EventOutbox:
         return [self._row(row) for row in rows]
 
     def latest_id(self) -> int:
-        with self.store.connect() as connection:
+        with self.read_store.connect() as connection:
             row = connection.execute(
                 "SELECT COALESCE(MAX(event_id), 0) FROM web_events"
             ).fetchone()
@@ -121,7 +123,7 @@ class EventOutbox:
 
     def minimum_available_id(self) -> int:
         """Smallest event id still readable; used for resync detection."""
-        with self.store.connect() as connection:
+        with self.read_store.connect() as connection:
             row = connection.execute(
                 "SELECT COALESCE(MIN(event_id), 0) FROM web_events"
             ).fetchone()
