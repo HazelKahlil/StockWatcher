@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +36,7 @@ from .api import (
 )
 from .auth import SESSION_COOKIE_NAME, AuthService, csrf_value_for_session
 from .config import ServerSettings
+from .healthcheck import worker_readiness
 from .ws import WebSocketManager
 
 logger = logging.getLogger("stock_watcher.server")
@@ -167,25 +167,14 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
                 ).fetchone()
             if version is None or int(version[0]) != store.CURRENT_SCHEMA_VERSION:
                 return JSONResponse(status_code=503, content={"status": "not_ready"})
-            lease_row = None
-            with store.connect() as connection:
-                lease_row = connection.execute(
-                    "SELECT heartbeat_at, expires_at FROM service_leases "
-                    "WHERE lease_name = 'stockwatcher-worker'"
-                ).fetchone()
-            lease_live = False
-            if lease_row is not None:
-                expires_at = datetime.fromisoformat(str(lease_row[1]))
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                lease_live = expires_at > datetime.now().astimezone()
-            if not lease_live:
+            worker_ready, worker_status = worker_readiness(store, app_settings)
+            if not worker_ready:
                 return JSONResponse(
                     status_code=503,
                     content={
                         "status": "not_ready",
                         "schema_version": int(version[0]),
-                        "worker_lease_held": False,
+                        **worker_status,
                     },
                 )
             return JSONResponse(
@@ -193,7 +182,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
                 content={
                     "status": "ready",
                     "schema_version": int(version[0]),
-                    "worker_lease_held": True,
+                    **worker_status,
                     "degraded": False,
                 },
             )

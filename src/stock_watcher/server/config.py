@@ -65,6 +65,18 @@ class ServerSettings:
     build_version: str = os.environ.get(
         "STOCKWATCHER_BUILD_VERSION", "web-internal-test-v1"
     )
+    # These are liveness controls for the unique Worker, not provider
+    # credentials or business-rule parameters.  A scan may be slow, but it
+    # must never make a healthy lease look like a healthy Worker forever.
+    worker_loop_stale_seconds: float = float(
+        os.environ.get("STOCKWATCHER_WORKER_LOOP_STALE_SECONDS", "30")
+    )
+    worker_scan_timeout_seconds: float = float(
+        os.environ.get("STOCKWATCHER_WORKER_SCAN_TIMEOUT_SECONDS", "120")
+    )
+    worker_watchdog_grace_seconds: float = float(
+        os.environ.get("STOCKWATCHER_WORKER_WATCHDOG_GRACE_SECONDS", "8")
+    )
     argon2: Argon2Config = Argon2Config()
     rate_limits: RateLimitConfig = RateLimitConfig()
 

@@ -7,6 +7,14 @@ const refreshStages = [
   { maxSeconds: 6, label: '扫描全市场候选' },
   { maxSeconds: Infinity, label: '整理实时 Top3' },
 ];
+const refreshCommandWaitMs = 310000;
+const refreshFailureLabels = {
+  timeout: '刷新超时：没有产生新候选',
+  worker_watchdog_timeout: 'Worker 已自恢复：本次没有产生新候选',
+  credential_missing: 'Token 未配置，未产生新候选',
+  'credential-missing': 'Token 未配置，未产生新候选',
+  rate_limited: '行情接口限流，未产生新候选',
+};
 let refreshProgressTimer = null;
 let refreshProgressHideTimer = null;
 const handledAlertIds = new Set();
@@ -412,9 +420,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (command.status === 'succeeded') {
             await finish('done', '实时 Top3 已更新', true);
           } else if (command.status === 'failed') {
-            await finish('failed', '刷新未完成，请稍后重试');
-          } else if (Date.now() - startedAt > 75000) {
-            await finish('timeout', '仍在处理，请稍后查看');
+            const failure = refreshFailureLabels[command.error_code] || '刷新失败：未产生新候选';
+            await finish('failed', failure, true);
+          } else if (command.status === 'cancelled' || command.status === 'expired') {
+            await finish('failed', '刷新已停止：未产生新候选', true);
+          } else if (command.status === 'queued') {
+            updateRefreshProgress(startedAt, 'working', '已排队，等待 Worker 领取');
+          } else if (command.status === 'running') {
+            updateRefreshProgress(startedAt, 'working', 'Worker 正在扫描全市场');
+          } else if (Date.now() - startedAt > refreshCommandWaitMs) {
+            await finish('timeout', 'Worker 仍未完成，请查看状态后再重试', true);
           }
         } catch {
           await finish('failed', '刷新连接中断，请稍后重试');

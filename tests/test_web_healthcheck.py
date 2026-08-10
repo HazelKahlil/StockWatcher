@@ -81,3 +81,57 @@ def test_web_readiness_rejects_expired_worker_lease(tmp_path: Path) -> None:
     response = TestClient(app).get("/health/ready")
     assert response.status_code == 503
     assert response.json()["worker_lease_held"] is False
+
+
+def _seed_live_worker(store: SQLiteStore, now: datetime) -> str:
+    session_id = "worker-session"
+    with store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO service_leases "
+            "(lease_name, holder_id, source_commit, acquired_at, heartbeat_at, "
+            "expires_at, fencing_token) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "stockwatcher-worker",
+                "holder",
+                "a" * 40,
+                now.isoformat(),
+                now.isoformat(),
+                (now + timedelta(seconds=20)).isoformat(),
+                1,
+            ),
+        )
+    store.start_runtime_session(
+        session_id=session_id,
+        pid=1,
+        ppid=0,
+        app_path="test-worker",
+        source_commit="a" * 40,
+        started_at=now.isoformat(),
+    )
+    store.record_runtime_event(
+        session_id=session_id,
+        occurred_at=now.isoformat(),
+        event_type="worker.loop",
+        detail={},
+    )
+    return session_id
+
+
+def test_worker_readiness_rejects_stalled_scan_even_when_lease_is_fresh(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    store = SQLiteStore(settings.db_path)
+    now = datetime.now(SHANGHAI)
+    session_id = _seed_live_worker(store, now)
+    stalled_at = now - timedelta(seconds=settings.worker_scan_timeout_seconds + 1)
+    store.record_runtime_event(
+        session_id=session_id,
+        occurred_at=stalled_at.isoformat(),
+        event_type="worker.scan_started",
+        detail={"kind": "automatic"},
+    )
+    ready, status = healthcheck.worker_readiness(store, settings)
+    assert not ready
+    assert status["worker_lease_held"] is True
+    assert status["reason"] == "Worker scan stalled"

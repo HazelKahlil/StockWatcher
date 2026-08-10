@@ -235,6 +235,25 @@ def test_manual_refresh_coalescing(tmp_path: Path) -> None:
     assert first["command_id"] == first["command_id"]
 
 
+def test_command_has_queued_ignores_terminal_commands(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    seed_user(store)
+    commands = CommandService(store)
+    created = commands.create(command_type=CommandType.MANUAL_REFRESH, requested_by=1)
+    assert commands.has_queued()
+    claimed = commands.claim_next(holder_id="worker-1", fencing_token=1)
+    assert claimed is not None
+    assert not commands.has_queued()
+    assert commands.complete(
+        str(created["command_id"]),
+        holder_id="worker-1",
+        fencing_token=1,
+        expected_attempt=1,
+        status=CommandStatus.FAILED,
+        error_code="test",
+    )
+
+
 def test_command_crash_recovery_requeues_then_fails(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     seed_user(store)

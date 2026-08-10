@@ -188,6 +188,23 @@ class CommandService:
             ).fetchall()
         return [self._row(row) for row in rows]
 
+    def has_queued(self, *, now: datetime | None = None) -> bool:
+        """Return whether an unexpired command is waiting for the Worker.
+
+        The Worker uses this read-only check to cancel an automatic scan at a
+        safe provider boundary.  It deliberately does not claim the command:
+        commands remain ``queued`` until no scan is running and the normal
+        compare-and-set claim path can start them.
+        """
+        current = _shanghai(now or self._clock())
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM web_commands WHERE status = 'queued' "
+                "AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
+                (current.isoformat(),),
+            ).fetchone()
+        return row is not None
+
     # -- claiming / completion -----------------------------------------
 
     def claim_next(

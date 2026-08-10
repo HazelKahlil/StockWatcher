@@ -10,8 +10,12 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+from typing import Any, cast
+
+from stock_watcher.server.worker import WorkerRuntime
 
 
 def _prepare(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
@@ -219,3 +223,58 @@ def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
             process.wait(timeout=20)
         except subprocess.TimeoutExpired:
             process.kill()
+
+
+def test_worker_keeps_command_queued_while_automatic_scan_is_busy() -> None:
+    """Manual work must wait for a scan boundary, never be falsely running."""
+
+    class Lease:
+        holder_id = "holder"
+        fencing_token = 1
+
+        def renew(self) -> None:
+            pass
+
+    class Commands:
+        def __init__(self) -> None:
+            self.claimed = False
+
+        def expire_stale(self) -> list[dict[str, object]]:
+            return []
+
+        def has_queued(self) -> bool:
+            return True
+
+        def claim_next(self, **_: object) -> None:
+            self.claimed = True
+            raise AssertionError("busy automatic scan must not claim a command")
+
+    class Service:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel_inflight(self) -> None:
+            self.cancelled = True
+
+    runtime = cast(Any, WorkerRuntime.__new__(WorkerRuntime))
+    runtime.lease = Lease()
+    runtime.commands = Commands()
+    runtime.service = Service()
+    runtime._scan_state_lock = threading.Lock()
+    runtime._scan_thread_kind = "automatic"
+    runtime._scan_thread_started_at = time.monotonic()
+    runtime._scan_command = None
+    runtime._auto_cancel_requested = False
+    runtime._emit_command = lambda _: None
+
+    release = threading.Event()
+    busy = threading.Thread(target=release.wait)
+    busy.start()
+    runtime._scan_thread = busy
+    try:
+        runtime._tick()
+        assert runtime.commands.claimed is False
+        assert runtime.service.cancelled is True
+    finally:
+        release.set()
+        busy.join(timeout=1)
