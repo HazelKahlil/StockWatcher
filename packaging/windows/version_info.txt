@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'StockWatcher'),
           StringStruct(u'FileDescription', u'A股候选观察与异动提醒工具'),
-          StringStruct(u'FileVersion', u'0.6.0-alpha.2'),
+          StringStruct(u'FileVersion', u'0.6.0-alpha.3'),
           StringStruct(u'InternalName', u'StockWatcher'),
           StringStruct(u'OriginalFilename', u'StockWatcher.exe'),
           StringStruct(u'ProductName', u'StockWatcher'),
-          StringStruct(u'ProductVersion', u'0.6.0-alpha.2')
+          StringStruct(u'ProductVersion', u'0.6.0-alpha.3')
         ])
     ]),
     VarFileInfo([VarStruct(u'Translation', [2052, 1200])])

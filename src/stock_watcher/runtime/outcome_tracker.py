@@ -63,7 +63,7 @@ class CandidateOutcomeTracker:
         "scheduled-14:45": OutcomeSlot.AFTERNOON,
     }
     calendar_profile = "tushare_15000"
-    calendar_endpoint = "/"
+    calendar_endpoint = "/trade_cal"
     calendar_fields = ("exchange", "cal_date", "is_open", "pretrade_date")
     max_historical_attempts = 5
 

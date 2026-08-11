@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import requests
 from PySide6.QtCore import QThread
 
 from stock_watcher.domain import (
@@ -36,6 +39,7 @@ from stock_watcher.providers.tushare.models import (
     SourceTimestampKind,
     TransportResult,
 )
+from stock_watcher.providers.tushare.sdk_pro_transport import TushareSdkProTransport
 from stock_watcher.providers.tushare.transport_protocol import TransportRequest
 from stock_watcher.providers.tushare.unified_provider import Tushare15000Provider
 from stock_watcher.runtime import CandidateOutcomeTracker, OutcomeActionReport, ScanOutcome
@@ -78,7 +82,7 @@ def candidate_batch(
             source_ts=at,
             provider_version=provider_version,
             config_version="candidate-outcome-test-v1",
-            app_version="0.6.0a2",
+            app_version="0.6.0a3",
             price=price,
             is_formal=formal,
             is_supplement=not formal,
@@ -140,15 +144,26 @@ def trade_calendar_result(
     at: datetime,
     quality: TransportQuality = TransportQuality.DEGRADED,
     provider_profile: str = "tushare_15000",
+    endpoint: str = "/trade_cal",
+    fields_used: tuple[str, ...] = (
+        "exchange",
+        "cal_date",
+        "is_open",
+        "pretrade_date",
+    ),
+    source_ts: datetime | None = None,
+    source_timestamp_kind: SourceTimestampKind | None = None,
 ) -> TransportResult:
     return transport_result(
         records,
         at=at,
         quality=quality,
         provider_profile=provider_profile,
-        endpoint="/",
-        fields_used=("exchange", "cal_date", "is_open", "pretrade_date"),
-        source_timestamp_kind=(
+        endpoint=endpoint,
+        fields_used=fields_used,
+        source_ts=source_ts,
+        source_timestamp_kind=source_timestamp_kind
+        or (
             SourceTimestampKind.MISSING
             if quality is TransportQuality.DEGRADED
             else SourceTimestampKind.SUPPLIER
@@ -193,7 +208,7 @@ class FakeOutcomeProvider:
             at=stamp(end, 15, 0),
             quality=TransportQuality.DEGRADED,
             provider_profile="tushare_15000",
-            endpoint="/",
+            endpoint="/trade_cal",
             fields_used=("exchange", "cal_date", "is_open", "pretrade_date"),
             source_timestamp_kind=SourceTimestampKind.MISSING,
         )
@@ -434,6 +449,86 @@ def test_unexpected_degraded_calendar_provenance_is_rejected(tmp_path: Path) -> 
         ).next_trading_date(entry)
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "provider_profile", "fields_used", "source_ts", "timestamp_kind", "message"),
+    [
+        (
+            "/",
+            "tushare_15000",
+            ("exchange", "cal_date", "is_open", "pretrade_date"),
+            None,
+            SourceTimestampKind.MISSING,
+            "route contract",
+        ),
+        (
+            "/daily",
+            "tushare_15000",
+            ("exchange", "cal_date", "is_open", "pretrade_date"),
+            None,
+            SourceTimestampKind.MISSING,
+            "route contract",
+        ),
+        (
+            "/trade_cal",
+            "unexpected",
+            ("exchange", "cal_date", "is_open", "pretrade_date"),
+            None,
+            SourceTimestampKind.MISSING,
+            "profile",
+        ),
+        (
+            "/trade_cal",
+            "tushare_15000",
+            ("exchange", "cal_date", "is_open"),
+            None,
+            SourceTimestampKind.MISSING,
+            "route contract",
+        ),
+        (
+            "/trade_cal",
+            "tushare_15000",
+            ("exchange", "cal_date", "is_open", "pretrade_date"),
+            stamp(date(2026, 8, 11), 15, 0),
+            SourceTimestampKind.SUPPLIER,
+            "degraded provenance",
+        ),
+    ],
+)
+def test_trade_calendar_rejects_non_production_provenance(
+    tmp_path: Path,
+    endpoint: str,
+    provider_profile: str,
+    fields_used: tuple[str, ...],
+    source_ts: datetime | None,
+    timestamp_kind: SourceTimestampKind,
+    message: str,
+) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = trade_calendar_result(
+        (
+            {
+                "exchange": "SSE",
+                "cal_date": "20260811",
+                "is_open": 1,
+                "pretrade_date": "20260810",
+            },
+        ),
+        at=stamp(target, 15, 0),
+        endpoint=endpoint,
+        provider_profile=provider_profile,
+        fields_used=fields_used,
+        source_ts=source_ts,
+        source_timestamp_kind=timestamp_kind,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / "rejected-provenance.sqlite3"), provider
+        ).next_trading_date(entry)
+
+
 def test_trade_calendar_requires_aware_received_timestamp(tmp_path: Path) -> None:
     entry = date(2026, 8, 10)
     target = date(2026, 8, 11)
@@ -456,36 +551,84 @@ def test_trade_calendar_requires_aware_received_timestamp(tmp_path: Path) -> Non
         ).next_trading_date(entry)
 
 
-def test_tushare_15000_trade_cal_fields_integrate_with_outcome_tracker(tmp_path: Path) -> None:
-    requests: list[TransportRequest] = []
+def test_tushare_15000_trade_cal_wire_contract_integrates_with_outcome_tracker(
+    tmp_path: Path,
+) -> None:
     target = date(2026, 8, 11)
+    payload = {
+        "code": 0,
+        "data": {
+            "fields": ["exchange", "cal_date", "is_open", "pretrade_date"],
+            "items": [
+                ["SSE", "20260808", 0, "20260807"],
+                ["SSE", "20260810", 0, "20260807"],
+                ["SSE", "20260811", 1, "20260807"],
+            ],
+        },
+    }
+    response = requests.Response()
+    response.status_code = 200
+    response._content = json.dumps(payload).encode("utf-8")
 
-    class RecordingPro:
-        profile_name = "tushare_15000"
-        version = "test"
+    class FakeSession:
+        def __init__(self) -> None:
+            self.requests: list[dict[str, object]] = []
+            self.trust_env = True
+
+        def request(self, method: str, url: str, **kwargs: object) -> requests.Response:
+            self.requests.append({"method": method, "url": url, **kwargs})
+            return response
+
+    class RecordingSdkProTransport(TushareSdkProTransport):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.logical_requests: list[TransportRequest] = []
+            self.wire_results: list[TransportResult] = []
 
         def execute(self, request: TransportRequest) -> TransportResult:
-            requests.append(request)
-            return trade_calendar_result(
-                (
-                    {
-                        "exchange": "SSE",
-                        "cal_date": "20260811",
-                        "is_open": 1,
-                        "pretrade_date": "20260807",
-                    },
-                ),
-                at=stamp(target, 15, 0),
-            )
+            self.logical_requests.append(request)
+            result = super().execute(request)
+            self.wire_results.append(result)
+            return result
 
-    provider = Tushare15000Provider(cast(Any, RecordingPro()), cast(Any, object()))
+    session = FakeSession()
+    ticks = iter((1.0, 1.1))
+    transport = RecordingSdkProTransport(
+        cast(
+            Any,
+            SimpleNamespace(
+                name="tushare_15000",
+                base_url="https://fastapic.stockai888.top",
+                credential_ref="StockWatcher/Test/InMemory",
+                use_system_proxy=False,
+                connect_timeout_seconds=5.0,
+                read_timeout_seconds=30.0,
+            ),
+        ),
+        lambda: "memory-only-test-secret",
+        session=cast(requests.Session, session),
+        clock=lambda: stamp(target, 15, 0),
+        monotonic=lambda: next(ticks),
+    )
+    provider = Tushare15000Provider(cast(Any, transport), cast(Any, object()))
     tracker = CandidateOutcomeTracker(SQLiteStore(tmp_path / "provider-contract.sqlite3"), provider)
 
     assert tracker.next_trading_date(date(2026, 8, 7)) == target
-    assert len(requests) == 1
-    assert requests[0].api_name == "trade_cal"
-    assert requests[0].endpoint == "/"
-    assert requests[0].fields == ("exchange", "cal_date", "is_open", "pretrade_date")
+    assert len(transport.logical_requests) == 1
+    assert transport.logical_requests[0].api_name == "trade_cal"
+    assert transport.logical_requests[0].endpoint == "/"
+    assert transport.logical_requests[0].fields == (
+        "exchange",
+        "cal_date",
+        "is_open",
+        "pretrade_date",
+    )
+    assert session.requests[0]["url"] == "https://fastapic.stockai888.top/trade_cal"
+    result = transport.wire_results[0]
+    assert result.provenance.endpoint == "/trade_cal"
+    assert result.provenance.quality is TransportQuality.DEGRADED
+    assert result.provenance.source_timestamp_kind is SourceTimestampKind.MISSING
+    assert result.provenance.source_ts is None
 
 
 def test_supplement_candidates_never_enter_live_or_historical_outcomes(
@@ -1027,7 +1170,7 @@ def test_restart_discovery_prefers_current_slot_beyond_five_hundred_pending(
             "quality": "GOOD",
             "provider_version": "tushare-test-v1",
             "config_version": "candidate-outcome-test-v1",
-            "app_version": "0.6.0a2",
+            "app_version": "0.6.0a3",
             "created_at": created_at,
             "updated_at": created_at,
             "safe_reason": None,
@@ -1052,7 +1195,7 @@ def test_restart_discovery_prefers_current_slot_beyond_five_hundred_pending(
             "quality": "GOOD",
             "provider_version": "tushare-test-v1",
             "config_version": "candidate-outcome-test-v1",
-            "app_version": "0.6.0a2",
+            "app_version": "0.6.0a3",
             "created_at": current_created_at,
             "updated_at": current_created_at,
             "safe_reason": None,
@@ -1710,7 +1853,7 @@ def outcome_record(
         quality="GOOD" if status is OutcomeStatus.SETTLED else "UNVERIFIED",
         provider_version="tushare-test-v1",
         config_version="test-v1",
-        app_version="0.6.0a2",
+        app_version="0.6.0a3",
         created_at=entry_ts,
         updated_at=entry_ts,
     )

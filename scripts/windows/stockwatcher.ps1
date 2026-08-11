@@ -533,20 +533,20 @@ function Invoke-Build {
             "/DStockWatcherOutputDir=$stageInstaller",
             $installerScript
         ) -FailureMessage "Inno Setup 安装器编译失败"
-        $installer = Join-Path $stageInstaller "StockWatcher-0.6.0-alpha.2-setup.exe"
+        $installer = Join-Path $stageInstaller "StockWatcher-0.6.0-alpha.3-setup.exe"
         if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
             throw "Inno Setup 未生成安装器。"
         }
-        $portable = Join-Path $stageRoot "StockWatcher-0.6.0-alpha.2-portable.zip"
+        $portable = Join-Path $stageRoot "StockWatcher-0.6.0-alpha.3-portable.zip"
         Compress-Archive -Path (Join-Path $bundleRoot "*") -DestinationPath $portable -CompressionLevel Optimal
         $publishArtifacts = @(
             [PSCustomObject]@{
                 Source = $installer
-                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.6.0-alpha.2-setup.exe"
+                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.6.0-alpha.3-setup.exe"
             },
             [PSCustomObject]@{
                 Source = $portable
-                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.6.0-alpha.2-portable.zip"
+                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.6.0-alpha.3-portable.zip"
             }
         )
         Publish-BuildArtifactsTransaction -Artifacts $publishArtifacts -TransactionParent $stageParent -RunId $runId
