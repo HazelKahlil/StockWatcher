@@ -81,7 +81,7 @@ settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
 ## 本地提交与同步
 
 - 实现分支：`feat/candidate-outcomes`；完成后按 local-first 规则合入本地 `main`。
-- 实现提交哈希在本轮本地提交后回填；最终提交列表同时写入仓库外交接包。
+- 实现提交：`c7b4f9989a298954f3127934b7570afb3f5aaf2b`；最终提交列表同时写入仓库外交接包。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

@@ -15,7 +15,7 @@
     "package_version": "0.6.0-alpha.1",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
     "source_branch": "feat/candidate-outcomes",
-    "implementation_commit": null,
+    "implementation_commit": "c7b4f9989a298954f3127934b7570afb3f5aaf2b",
     "status": "local_code_complete_offline_verified",
     "schema_version": 7,
     "validation": "379 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check and diff check passed on macOS",
