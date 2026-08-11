@@ -255,8 +255,13 @@ class SQLiteStore:
         if not self.path.exists() or version == 0:
             return
         backup = self.path.with_suffix(f"{self.path.suffix}.pre-v{version + 1}.bak")
-        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
+        source = sqlite3.connect(self.path)
+        target = sqlite3.connect(backup)
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
         if version not in (0, 1, 2, 3, 4, 5):
@@ -1228,15 +1233,25 @@ class SQLiteStore:
 
     def backup(self, destination: Path) -> Path:
         self.initialize()
-        with self.connect() as source, sqlite3.connect(destination) as target:
+        source = self.connect()
+        target = sqlite3.connect(destination)
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
         return destination
 
     def rollback(self, backup: Path) -> None:
         if not backup.exists():
             raise FileNotFoundError(backup)
-        with sqlite3.connect(backup) as source, self.connect() as target:
+        source = sqlite3.connect(backup)
+        target = self.connect()
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
         with self.connect() as connection:
             if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                 raise RuntimeError("rollback database failed integrity check")
