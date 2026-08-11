@@ -60,9 +60,9 @@ V1 已实现 `domain`、`providers`、`runtime`、`engine`、`storage` 和跨平
 Web 与 Windows 也各有独立 smoke/工程证据，但新鲜固定时点、15:30 准点、完整恢复会话和
 权威 Windows M0 仍未完成。
 
-`0.6.0a2` 后继开发在 Shared Core 增加并返修 `candidate_outcomes` 旁路：只消费正式
-固定三只及可靠行情，严格验证受控 Pro 交易日历并持久化有界分钟重试；不进入评分或提醒
-决策，Mac/Windows 共用，Web 独立测试线本轮不修改。
+`0.6.0a3` 后继开发在 Shared Core 增加并返修 `candidate_outcomes` 旁路：只消费正式
+固定三只及可靠行情，严格验证受控 Pro `/trade_cal` wire provenance 并持久化有界分钟重试；
+不进入评分或提醒决策，Mac/Windows 共用，Web 独立测试线本轮不修改。
 
 ## 相关文档
 

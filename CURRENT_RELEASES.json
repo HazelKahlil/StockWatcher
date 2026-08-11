@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-11",
+  "generated_at": "2026-08-12",
   "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
   "internal_baseline": {
@@ -11,19 +11,19 @@
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
   "candidate_outcomes": {
-    "python_version": "0.6.0a2",
-    "package_version": "0.6.0-alpha.2",
+    "python_version": "0.6.0a3",
+    "package_version": "0.6.0-alpha.3",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
-    "source_branch": "fix/candidate-outcomes-live-contract",
-    "implementation_commit": "d85f378",
-    "status": "local_code_complete_offline_verified_after_contract_fix",
+    "source_branch": "fix/candidate-outcomes-trade-cal-wire-endpoint",
+    "implementation_commit": "e85faf2d83b2a8877a6320dfd4b60ae9e780486d",
+    "status": "local_code_complete_offline_verified_after_wire_endpoint_fix",
     "schema_version": 8,
-    "validation": "404 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation and diff check passed on macOS",
+    "validation": "409 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation and diff check passed on macOS",
     "real_trading_time_validation": false,
     "installed_app_rebuilt": false,
     "local_main_integrated": true,
     "github_synced": false,
-    "note": "Controlled DEGRADED Pro trade_cal and bounded persisted minute retry are offline-verified; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
+    "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED Pro calendar, and bounded persisted minute retry; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
   },
   "shared_core": {
     "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",

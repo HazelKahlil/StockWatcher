@@ -1,10 +1,10 @@
 # StockWatcher 项目索引
 
-> 状态：2026-08-11 三轨内部试用基准；不是商业发布或完整三平台验收。
+> 状态：2026-08-12 三轨内部试用基准；不是商业发布或完整三平台验收。
 
-> 当前后继开发：`fix/candidate-outcomes-live-contract`（`0.6.0a2` / SQLite v8）已完成
-> 交易日历与持久化重试返修的本地离线工程验证；收口后合入本地 `main`，不代表真实同点
-> 行情验收、GitHub 同步或已安装 App 重建。
+> 当前后继开发：`fix/candidate-outcomes-trade-cal-wire-endpoint`（`0.6.0a3` / SQLite v8）
+> 已完成 `/trade_cal` 生产 wire endpoint 的本地离线工程验证；收口后合入本地 `main`，
+> 不代表真实同点行情验收、GitHub 同步或已安装 App 重建。
 
 ## 唯一权威开发目录
 
@@ -63,7 +63,7 @@
    安装/卸载/回滚和签名包未验证。
 4. GitHub Actions 的 Node.js 20 action 弃用提示为非阻塞 P2，后续独立升级 action 主版本。
 5. 次日同点复盘真实 09:45/14:45 现场结算与错过时点回补仍待 Human Owner 在交易日验收；
-   当前状态仅为 `local_code_complete_offline_verified_after_contract_fix`。
+   当前状态仅为 `local_code_complete_offline_verified_after_wire_endpoint_fix`。
 
 ## 规则
 

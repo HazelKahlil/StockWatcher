@@ -11,9 +11,9 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
   `0.4.0a2`，里程碑 tag 为 `v0.4.0-alpha.2`。
 - 该 tag 是 Mac / Web / Windows 的内部试用源码、重建与回滚基准，不是商业稳定发布、
   权威 M0 或完整三平台验收。
-- 当前后继开发版本为 `0.6.0a2`：桌面端“次日同点复盘”已补齐受控 DEGRADED
-  `trade_cal`、有界持久化分钟重试与 SQLite v8；状态仅为
-  `local_code_complete_offline_verified_after_contract_fix`，尚未发布或覆盖现有安装包，
+- 当前后继开发版本为 `0.6.0a3`：桌面端“次日同点复盘”已补齐受控 DEGRADED
+  `/trade_cal` wire endpoint、有界持久化分钟重试与 SQLite v8；状态仅为
+  `local_code_complete_offline_verified_after_wire_endpoint_fix`，尚未发布或覆盖现有安装包，
   真实同点行情仍需后续交易日现场验收。
 - Shared Core 已包含真实全市场扫描、行业与概念板块、板块硬门、稳定 Top3、候选池强异动、
   09:45/14:45 调度、30 天提醒历史、次日同点理论复盘、15:30 盘后总结和 SQLite 安全恢复。

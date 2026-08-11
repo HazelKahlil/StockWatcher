@@ -1,6 +1,6 @@
 # v0.6：次日同点复盘
 
-> 状态：`local_code_complete_offline_verified_after_contract_fix`；真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
+> 状态：`local_code_complete_offline_verified_after_wire_endpoint_fix`；真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
 > 基线：`v0.4.0-alpha.2` / `main@e8df598c920a15dfb565bfc75e45a93d1eb48a07`
 > 范围：Shared Core 与 Mac/Windows 共用桌面端；不修改 Web 独立测试线。
 
@@ -35,8 +35,9 @@ Top3、提醒或弹窗。
 
 ### 真实交易日历质量契约
 
-- 只接受受控 `tushare_15000` 普通 Pro `trade_cal` 路线，字段必须精确为
-  `exchange/cal_date/is_open/pretrade_date`。
+- 只接受受控 `tushare_15000` 普通 Pro `trade_cal` 路线。Provider 包装层创建的逻辑
+  endpoint 仍为 `/`，SDK Pro 传输层改写后的 provenance wire endpoint 必须精确为
+  `/trade_cal`；字段必须精确为 `exchange/cal_date/is_open/pretrade_date`。
 - 允许该路线因供应商不提供生成时间而产生的
   `DEGRADED + source_ts missing/received-fallback`；`received_ts` 必须为合法的
   aware datetime。
@@ -62,6 +63,7 @@ Top3、提醒或弹窗。
   `settlement_attempts/last_attempt_at/next_retry_at`。
 - 迁移沿用迁移前备份、事务回滚、迁移后 `integrity_check` 与只读降级。
 - v7 → v8 migration 已覆盖失败回滚和 Windows 文件句柄释放契约。
+- 本次 wire endpoint 返修不修改表、索引或重试字段，Schema 继续保持 v8。
 - 复盘记录至少保留一年，不随 31 天提醒历史清理删除。
 
 ## UI
@@ -86,18 +88,25 @@ Human Owner 明确授权一个有边界的复盘例外，只在“理论复盘�
 - [x] 仓库外脱敏交接 ZIP 与三态 UI 截图。
 - [ ] 下一真实交易日 09:45/14:45 的现场同点结算与错过时点回补验收。
 
-## 离线验证（macOS arm64，2026-08-11）
+真实生产链回归使用 fake `requests.Session` 和内存测试凭据，不联网、不读取真实 Token，并
+完整经过 `Tushare15000Provider → TushareSdkProTransport → BaseHttpTransport →
+ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpoint `/`、wire URL
+`/trade_cal`、DEGRADED/MISSING provenance 与下一真实开市日解析；错误 endpoint/profile、
+字段漂移、非受控 DEGRADED、STALE、空记录、越界和矛盾记录全部拒绝。
+
+## 离线验证（macOS arm64，2026-08-12）
 
 | 命令 | 结果 |
 | --- | --- |
 | `uv sync --all-groups --frozen` | exit 0；56 packages audited |
 | `uv lock --check` | exit 0；67 packages resolved |
-| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；404 passed，20 skipped，2 deselected |
+| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；409 passed，20 skipped，2 deselected |
 | `uv run ruff check .` | exit 0 |
 | `uv run mypy src tests` | exit 0；113 source files |
 | `python3 scripts/validate_workspace.py` | exit 0；29 required files |
 | `uv run python scripts/check_windows_package.py` | exit 0；仅离线跨平台契约，不冒充 Windows 真机 |
 | `git diff --check` | exit 0 |
+| `python3 -m json.tool CURRENT_RELEASES.json` | exit 0 |
 
 确定性 UI 已覆盖空数据、待结算、部分结算和完整结算；交接包保存 empty / pending /
 settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
@@ -105,8 +114,9 @@ settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
 ## 本地提交与同步
 
 - 原功能提交：`c7b4f9989a298954f3127934b7570afb3f5aaf2b`。
-- 契约返修分支：`fix/candidate-outcomes-live-contract`；实现提交：
-  `d85f378`。验证完成后按 local-first 规则合入本地 `main`。
+- 交易日历质量与重试返修提交：`d85f378`。
+- wire endpoint 返修分支：`fix/candidate-outcomes-trade-cal-wire-endpoint`；实现提交：
+  `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。验证完成后按 local-first 规则合入本地 `main`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

@@ -6,6 +6,11 @@
 
 ### Mainline
 
+- 2026-08-12：在 `0.6.0a3` 修正次日同点复盘的生产交易日历 wire endpoint 契约：
+  `Tushare15000Provider` 继续创建逻辑 `endpoint="/"` 请求，`TushareSdkProTransport`
+  改写并实际请求 `/trade_cal`，`CandidateOutcomeTracker` 只接受该精确 provenance endpoint。
+  新增 fake Session + 内存测试凭据的完整离线传输链回归，错误 endpoint/profile/字段、
+  非受控 DEGRADED、STALE、空响应、越界和矛盾日历继续 fail closed。
 - 2026-08-11：在 `0.6.0a2` 完成桌面端“次日同点复盘”契约返修：正式 09:45/14:45
   三只候选按
   下一真实交易日同档行情做理论复盘，展示近 5/20 个入选交易日与全部记录的个股胜率、
@@ -33,7 +38,7 @@
 - SQLite 从 v7 升到 v8，为 `candidate_outcomes` 增加
   `settlement_attempts/last_attempt_at/next_retry_at`；迁移继续使用前置备份、事务回滚、
   `integrity_check` 与只读降级，并覆盖 Windows 文件句柄释放。
-- Mac/Windows 重建元数据提升为 `0.6.0-alpha.2`；本轮未构建、覆盖或重装现有 App。
+- Mac/Windows 重建元数据提升为 `0.6.0-alpha.3`；本轮未构建、覆盖或重装现有 App。
 - V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
   `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
   TdxQuant 只留在高级诊断。
