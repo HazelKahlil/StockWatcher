@@ -246,10 +246,7 @@ def test_sector_engine_enforces_breadth_sync_and_candidate_rank() -> None:
         rolling(f"60000{index}.SH", change=7 - index * 0.5, velocity=1 - index * 0.05)
         for index in range(1, 7)
     )
-    memberships = tuple(
-        membership(feature.code, "I001")
-        for feature in features
-    )
+    memberships = tuple(membership(feature.code, "I001") for feature in features)
     engine = SectorEngine()
 
     metrics = engine.calculate(features, memberships)
@@ -264,8 +261,7 @@ def test_sector_engine_enforces_breadth_sync_and_candidate_rank() -> None:
 
 def test_sector_engine_rewards_three_persistent_rounds_and_resets() -> None:
     features = tuple(
-        rolling(f"60000{index}.SH", change=7 - index * 0.5, velocity=1.0)
-        for index in range(1, 7)
+        rolling(f"60000{index}.SH", change=7 - index * 0.5, velocity=1.0) for index in range(1, 7)
     )
     memberships = tuple(membership(feature.code, "I001") for feature in features)
     engine = SectorEngine()
@@ -287,8 +283,7 @@ def test_sector_engine_prefers_any_passing_membership_over_higher_nonpassing_one
         rolling("600003.SH", change=2.4, velocity=0.7),
     )
     concept_peers = tuple(
-        rolling(f"00000{index}.SZ", change=9.0 - index, velocity=1.2)
-        for index in range(1, 6)
+        rolling(f"00000{index}.SZ", change=9.0 - index, velocity=1.2) for index in range(1, 6)
     )
     features = (target, *industry_peers, *concept_peers)
     memberships = (
@@ -312,8 +307,7 @@ def test_sector_engine_allows_concept_gate_when_industry_is_weak() -> None:
         rolling("600003.SH", change=0.0, velocity=0.0),
     )
     strong_concept = tuple(
-        rolling(f"00000{index}.SZ", change=6.0 - index * 0.2, velocity=1.2)
-        for index in range(1, 6)
+        rolling(f"00000{index}.SZ", change=6.0 - index * 0.2, velocity=1.2) for index in range(1, 6)
     )
     features = (target, *weak_industry, *strong_concept)
     memberships = (
@@ -430,10 +424,13 @@ def test_anomaly_detector_ignores_near_supplement_pool_rows() -> None:
     near = replace(batch.candidates[0], is_formal=False, is_supplement=True, level="近")
     detector = StrongMovementDetector()
     assert detector.evaluate(batch, candidate_pool=(near,)) is None
-    assert detector.evaluate(
-        replace(batch, source_ts=batch.source_ts + timedelta(seconds=10)),
-        candidate_pool=(replace(near, velocity_pct=near.velocity_pct + 2),),
-    ) is None
+    assert (
+        detector.evaluate(
+            replace(batch, source_ts=batch.source_ts + timedelta(seconds=10)),
+            candidate_pool=(replace(near, velocity_pct=near.velocity_pct + 2),),
+        )
+        is None
+    )
 
 
 def test_stable_top3_respects_configured_minimum_seat_hold_when_clock_is_supplied() -> None:
@@ -548,8 +545,7 @@ def test_candidate_engine_keeps_funds_optional_diversifies_and_fills_three() -> 
     assert all(candidate.sector_up_ratio == pytest.approx(0.8) for candidate in batch.candidates)
     assert all(candidate.sector_strong_count == 6 for candidate in batch.candidates)
     assert all(
-        candidate.sector_median_change_pct == pytest.approx(1.2)
-        for candidate in batch.candidates
+        candidate.sector_median_change_pct == pytest.approx(1.2) for candidate in batch.candidates
     )
     assert all(candidate.sector_rank == 1 for candidate in batch.candidates)
     assert all(candidate.sector_valid_count == 10 for candidate in batch.candidates)
@@ -590,10 +586,7 @@ def test_candidate_engine_keeps_funds_optional_diversifies_and_fills_three() -> 
     assert cold_batch.candidates[-1].sector_code == "I2"
     assert all(candidate.level == "近" for candidate in cold_batch.candidates)
     assert all(not candidate.velocity_available for candidate in cold_batch.candidates)
-    assert all(
-        "1/3/5分钟涨速 —/—/—" in candidate.reasons
-        for candidate in cold_batch.candidates
-    )
+    assert all("1/3/5分钟涨速 —/—/—" in candidate.reasons for candidate in cold_batch.candidates)
 
 
 def test_stable_top3_requires_three_small_leads_but_accepts_eight_points() -> None:
@@ -780,9 +773,7 @@ def test_refresh_stable_candidates_strictly_preserves_same_sector_limit() -> Non
         config,
     )
 
-    assert tuple(refreshed) == tuple(
-        item.security.code for item in inputs[:2]
-    )
+    assert tuple(refreshed) == tuple(item.security.code for item in inputs[:2])
     assert all(row.is_formal for row in refreshed.values())
 
 
@@ -913,10 +904,7 @@ def realtime_record(
 
 
 def test_full_market_scan_rejects_partial_round_and_recovery_needs_three_rounds() -> None:
-    securities = tuple(
-        security(code)
-        for code in ("600001.SH", "600002.SH", "000001.SZ")
-    )
+    securities = tuple(security(code) for code in ("600001.SH", "600002.SH", "000001.SZ"))
     partial = FullMarketScanCoordinator(
         StaticTransport(tuple(realtime_record(item.code) for item in securities[:2])),
         clock=timestamp,
@@ -960,23 +948,15 @@ def test_full_market_scan_excludes_six_stale_rows_and_keeps_real_timestamps() ->
     now = timestamp(second=30)
     fresh_at = now - timedelta(seconds=4)
     stale_at = now - timedelta(hours=2)
-    securities = tuple(
-        security(f"{index:06d}.SZ")
-        for index in range(1, 5531)
-    )
-    records = [
-        realtime_record(item.code, at=fresh_at)
-        for item in securities
-    ]
+    securities = tuple(security(f"{index:06d}.SZ") for index in range(1, 5531))
+    records = [realtime_record(item.code, at=fresh_at) for item in securities]
     for index in range(len(records) - 6, len(records)):
         records[index] = realtime_record(
             securities[index].code,
             at=stale_at,
             quality="STALE",
         )
-    original_stale_timestamps = tuple(
-        record["source_ts"] for record in records[-6:]
-    )
+    original_stale_timestamps = tuple(record["source_ts"] for record in records[-6:])
 
     scan = FullMarketScanCoordinator(
         StaticTransport(tuple(records)),
@@ -991,21 +971,13 @@ def test_full_market_scan_excludes_six_stale_rows_and_keeps_real_timestamps() ->
     assert scan.max_source_age_seconds == 4
     assert scan.source_span_seconds == 0
     assert all(quote.source_ts == fresh_at for quote in scan.quotes)
-    assert tuple(record["source_ts"] for record in records[-6:]) == (
-        original_stale_timestamps
-    )
+    assert tuple(record["source_ts"] for record in records[-6:]) == (original_stale_timestamps)
 
 
 def test_full_market_scan_fails_when_fresh_coverage_is_below_99_percent() -> None:
     now = timestamp(second=30)
-    securities = tuple(
-        security(f"{index:06d}.SZ")
-        for index in range(1, 101)
-    )
-    records = [
-        realtime_record(item.code, at=now)
-        for item in securities
-    ]
+    securities = tuple(security(f"{index:06d}.SZ") for index in range(1, 101))
+    records = [realtime_record(item.code, at=now) for item in securities]
     for index in (-1, -2):
         records[index] = realtime_record(
             securities[index].code,
@@ -1025,15 +997,9 @@ def test_full_market_scan_fails_when_fresh_coverage_is_below_99_percent() -> Non
 def test_excluded_stale_row_does_not_seed_rolling_baseline() -> None:
     first_at = timestamp()
     second_at = first_at + timedelta(minutes=1)
-    securities = tuple(
-        security(f"{index:06d}.SZ")
-        for index in range(1, 102)
-    )
+    securities = tuple(security(f"{index:06d}.SZ") for index in range(1, 102))
     stale_code = securities[-1].code
-    first_records = [
-        realtime_record(item.code, at=first_at)
-        for item in securities
-    ]
+    first_records = [realtime_record(item.code, at=first_at) for item in securities]
     first_records[-1] = realtime_record(
         stale_code,
         at=first_at - timedelta(minutes=10),
@@ -1044,18 +1010,13 @@ def test_excluded_stale_row_does_not_seed_rolling_baseline() -> None:
         clock=lambda: first_at,
     ).fetch_once(securities)
     second_scan = FullMarketScanCoordinator(
-        StaticTransport(
-            tuple(realtime_record(item.code, at=second_at) for item in securities)
-        ),
+        StaticTransport(tuple(realtime_record(item.code, at=second_at) for item in securities)),
         clock=lambda: second_at,
     ).fetch_once(securities)
     buffer = MarketSnapshotBuffer()
 
     buffer.update(first_scan.quotes)
-    second_features = {
-        feature.code: feature
-        for feature in buffer.update(second_scan.quotes)
-    }
+    second_features = {feature.code: feature for feature in buffer.update(second_scan.quotes)}
 
     assert second_features[securities[0].code].velocity_1m_pct == 0
     assert second_features[stale_code].velocity_1m_pct is None
@@ -1114,7 +1075,7 @@ def test_alert_history_daily_summary_and_v3_items_are_persisted(tmp_path: Path) 
     assert len(history) == 1
     with store.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM candidate_items").fetchone() == (3,)
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (8,)
 
     summary = DailySummaryEngine().generate(
         trade_date=now.date(),
@@ -1218,10 +1179,13 @@ def test_post_close_review_forms_real_data_top3_without_inventing_minutes() -> N
     assert len(review.top3) == 3
     assert all(candidate.retrospective_only for candidate in review.top3)
     assert all("分钟涨速" not in "；".join(candidate.reasons) for candidate in review.top3)
-    assert max(
-        sum(candidate.sector_code == sector for candidate in review.top3)
-        for sector in {candidate.sector_code for candidate in review.top3}
-    ) <= 2
+    assert (
+        max(
+            sum(candidate.sector_code == sector for candidate in review.top3)
+            for sector in {candidate.sector_code for candidate in review.top3}
+        )
+        <= 2
+    )
     assert review.fund_capability == "daily_only"
     assert review.daily_summary_record()["version"] == "daily-summary-retrospective-v1"
 
@@ -1244,15 +1208,9 @@ def test_moneyflow_daily_records_never_become_intraday_fund_signal() -> None:
 
 
 def test_summary_is_due_after_1530_for_late_app_start() -> None:
-    assert MarketSessionSchedule.summary_due(
-        timestamp().replace(hour=15, minute=30)
-    )
-    assert MarketSessionSchedule.summary_due(
-        timestamp().replace(hour=16, minute=5)
-    )
-    assert not MarketSessionSchedule.summary_due(
-        timestamp().replace(hour=15, minute=29)
-    )
+    assert MarketSessionSchedule.summary_due(timestamp().replace(hour=15, minute=30))
+    assert MarketSessionSchedule.summary_due(timestamp().replace(hour=16, minute=5))
+    assert not MarketSessionSchedule.summary_due(timestamp().replace(hour=15, minute=29))
 
 
 def test_session_schedules_30_day_history_prune_once_per_day(tmp_path: Path) -> None:
@@ -1566,10 +1524,7 @@ def test_manual_fetch_completes_three_fresh_rounds_in_one_user_action(
     fake = SequenceV1Runtime(universe, [warming, warming, healthy])
     credentials = MemoryCredentialStore()
     credentials.set(PRIMARY_CREDENTIAL, "test-token")
-    clock_values = [
-        now + timedelta(seconds=index)
-        for index in range(6)
-    ]
+    clock_values = [now + timedelta(seconds=index) for index in range(6)]
     session = TushareV1Session(
         tmp_path / "manual-three-rounds.sqlite3",
         credential_store=credentials,
@@ -1776,10 +1731,7 @@ def test_cached_session_scans_while_realtime_probe_progresses(
             6.0,
         ),
     )
-    statuses = {
-        capability: ProviderCapabilityStatus(capability)
-        for capability in CAPABILITY_ORDER
-    }
+    statuses = {capability: ProviderCapabilityStatus(capability) for capability in CAPABILITY_ORDER}
 
     class RealtimeProgression:
         starts = 0
@@ -1850,10 +1802,7 @@ def test_manual_fetch_does_not_wait_for_stalled_capability_probe(
             6.0,
         ),
     )
-    statuses = {
-        capability: ProviderCapabilityStatus(capability)
-        for capability in CAPABILITY_ORDER
-    }
+    statuses = {capability: ProviderCapabilityStatus(capability) for capability in CAPABILITY_ORDER}
 
     class StalledRealtimeProgression:
         in_flight = True

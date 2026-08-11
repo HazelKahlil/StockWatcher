@@ -312,11 +312,11 @@ def test_corrupt_database_switches_to_read_only_degradation(tmp_path: Path) -> N
     assert store.read_only
 
 
-def test_sqlite_explicit_v6_to_v7_migration_is_idempotent(tmp_path: Path) -> None:
+def test_sqlite_explicit_v6_to_v8_migration_is_idempotent(tmp_path: Path) -> None:
     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
     empty_store.initialize()
     with empty_store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (8,)
 
     path = tmp_path / "watcher.sqlite3"
     with closing(sqlite3.connect(path)) as connection, connection:
@@ -334,11 +334,8 @@ def test_sqlite_explicit_v6_to_v7_migration_is_idempotent(tmp_path: Path) -> Non
     store.initialize()
     store.initialize()
     with store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
-        columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(runtime_sessions)")
-        }
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (8,)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(runtime_sessions)")}
         assert {
             "last_sleep_at",
             "last_wake_at",
@@ -487,9 +484,10 @@ def test_tushare_v1_session_wires_runtime_lifecycle(tmp_path: Path) -> None:
         assert persisted["pid"] == os.getpid()
         assert persisted["graceful_exit"] == 0
         assert persisted["last_heartbeat_at"].startswith("2026-08-06T09:21")
-        assert session.store.list_runtime_events(session._runtime_session_id)[0][
-            "event_type"
-        ] == "sleep_detected"
+        assert (
+            session.store.list_runtime_events(session._runtime_session_id)[0]["event_type"]
+            == "sleep_detected"
+        )
     finally:
         session.shutdown(exit_reason="menu_quit")
     ended = session.store.get_runtime_session(session._runtime_session_id)
@@ -573,10 +571,7 @@ def test_continuity_reports_lunch_and_hidden_afternoon_gap_independently() -> No
     """A long lunch must not hide a shorter but critical trading-session gap."""
     lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
     timestamps = [datetime.fromisoformat("2026-08-06T11:30:17+08:00")]
-    timestamps.extend(
-        lunch_end + timedelta(seconds=30 * index)
-        for index in range(112)
-    )
+    timestamps.extend(lunch_end + timedelta(seconds=30 * index) for index in range(112))
     timestamps.extend(
         [
             datetime.fromisoformat("2026-08-06T13:55:58+08:00"),
@@ -610,8 +605,7 @@ def test_session_continuity_evidence_includes_every_reportable_trading_gap(
     try:
         lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
         continuous = [
-            (lunch_end + timedelta(seconds=30 * index)).isoformat()
-            for index in range(112)
+            (lunch_end + timedelta(seconds=30 * index)).isoformat() for index in range(112)
         ]
         _seed_healthy_scan_run(
             session.store,
@@ -705,17 +699,29 @@ def test_alert_policy_global_batch_cooldown_blocks_rapid_batches() -> None:
     policy = AlertPolicy(AlertPolicyConfig(replacement_cycles=2, replacement_margin=1.0))
     now = stamp()
     assert policy.decide(
-        first, now, AlertTrigger.INTRADAY,
-        strong_movement=True, triggering_codes=("600001",), event_strength=1.0,
+        first,
+        now,
+        AlertTrigger.INTRADAY,
+        strong_movement=True,
+        triggering_codes=("600001",),
+        event_strength=1.0,
     ).should_alert
     decision = policy.decide(
-        second, now + timedelta(minutes=1), AlertTrigger.INTRADAY,
-        strong_movement=True, triggering_codes=("600004",), event_strength=1.0,
+        second,
+        now + timedelta(minutes=1),
+        AlertTrigger.INTRADAY,
+        strong_movement=True,
+        triggering_codes=("600004",),
+        event_strength=1.0,
     )
     assert decision.reason == "global-cooldown"
     assert policy.decide(
-        second, now + timedelta(minutes=6), AlertTrigger.INTRADAY,
-        strong_movement=True, triggering_codes=("600004",), event_strength=1.2,
+        second,
+        now + timedelta(minutes=6),
+        AlertTrigger.INTRADAY,
+        strong_movement=True,
+        triggering_codes=("600004",),
+        event_strength=1.2,
     ).should_alert
 
 
@@ -744,10 +750,7 @@ def test_feature_readiness_blocks_warmup_strong_alert(tmp_path: Path) -> None:
             funds_unconfirmed=True,
         )
         audit = SimpleNamespace(warmup_state="warming", display_velocity_ready=False, rows=())
-        assert (
-            session._evaluate_alerts(now, event, selection_audit=audit, scan_run_id=7)
-            is None
-        )
+        assert session._evaluate_alerts(now, event, selection_audit=audit, scan_run_id=7) is None
         assert session.store.list_alert_history(now=now, days=1) == []
     finally:
         session.shutdown(exit_reason="menu_quit")
@@ -791,9 +794,7 @@ def test_strong_alert_fires_with_full_detail_when_ready(tmp_path: Path) -> None:
                 ),
             ),
         )
-        snapshot_id = session._evaluate_alerts(
-            now, event, selection_audit=audit, scan_run_id=7
-        )
+        snapshot_id = session._evaluate_alerts(now, event, selection_audit=audit, scan_run_id=7)
         assert snapshot_id is not None
         rows = session.store.list_alert_history(now=now, days=1)
         assert rows and rows[0]["trigger_type"] == "intraday"
@@ -964,9 +965,7 @@ def test_export_selection_audit_generates_full_machine_readable_set(
     alert_csv = (output / "alert-events.csv").read_text(encoding="utf-8")
     assert "600001" in alert_csv
     raw_rows = list(csv.DictReader((output / "raw-top20.csv").open(encoding="utf-8")))
-    stable_rows = list(
-        csv.DictReader((output / "stable-top3-timeline.csv").open(encoding="utf-8"))
-    )
+    stable_rows = list(csv.DictReader((output / "stable-top3-timeline.csv").open(encoding="utf-8")))
     assert [row["code"] for row in raw_rows] == [
         "600001",
         "600002",
@@ -1017,10 +1016,10 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     assert recovered.last_recovery is not None
     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
     with closing(recovered.connect()) as connection, connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
-        assert connection.execute(
-            "SELECT value FROM notes WHERE key = 'probe'"
-        ).fetchone() == ("kept",)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (8,)
+        assert connection.execute("SELECT value FROM notes WHERE key = 'probe'").fetchone() == (
+            "kept",
+        )
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     assert path.with_suffix(".sqlite3.corrupt").exists()
 

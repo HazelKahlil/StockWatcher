@@ -45,7 +45,7 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 7
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 8
 
     _SQLITE_MAGIC = b"SQLite format 3\x00"
     _OUTCOME_COLUMNS: ClassVar[tuple[str, ...]] = (
@@ -74,14 +74,15 @@ class SQLiteStore:
         "created_at",
         "updated_at",
         "safe_reason",
+        "settlement_attempts",
+        "last_attempt_at",
+        "next_retry_at",
     )
     last_recovery: dict[str, object] | None = None
 
     def connect(self) -> sqlite3.Connection:
         connection = (
-            sqlite3.connect(
-                f"file:{self.path}?mode=ro", uri=True, factory=_ClosingConnection
-            )
+            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, factory=_ClosingConnection)
             if self.read_only
             else sqlite3.connect(self.path, factory=_ClosingConnection)
         )
@@ -125,9 +126,7 @@ class SQLiteStore:
         being overwritten, and every recovery attempt is recorded on
         ``self.last_recovery`` so callers can surface it in logs and the UI.
         """
-        candidates = sorted(
-            self.path.parent.glob(f"{self.path.name}.pre-v*.bak"), reverse=True
-        )
+        candidates = sorted(self.path.parent.glob(f"{self.path.name}.pre-v*.bak"), reverse=True)
         for backup in candidates:
             if not self._is_valid_sqlite_backup(backup):
                 continue
@@ -296,7 +295,7 @@ class SQLiteStore:
             source.close()
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3, 4, 5, 6):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -314,6 +313,8 @@ class SQLiteStore:
                 self._apply_v6_migration(connection)
             if version <= 6:
                 self._apply_v7_migration(connection)
+            if version <= 7:
+                self._apply_v8_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -387,13 +388,11 @@ class SQLiteStore:
             "(key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
         )
         alert_columns = {
-            str(row[1])
-            for row in connection.execute("PRAGMA table_info(alert_events)")
+            str(row[1]) for row in connection.execute("PRAGMA table_info(alert_events)")
         }
         if "trigger_type" not in alert_columns:
             connection.execute(
-                "ALTER TABLE alert_events ADD COLUMN trigger_type TEXT NOT NULL "
-                "DEFAULT 'intraday'"
+                "ALTER TABLE alert_events ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'intraday'"
             )
 
     @staticmethod
@@ -455,8 +454,7 @@ class SQLiteStore:
     def _apply_v6_migration(connection: sqlite3.Connection) -> None:
         """Add structured runtime lifecycle evidence without changing scan semantics."""
         runtime_columns = {
-            str(row[1])
-            for row in connection.execute("PRAGMA table_info(runtime_sessions)")
+            str(row[1]) for row in connection.execute("PRAGMA table_info(runtime_sessions)")
         }
         for column, definition in (
             ("last_sleep_at", "TEXT"),
@@ -466,9 +464,7 @@ class SQLiteStore:
             ("watchdog_restart_count", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in runtime_columns:
-                connection.execute(
-                    f"ALTER TABLE runtime_sessions ADD COLUMN {column} {definition}"
-                )
+                connection.execute(f"ALTER TABLE runtime_sessions ADD COLUMN {column} {definition}")
         connection.execute(
             "CREATE TABLE IF NOT EXISTS runtime_events "
             "(event_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, occurred_at TEXT NOT NULL, "
@@ -480,16 +476,14 @@ class SQLiteStore:
             "ON runtime_events(session_id, occurred_at)"
         )
         summary_columns = {
-            str(row[1])
-            for row in connection.execute("PRAGMA table_info(daily_summaries)")
+            str(row[1]) for row in connection.execute("PRAGMA table_info(daily_summaries)")
         }
         if "catch_up" not in summary_columns:
             connection.execute(
                 "ALTER TABLE daily_summaries ADD COLUMN catch_up INTEGER NOT NULL DEFAULT 0"
             )
         alert_columns = {
-            str(row[1])
-            for row in connection.execute("PRAGMA table_info(alert_events)")
+            str(row[1]) for row in connection.execute("PRAGMA table_info(alert_events)")
         }
         if "detail_json" not in alert_columns:
             connection.execute(
@@ -534,6 +528,28 @@ class SQLiteStore:
             "ON candidate_outcomes(code, entry_trade_date DESC)"
         )
 
+    @staticmethod
+    def _apply_v8_migration(connection: sqlite3.Connection) -> None:
+        """Persist bounded minute-backfill attempts across application restarts."""
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
+        }
+        additions = {
+            "settlement_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "last_attempt_at": "TEXT",
+            "next_retry_at": "TEXT",
+        }
+        for column, definition in additions.items():
+            if column not in columns:
+                connection.execute(
+                    f"ALTER TABLE candidate_outcomes ADD COLUMN {column} {definition}"
+                )
+        connection.execute("DROP INDEX IF EXISTS idx_candidate_outcomes_pending")
+        connection.execute(
+            "CREATE INDEX idx_candidate_outcomes_pending "
+            "ON candidate_outcomes(status, target_trade_date, target_slot, "
+            "next_retry_at, rank)"
+        )
 
     @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
@@ -567,6 +583,11 @@ class SQLiteStore:
             or not required_tables <= tables
         ):
             raise RuntimeError("schema migration did not reach current version")
+        outcome_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
+        }
+        if not {"settlement_attempts", "last_attempt_at", "next_retry_at"} <= outcome_columns:
+            raise RuntimeError("candidate outcome retry schema is incomplete")
         self._assert_integrity(connection)
 
     def start_runtime_session(
@@ -614,11 +635,7 @@ class SQLiteStore:
                             "last_scan_at": last_scan,
                         },
                     )
-                previous_id = (
-                    previous[0][0]
-                    if previous
-                    else None
-                )
+                previous_id = previous[0][0] if previous else None
                 connection.execute(
                     "INSERT OR REPLACE INTO runtime_sessions "
                     "(session_id, pid, ppid, app_path, source_commit, started_at, "
@@ -773,10 +790,23 @@ class SQLiteStore:
         if row is None:
             return None
         keys = (
-            "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
-            "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
-            "last_scan_at", "last_window_activation_at", "last_sleep_at", "last_wake_at",
-            "previous_session_id", "previous_unclean_exit", "watchdog_restart_count",
+            "session_id",
+            "pid",
+            "ppid",
+            "app_path",
+            "source_commit",
+            "started_at",
+            "last_heartbeat_at",
+            "ended_at",
+            "exit_reason",
+            "graceful_exit",
+            "last_scan_at",
+            "last_window_activation_at",
+            "last_sleep_at",
+            "last_wake_at",
+            "previous_session_id",
+            "previous_unclean_exit",
+            "watchdog_restart_count",
         )
         return dict(zip(keys, row))
 
@@ -795,10 +825,23 @@ class SQLiteStore:
         with self.connect() as connection:
             rows = connection.execute(query, values).fetchall()
         keys = (
-            "session_id", "pid", "ppid", "app_path", "source_commit", "started_at",
-            "last_heartbeat_at", "ended_at", "exit_reason", "graceful_exit",
-            "last_scan_at", "last_window_activation_at", "last_sleep_at", "last_wake_at",
-            "previous_session_id", "previous_unclean_exit", "watchdog_restart_count",
+            "session_id",
+            "pid",
+            "ppid",
+            "app_path",
+            "source_commit",
+            "started_at",
+            "last_heartbeat_at",
+            "ended_at",
+            "exit_reason",
+            "graceful_exit",
+            "last_scan_at",
+            "last_window_activation_at",
+            "last_sleep_at",
+            "last_wake_at",
+            "previous_session_id",
+            "previous_unclean_exit",
+            "watchdog_restart_count",
         )
         return [dict(zip(keys, row)) for row in rows]
 
@@ -820,8 +863,16 @@ class SQLiteStore:
                 "(attempt_id, session_id, started_at, last_heartbeat_at, completed_at, state, "
                 "operation, thread_name, timer_active, detail, recovery_count) "
                 "VALUES (?, ?, ?, ?, NULL, 'running', ?, ?, ?, ?, 0)",
-                (attempt_id, session_id, started_at, started_at, operation, thread_name,
-                 int(timer_active), detail),
+                (
+                    attempt_id,
+                    session_id,
+                    started_at,
+                    started_at,
+                    operation,
+                    thread_name,
+                    int(timer_active),
+                    detail,
+                ),
             )
 
     def heartbeat_scan_attempt(
@@ -892,8 +943,17 @@ class SQLiteStore:
         with self.connect() as connection:
             rows = connection.execute(query, tuple(values)).fetchall()
         keys = (
-            "attempt_id", "session_id", "started_at", "last_heartbeat_at", "completed_at",
-            "state", "operation", "thread_name", "timer_active", "detail", "recovery_count",
+            "attempt_id",
+            "session_id",
+            "started_at",
+            "last_heartbeat_at",
+            "completed_at",
+            "state",
+            "operation",
+            "thread_name",
+            "timer_active",
+            "detail",
+            "recovery_count",
         )
         return [dict(zip(keys, row)) for row in rows]
 
@@ -908,8 +968,11 @@ class SQLiteStore:
         """Keep recovery evidence in the credential-free notes table."""
         self.put_note(
             f"scan-recovery:{session_id}:{occurred_at}",
-            json.dumps({"occurred_at": occurred_at, "state": state, "detail": detail},
-                       ensure_ascii=False, sort_keys=True),
+            json.dumps(
+                {"occurred_at": occurred_at, "state": state, "detail": detail},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
 
     def list_scan_recovery_events(self, session_id: str | None = None) -> list[dict[str, Any]]:
@@ -972,19 +1035,19 @@ class SQLiteStore:
         metadata: dict[str, str | int | bool],
     ) -> int:
         cursor = connection.execute(
-                "INSERT INTO candidate_snapshots "
-                "(source_ts, generated_at, health, overall_weak, provider_version, config_version, "
-                "app_version, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    str(metadata["source_ts"]),
-                    str(metadata["generated_at"]),
-                    str(metadata["health"]),
-                    int(bool(metadata.get("overall_weak", False))),
-                    str(metadata["provider_version"]),
-                    str(metadata["config_version"]),
-                    str(metadata["app_version"]),
-                    payload_json,
-                ),
+            "INSERT INTO candidate_snapshots "
+            "(source_ts, generated_at, health, overall_weak, provider_version, config_version, "
+            "app_version, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(metadata["source_ts"]),
+                str(metadata["generated_at"]),
+                str(metadata["health"]),
+                int(bool(metadata.get("overall_weak", False))),
+                str(metadata["provider_version"]),
+                str(metadata["config_version"]),
+                str(metadata["app_version"]),
+                payload_json,
+            ),
         )
         if cursor.lastrowid is None:
             raise RuntimeError("snapshot insert did not return an id")
@@ -1436,17 +1499,19 @@ class SQLiteStore:
                         "code, name, entry_price, entry_source_ts, target_trade_date, "
                         "target_slot, exit_price, exit_source_ts, return_pct, status, outcome, "
                         "settlement_method, quality, provider_version, config_version, "
-                        "app_version, created_at, updated_at, safe_reason) "
+                        "app_version, created_at, updated_at, safe_reason, settlement_attempts, "
+                        "last_attempt_at, next_retry_at) "
                         "VALUES (:entry_snapshot_id, :entry_alert_id, :entry_trade_date, "
                         ":slot, :rank, :code, :name, :entry_price, :entry_source_ts, "
                         ":target_trade_date, :target_slot, NULL, NULL, NULL, :status, NULL, "
                         "NULL, :quality, :provider_version, :config_version, :app_version, "
-                        ":created_at, :updated_at, :safe_reason)",
+                        ":created_at, :updated_at, :safe_reason, 0, NULL, :next_retry_at)",
                         {
                             **entry,
                             "target_trade_date": entry.get("target_trade_date"),
                             "status": entry.get("status", "pending"),
                             "safe_reason": entry.get("safe_reason"),
+                            "next_retry_at": entry.get("next_retry_at"),
                         },
                     )
                     inserted += max(0, cursor.rowcount)
@@ -1457,14 +1522,15 @@ class SQLiteStore:
         outcome_id: int,
         *,
         target_trade_date: str,
+        next_retry_at: str,
         updated_at: str,
     ) -> bool:
         self.initialize()
         with self.connect() as connection:
             cursor = connection.execute(
-                "UPDATE candidate_outcomes SET target_trade_date = ?, updated_at = ?, "
-                "safe_reason = NULL WHERE id = ? AND status = 'pending'",
-                (target_trade_date, updated_at, outcome_id),
+                "UPDATE candidate_outcomes SET target_trade_date = ?, next_retry_at = ?, "
+                "updated_at = ?, safe_reason = NULL WHERE id = ? AND status = 'pending'",
+                (target_trade_date, next_retry_at, updated_at, outcome_id),
             )
         return cursor.rowcount == 1
 
@@ -1475,9 +1541,10 @@ class SQLiteStore:
         target_slot: str | None = None,
         entry_snapshot_id: int | None = None,
         unresolved_only: bool = False,
-        limit: int = 100,
+        newest_first: bool = False,
+        limit: int | None = 100,
     ) -> list[dict[str, Any]]:
-        if limit < 1:
+        if limit is not None and limit < 1:
             raise ValueError("candidate outcome limit must be positive")
         where = ["status = 'pending'"]
         values: list[Any] = []
@@ -1496,12 +1563,20 @@ class SQLiteStore:
                 raise ValueError("candidate outcome snapshot id must be positive")
             where.append("entry_snapshot_id = ?")
             values.append(entry_snapshot_id)
-        values.append(limit)
         columns = ", ".join(self._OUTCOME_COLUMNS)
+        ordering = (
+            "target_trade_date DESC, target_slot DESC, rank, id"
+            if newest_first
+            else "entry_trade_date, slot, rank, id"
+        )
+        limit_clause = ""
+        if limit is not None:
+            values.append(limit)
+            limit_clause = " LIMIT ?"
         with self.connect() as connection:
             rows = connection.execute(
                 f"SELECT {columns} FROM candidate_outcomes WHERE {' AND '.join(where)} "
-                "ORDER BY entry_trade_date, slot, rank, id LIMIT ?",
+                f"ORDER BY {ordering}{limit_clause}",
                 tuple(values),
             ).fetchall()
         return [dict(zip(self._OUTCOME_COLUMNS, row)) for row in rows]
@@ -1533,7 +1608,7 @@ class SQLiteStore:
             cursor = connection.execute(
                 "UPDATE candidate_outcomes SET exit_price = ?, exit_source_ts = ?, "
                 "return_pct = ?, status = 'settled', outcome = ?, settlement_method = ?, "
-                "quality = ?, updated_at = ?, safe_reason = NULL "
+                "quality = ?, updated_at = ?, safe_reason = NULL, next_retry_at = NULL "
                 "WHERE id = ? AND status = 'pending'",
                 (
                     exit_price,
@@ -1562,9 +1637,49 @@ class SQLiteStore:
         with self.connect() as connection:
             cursor = connection.execute(
                 "UPDATE candidate_outcomes SET status = 'unavailable', outcome = NULL, "
-                "settlement_method = NULL, quality = ?, updated_at = ?, safe_reason = ? "
+                "settlement_method = NULL, quality = ?, updated_at = ?, safe_reason = ?, "
+                "next_retry_at = NULL "
                 "WHERE id = ? AND status = 'pending'",
                 (quality, updated_at, safe_reason, outcome_id),
+            )
+        return cursor.rowcount == 1
+
+    def record_candidate_outcome_attempt(
+        self,
+        outcome_id: int,
+        *,
+        attempted_at: str,
+        next_retry_at: str | None,
+    ) -> bool:
+        """Persist one bounded attempt before performing its network request."""
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE candidate_outcomes SET settlement_attempts = settlement_attempts + 1, "
+                "last_attempt_at = ?, next_retry_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (attempted_at, next_retry_at, attempted_at, outcome_id),
+            )
+        return cursor.rowcount == 1
+
+    def defer_candidate_outcome(
+        self,
+        outcome_id: int,
+        *,
+        safe_reason: str,
+        next_retry_at: str | None,
+        updated_at: str,
+    ) -> bool:
+        """Keep a failed or not-yet-published minute pending for a bounded retry."""
+        if not safe_reason.strip():
+            raise ValueError("candidate outcome safe reason must not be empty")
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE candidate_outcomes SET quality = 'UNVERIFIED', safe_reason = ?, "
+                "next_retry_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (safe_reason, next_retry_at, updated_at, outcome_id),
             )
         return cursor.rowcount == 1
 

@@ -167,7 +167,6 @@ class TushareV1Session:
         self._outcome_future_lock = Lock()
         self._outcome_issue: str | None = None
         self._outcome_initial_backfill_submitted = False
-        self._outcome_fallback_due: dict[str, datetime] = {}
         self._outcome_fallback_submitted: set[str] = set()
         self._manual_started_monotonic: float | None = None
         self._manual_scan_round = 0
@@ -258,7 +257,6 @@ class TushareV1Session:
         self._provider = None
         self._outcome_tracker = None
         self._outcome_initial_backfill_submitted = False
-        self._outcome_fallback_due.clear()
         self._outcome_fallback_submitted.clear()
         self._prepared_date = None
         self.pending_alert = None
@@ -1118,10 +1116,6 @@ class TushareV1Session:
             increment_attempt=increment_attempt,
         )
         if self._outcome_tracker is not None:
-            self._queue_outcome_fallback(
-                spec.task_key,
-                due_at=spec.target_at + timedelta(minutes=1),
-            )
             self._submit_due_outcome_fallbacks(now)
 
     def check_automation_tasks(self, *, now: datetime | None = None) -> None:
@@ -1260,10 +1254,10 @@ class TushareV1Session:
             subtitle=subtitle,
             trigger_type=trigger.value,
         )
-        if (
-            self.state is HealthState.HEALTHY
-            and trigger in {AlertTrigger.SCHEDULED_0945, AlertTrigger.SCHEDULED_1445}
-        ):
+        if self.state is HealthState.HEALTHY and trigger in {
+            AlertTrigger.SCHEDULED_0945,
+            AlertTrigger.SCHEDULED_1445,
+        }:
             self._record_scheduled_outcomes_safely(
                 snapshot_id=snapshot_id,
                 alert_id=alert_id,
@@ -1314,9 +1308,7 @@ class TushareV1Session:
         if tracker is None:
             return
         slot = (
-            OutcomeSlot.MORNING
-            if trigger is AlertTrigger.SCHEDULED_0945
-            else OutcomeSlot.AFTERNOON
+            OutcomeSlot.MORNING if trigger is AlertTrigger.SCHEDULED_0945 else OutcomeSlot.AFTERNOON
         )
 
         def settle_old_outcomes() -> OutcomeActionReport:
@@ -1329,45 +1321,38 @@ class TushareV1Session:
             )
 
         self._submit_outcome_task(settle_old_outcomes)
-        fallback_key = f"{now.date().isoformat()}:outcome-{slot.value}"
-        target_at = datetime.combine(
-            now.date(),
-            time.fromisoformat(slot.value),
-            tzinfo=SHANGHAI,
-        )
-        self._queue_outcome_fallback(
-            fallback_key,
-            due_at=target_at + timedelta(minutes=1),
-        )
         self._submit_due_outcome_fallbacks(now)
-
-    def _queue_outcome_fallback(self, task_key: str, *, due_at: datetime) -> None:
-        if task_key in self._outcome_fallback_submitted:
-            return
-        due = _shanghai(due_at)
-        existing = self._outcome_fallback_due.get(task_key)
-        if existing is None or due < existing:
-            self._outcome_fallback_due[task_key] = due
 
     def _submit_due_outcome_fallbacks(self, now: datetime) -> None:
         tracker = self._outcome_tracker
         if tracker is None:
             return
         current = _shanghai(now)
-        for task_key, due_at in tuple(self._outcome_fallback_due.items()):
-            if current < due_at or task_key in self._outcome_fallback_submitted:
+        try:
+            groups = tracker.due_backfill_groups(now=current, limit=4)
+        except Exception as error:  # noqa: BLE001 - sidecar discovery stays isolated
+            self._outcome_issue = f"outcome-discovery:{type(error).__name__}"
+            return
+        for target_date, target_slot in groups:
+            task_key = f"{target_date.isoformat()}:outcome-{target_slot.value}"
+            with self._outcome_future_lock:
+                already_submitted = task_key in self._outcome_fallback_submitted
+            if already_submitted:
                 continue
 
             def backfill_due(
                 selected_tracker: CandidateOutcomeTracker = tracker,
-                attempt_at: datetime = current,
+                selected_date: date = target_date,
+                selected_slot: OutcomeSlot = target_slot,
             ) -> OutcomeActionReport:
-                return selected_tracker.backfill_due(now=attempt_at, limit=3)
+                return selected_tracker.backfill_due(
+                    now=_shanghai(self._clock()),
+                    target_trade_date=selected_date,
+                    target_slot=selected_slot,
+                    limit=3,
+                )
 
-            submitted = self._submit_outcome_task(backfill_due)
-            if submitted:
-                self._outcome_fallback_submitted.add(task_key)
-                self._outcome_fallback_due.pop(task_key, None)
+            self._submit_outcome_task(backfill_due, fallback_key=task_key)
 
     def _schedule_initial_outcome_backfill(self, now: datetime) -> None:
         tracker = self._outcome_tracker
@@ -1385,6 +1370,8 @@ class TushareV1Session:
     def _submit_outcome_task(
         self,
         task: Callable[[], OutcomeActionReport],
+        *,
+        fallback_key: str | None = None,
     ) -> bool:
         try:
             future = self._outcome_executor.submit(task)
@@ -1393,17 +1380,32 @@ class TushareV1Session:
             return False
         with self._outcome_future_lock:
             self._outcome_futures.add(future)
-        future.add_done_callback(self._outcome_task_done)
+            if fallback_key is not None:
+                self._outcome_fallback_submitted.add(fallback_key)
+
+        def task_done(completed: Future[OutcomeActionReport]) -> None:
+            self._outcome_task_done(completed, fallback_key=fallback_key)
+
+        future.add_done_callback(task_done)
         return True
 
-    def _outcome_task_done(self, future: Future[OutcomeActionReport]) -> None:
+    def _outcome_task_done(
+        self,
+        future: Future[OutcomeActionReport],
+        *,
+        fallback_key: str | None = None,
+    ) -> None:
         try:
-            future.result()
+            report = future.result()
+            if fallback_key is not None and report.pending:
+                self._outcome_issue = "outcome-retry-scheduled"
         except Exception as error:  # noqa: BLE001 - background sidecar stays isolated
             self._outcome_issue = f"outcome-background:{type(error).__name__}"
         finally:
             with self._outcome_future_lock:
                 self._outcome_futures.discard(future)
+                if fallback_key is not None:
+                    self._outcome_fallback_submitted.discard(fallback_key)
 
     def _generate_summary(self, now: datetime, *, catch_up: bool = False) -> bool:
         """Generate the 15:30 summary with a local-first fallback.
@@ -1801,9 +1803,7 @@ class TushareV1Session:
         self.data_gate_label = "钥匙串不可用"
         self.candidate_gate_label = "等待钥匙串恢复"
         self.health_detail = self.connection_detail
-        self.status_issues = (
-            "请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",
-        )
+        self.status_issues = ("请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",)
 
     def _publish_credential_state(
         self,
@@ -1984,8 +1984,7 @@ class TushareV1Session:
             self._universe_retry_at = now + timedelta(minutes=5)
             self._universe_refresh_issue = (
                 "概念刷新失败，当前进程继续使用上次成功概念缓存；"
-                "行业筛选与概念筛选均保持可用，5分钟后重试"
-                + (f"（{reason}）" if reason else "。")
+                "行业筛选与概念筛选均保持可用，5分钟后重试" + (f"（{reason}）" if reason else "。")
             )
         else:
             self._universe_retry_at = now + timedelta(minutes=5)

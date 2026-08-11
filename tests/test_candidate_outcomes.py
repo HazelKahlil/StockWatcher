@@ -36,13 +36,17 @@ from stock_watcher.providers.tushare.models import (
     SourceTimestampKind,
     TransportResult,
 )
+from stock_watcher.providers.tushare.transport_protocol import TransportRequest
+from stock_watcher.providers.tushare.unified_provider import Tushare15000Provider
 from stock_watcher.runtime import CandidateOutcomeTracker, OutcomeActionReport, ScanOutcome
 from stock_watcher.storage import SQLiteStore
 from stock_watcher.ui.outcome_review import (
     OutcomeReviewWorker,
+    _backfill_status_text,
     _method,
     _prices,
     _result,
+    _safe_reason_text,
 )
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
 
@@ -74,7 +78,7 @@ def candidate_batch(
             source_ts=at,
             provider_version=provider_version,
             config_version="candidate-outcome-test-v1",
-            app_version="0.6.0a1",
+            app_version="0.6.0a2",
             price=price,
             is_formal=formal,
             is_supplement=not formal,
@@ -96,23 +100,58 @@ def transport_result(
     *,
     at: datetime,
     quality: TransportQuality = TransportQuality.HEALTHY,
+    provider_profile: str = "test",
+    endpoint: str = "test",
+    fields_used: tuple[str, ...] = (),
+    source_ts: datetime | None = None,
+    source_timestamp_kind: SourceTimestampKind | None = None,
 ) -> TransportResult:
+    effective_source = (
+        at if source_ts is None and quality is TransportQuality.HEALTHY else source_ts
+    )
+    timestamp_kind = source_timestamp_kind or (
+        SourceTimestampKind.SUPPLIER
+        if effective_source is not None
+        else SourceTimestampKind.MISSING
+    )
     return TransportResult(
         records=records,
         http_status=200,
         elapsed_seconds=0.01,
         provenance=ProviderProvenance(
-            provider_profile="test",
-            endpoint="test",
+            provider_profile=provider_profile,
+            endpoint=endpoint,
             provider_version="test-v1",
             schema_version="test-v1",
-            source_ts=at,
+            source_ts=effective_source,
             received_ts=at,
-            source_timestamp_kind=SourceTimestampKind.SUPPLIER,
-            freshness_seconds=0.0,
+            source_timestamp_kind=timestamp_kind,
+            freshness_seconds=(0.0 if effective_source is not None else None),
             quality=quality,
             degraded=quality is not TransportQuality.HEALTHY,
-            fields_used=(),
+            fields_used=fields_used,
+        ),
+    )
+
+
+def trade_calendar_result(
+    records: tuple[dict[str, str | int | float | bool | None], ...],
+    *,
+    at: datetime,
+    quality: TransportQuality = TransportQuality.DEGRADED,
+    provider_profile: str = "tushare_15000",
+) -> TransportResult:
+    return transport_result(
+        records,
+        at=at,
+        quality=quality,
+        provider_profile=provider_profile,
+        endpoint="/",
+        fields_used=("exchange", "cal_date", "is_open", "pretrade_date"),
+        source_timestamp_kind=(
+            SourceTimestampKind.MISSING
+            if quality is TransportQuality.DEGRADED
+            else SourceTimestampKind.SUPPLIER
         ),
     )
 
@@ -120,27 +159,44 @@ def transport_result(
 class FakeOutcomeProvider:
     def __init__(self, open_dates: tuple[date, ...]) -> None:
         self.open_dates = open_dates
-        self.realtime_records: tuple[
-            dict[str, str | int | float | bool | None], ...
-        ] = ()
+        self.realtime_records: tuple[dict[str, str | int | float | bool | None], ...] = ()
         self.historical_records: dict[
             tuple[str, str],
             tuple[dict[str, str | int | float | bool | None], ...],
         ] = {}
         self.realtime_error: Exception | None = None
         self.historical_error: Exception | None = None
+        self.calendar_result: TransportResult | None = None
         self.calendar_calls = 0
         self.realtime_calls: list[tuple[str, ...]] = []
         self.historical_calls: list[tuple[str, str]] = []
 
     def trading_dates(self, **params: str | int | float | bool) -> TransportResult:
         self.calendar_calls += 1
+        if self.calendar_result is not None:
+            return self.calendar_result
         end = max(self.open_dates)
+        requested_start = datetime.strptime(str(params["start_date"]), "%Y%m%d").date()
+        requested_end = datetime.strptime(str(params["end_date"]), "%Y%m%d").date()
         records: tuple[dict[str, str | int | float | bool | None], ...] = tuple(
-            {"cal_date": value.strftime("%Y%m%d"), "is_open": 1}
+            {
+                "exchange": "SSE",
+                "cal_date": value.strftime("%Y%m%d"),
+                "is_open": 1,
+                "pretrade_date": (value - timedelta(days=1)).strftime("%Y%m%d"),
+            }
             for value in self.open_dates
+            if requested_start <= value <= requested_end
         )
-        return transport_result(records, at=stamp(end, 15, 0))
+        return transport_result(
+            records,
+            at=stamp(end, 15, 0),
+            quality=TransportQuality.DEGRADED,
+            provider_profile="tushare_15000",
+            endpoint="/",
+            fields_used=("exchange", "cal_date", "is_open", "pretrade_date"),
+            source_timestamp_kind=SourceTimestampKind.MISSING,
+        )
 
     def realtime_quotes(self, codes: tuple[str, ...]) -> TransportResult:
         self.realtime_calls.append(codes)
@@ -236,6 +292,200 @@ def test_scheduled_slots_use_verified_calendar_and_are_idempotent(tmp_path: Path
     assert {row["slot"] for row in rows} == {"09:45", "14:45"}
     assert sum(row["code"] == "000001.SZ" for row in rows) == 2
     assert provider.calendar_calls == 3
+
+
+def test_real_degraded_trade_calendar_contract_resolves_next_open_date(tmp_path: Path) -> None:
+    friday = date(2026, 8, 7)
+    tuesday = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((tuesday,))
+    provider.calendar_result = trade_calendar_result(
+        (
+            {
+                "exchange": "SSE",
+                "cal_date": "20260808",
+                "is_open": 0,
+                "pretrade_date": "20260807",
+            },
+            {
+                "exchange": "SSE",
+                "cal_date": "20260810",
+                "is_open": "0",
+                "pretrade_date": "20260807",
+            },
+            {
+                "exchange": "SSE",
+                "cal_date": "20260811",
+                "is_open": True,
+                "pretrade_date": "20260807",
+            },
+        ),
+        at=stamp(tuesday, 15, 0),
+    )
+    tracker = CandidateOutcomeTracker(SQLiteStore(tmp_path / "calendar.sqlite3"), provider)
+
+    assert tracker.next_trading_date(friday) == tuesday
+
+
+@pytest.mark.parametrize("quality", [TransportQuality.STALE, TransportQuality.STOPPED])
+def test_stale_or_unavailable_trade_calendar_is_rejected(
+    tmp_path: Path,
+    quality: TransportQuality,
+) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = trade_calendar_result(
+        ({"exchange": "SSE", "cal_date": "20260811", "is_open": 1, "pretrade_date": "20260810"},),
+        at=stamp(target, 15, 0),
+        quality=quality,
+    )
+
+    with pytest.raises(ValueError, match="quality"):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / f"{quality}.sqlite3"), provider
+        ).next_trading_date(entry)
+
+
+@pytest.mark.parametrize(
+    ("records", "message"),
+    [
+        ((), "empty"),
+        (
+            (
+                {
+                    "exchange": "SSE",
+                    "cal_date": "not-a-date",
+                    "is_open": 1,
+                    "pretrade_date": "20260810",
+                },
+            ),
+            "date is invalid",
+        ),
+        (
+            (
+                {
+                    "exchange": "SSE",
+                    "cal_date": "20260930",
+                    "is_open": 1,
+                    "pretrade_date": "20260929",
+                },
+            ),
+            "outside request range",
+        ),
+        (
+            (
+                {
+                    "exchange": "SSE",
+                    "cal_date": "20260811",
+                    "is_open": 1,
+                    "pretrade_date": "20260810",
+                },
+                {
+                    "exchange": "SSE",
+                    "cal_date": "20260811",
+                    "is_open": 0,
+                    "pretrade_date": "20260810",
+                },
+            ),
+            "contradictory",
+        ),
+        (
+            (
+                {
+                    "exchange": "SSE",
+                    "cal_date": "20260811",
+                    "is_open": 2,
+                    "pretrade_date": "20260810",
+                },
+            ),
+            "open flag",
+        ),
+    ],
+)
+def test_malformed_or_conflicting_trade_calendar_fails_closed(
+    tmp_path: Path,
+    records: tuple[dict[str, str | int | float | bool | None], ...],
+    message: str,
+) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = trade_calendar_result(records, at=stamp(target, 15, 0))
+
+    with pytest.raises(ValueError, match=message):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / "bad-calendar.sqlite3"), provider
+        ).next_trading_date(entry)
+
+
+def test_unexpected_degraded_calendar_provenance_is_rejected(tmp_path: Path) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = trade_calendar_result(
+        ({"exchange": "SSE", "cal_date": "20260811", "is_open": 1, "pretrade_date": "20260810"},),
+        at=stamp(target, 15, 0),
+        provider_profile="unexpected",
+    )
+
+    with pytest.raises(ValueError, match="profile"):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / "provenance.sqlite3"), provider
+        ).next_trading_date(entry)
+
+
+def test_trade_calendar_requires_aware_received_timestamp(tmp_path: Path) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    result = trade_calendar_result(
+        ({"exchange": "SSE", "cal_date": "20260811", "is_open": 1, "pretrade_date": "20260810"},),
+        at=stamp(target, 15, 0),
+    )
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = replace(
+        result,
+        provenance=replace(
+            result.provenance,
+            received_ts=stamp(target, 15, 0).replace(tzinfo=None),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="received timestamp"):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / "naive-calendar.sqlite3"), provider
+        ).next_trading_date(entry)
+
+
+def test_tushare_15000_trade_cal_fields_integrate_with_outcome_tracker(tmp_path: Path) -> None:
+    requests: list[TransportRequest] = []
+    target = date(2026, 8, 11)
+
+    class RecordingPro:
+        profile_name = "tushare_15000"
+        version = "test"
+
+        def execute(self, request: TransportRequest) -> TransportResult:
+            requests.append(request)
+            return trade_calendar_result(
+                (
+                    {
+                        "exchange": "SSE",
+                        "cal_date": "20260811",
+                        "is_open": 1,
+                        "pretrade_date": "20260807",
+                    },
+                ),
+                at=stamp(target, 15, 0),
+            )
+
+    provider = Tushare15000Provider(cast(Any, RecordingPro()), cast(Any, object()))
+    tracker = CandidateOutcomeTracker(SQLiteStore(tmp_path / "provider-contract.sqlite3"), provider)
+
+    assert tracker.next_trading_date(date(2026, 8, 7)) == target
+    assert len(requests) == 1
+    assert requests[0].api_name == "trade_cal"
+    assert requests[0].endpoint == "/"
+    assert requests[0].fields == ("exchange", "cal_date", "is_open", "pretrade_date")
 
 
 def test_supplement_candidates_never_enter_live_or_historical_outcomes(
@@ -397,6 +647,8 @@ def test_realtime_fallback_is_one_batch_and_minute_backfill_is_serial(tmp_path: 
     )
     historical = tracker.backfill_due(
         now=stamp(target_date, 14, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.AFTERNOON,
         limit=3,
     )
 
@@ -457,16 +709,19 @@ def test_invalid_realtime_and_missing_minutes_never_count_as_losses(tmp_path: Pa
         scan_quotes=(),
         now=now,
     )
-    missing = tracker.backfill_due(now=stamp(target_date, 9, 46), limit=3)
+    missing = tracker.backfill_due(
+        now=stamp(target_date, 9, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.MORNING,
+        limit=3,
+    )
     rows = store.list_candidate_outcomes(trading_days=None)
 
     assert report.settled == 0
-    assert missing.unavailable == 3
-    assert {row["status"] for row in rows} == {"unavailable"}
+    assert missing.pending == 3
+    assert {row["status"] for row in rows} == {"pending"}
     assert {row["outcome"] for row in rows} == {None}
-    review = build_outcome_review(
-        tuple(CandidateOutcome.from_mapping(row) for row in rows)
-    )
+    review = build_outcome_review(tuple(CandidateOutcome.from_mapping(row) for row in rows))
     assert review.overall.win_rate is None
 
 
@@ -486,17 +741,380 @@ def test_historical_empty_data_marks_outcomes_unavailable(tmp_path: Path) -> Non
         recorded_at=stamp(entry_date, 14, 45),
     )
 
-    report = tracker.backfill_due(now=stamp(target_date, 14, 46), limit=3)
+    first = tracker.backfill_due(
+        now=stamp(target_date, 14, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.AFTERNOON,
+        limit=3,
+    )
+    report = tracker.backfill_due(
+        now=stamp(target_date, 15, 5),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.AFTERNOON,
+        limit=3,
+    )
     rows = store.list_candidate_outcomes(trading_days=None)
 
+    assert first.pending == 3
     assert report.unavailable == 3
     assert report.pending == 0
-    assert len(provider.historical_calls) == 3
+    assert len(provider.historical_calls) == 6
     assert {row["status"] for row in rows} == {"unavailable"}
     assert {row["outcome"] for row in rows} == {None}
-    assert {row["safe_reason"] for row in rows} == {
-        "historical_minute_missing_or_ambiguous"
+    assert {row["safe_reason"] for row in rows} == {"historical_minute_missing_or_ambiguous"}
+
+
+def test_empty_minute_retries_then_settles_when_data_is_published(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.EMPTY_DATA)
+    store = SQLiteStore(tmp_path / "minute-publish-delay.sqlite3")
+    tracker = CandidateOutcomeTracker(store, provider)
+    batch = candidate_batch(stamp(entry_date, 9, 45))
+    tracker.record_scheduled_batch(
+        batch,
+        snapshot_id=51,
+        alert_id=51,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(entry_date, 9, 45),
+    )
+
+    first = tracker.backfill_due(
+        now=stamp(target_date, 9, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.MORNING,
+        limit=3,
+    )
+    after_first = store.list_candidate_outcomes(trading_days=None)
+    assert first.pending == 3
+    assert {row["settlement_attempts"] for row in after_first} == {1}
+    assert {row["next_retry_at"] for row in after_first} == {stamp(target_date, 9, 48).isoformat()}
+
+    provider.historical_error = None
+    for candidate in batch.candidates:
+        target = f"{target_date.isoformat()} 09:45:00"
+        provider.historical_records[(candidate.code, target)] = (
+            {
+                "ts_code": candidate.code,
+                "trade_time": target,
+                "close": candidate.price + 0.2,
+                "vol": 100,
+                "amount": 1000,
+            },
+        )
+    second = tracker.backfill_due(
+        now=stamp(target_date, 9, 48),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.MORNING,
+        limit=3,
+    )
+    rows = store.list_candidate_outcomes(trading_days=None)
+
+    assert second.settled == 3
+    assert {row["status"] for row in rows} == {"settled"}
+    assert {row["settlement_attempts"] for row in rows} == {2}
+    assert {row["next_retry_at"] for row in rows} == {None}
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        ProviderFailureReason.NETWORK,
+        ProviderFailureReason.RATE_LIMITED,
+        ProviderFailureReason.SERVER_ERROR,
+    ],
+)
+def test_transient_minute_failures_persist_bounded_retry(
+    tmp_path: Path,
+    reason: ProviderFailureReason,
+) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(reason)
+    store = SQLiteStore(tmp_path / f"retry-{reason}.sqlite3")
+    tracker = CandidateOutcomeTracker(store, provider)
+    tracker.record_scheduled_batch(
+        candidate_batch(stamp(entry_date, 9, 45)),
+        snapshot_id=52,
+        alert_id=52,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(entry_date, 9, 45),
+    )
+
+    report = tracker.backfill_due(
+        now=stamp(target_date, 9, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.MORNING,
+        limit=3,
+    )
+
+    assert report.pending == 3
+    assert tracker.due_backfill_groups(now=stamp(target_date, 9, 47)) == ()
+    assert tracker.due_backfill_groups(now=stamp(target_date, 9, 48))[0] == (
+        target_date,
+        OutcomeSlot.MORNING,
+    )
+
+
+def test_minute_retry_schedule_stops_after_final_bounded_attempt(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.NETWORK)
+    store = SQLiteStore(tmp_path / "bounded-retry.sqlite3")
+    tracker = CandidateOutcomeTracker(store, provider)
+    tracker.record_scheduled_batch(
+        candidate_batch(stamp(entry_date, 9, 45)),
+        snapshot_id=56,
+        alert_id=56,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(entry_date, 9, 45),
+    )
+
+    for attempt_at in (
+        stamp(target_date, 9, 46),
+        stamp(target_date, 9, 48),
+        stamp(target_date, 9, 53),
+        stamp(target_date, 10, 5),
+        stamp(target_date, 15, 5),
+    ):
+        report = tracker.backfill_due(
+            now=attempt_at,
+            target_trade_date=target_date,
+            target_slot=OutcomeSlot.MORNING,
+            limit=3,
+        )
+        assert report.pending == 3
+
+    rows = store.list_candidate_outcomes(trading_days=None)
+    assert {row["settlement_attempts"] for row in rows} == {5}
+    assert {row["next_retry_at"] for row in rows} == {None}
+    assert tracker.due_backfill_groups(now=stamp(target_date, 15, 6)) == ()
+
+
+def test_restart_recovers_persisted_due_pending_rows(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.EMPTY_DATA)
+    path = tmp_path / "restart-retry.sqlite3"
+    first_tracker = CandidateOutcomeTracker(SQLiteStore(path), provider)
+    batch = candidate_batch(stamp(entry_date, 14, 45))
+    first_tracker.record_scheduled_batch(
+        batch,
+        snapshot_id=53,
+        alert_id=53,
+        trigger_type="scheduled-14:45",
+        recorded_at=stamp(entry_date, 14, 45),
+    )
+    first_tracker.backfill_due(
+        now=stamp(target_date, 14, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.AFTERNOON,
+        limit=3,
+    )
+
+    provider.historical_error = None
+    for candidate in batch.candidates:
+        target = f"{target_date.isoformat()} 14:45:00"
+        provider.historical_records[(candidate.code, target)] = (
+            {
+                "ts_code": candidate.code,
+                "trade_time": target,
+                "close": candidate.price + 0.1,
+                "vol": 100,
+                "amount": 1000,
+            },
+        )
+    restarted_session = TushareV1Session(path, clock=lambda: stamp(target_date, 14, 48))
+    restarted = CandidateOutcomeTracker(restarted_session.store, provider)
+    restarted_session._outcome_tracker = restarted
+    assert restarted.due_backfill_groups(now=stamp(target_date, 14, 48))[0] == (
+        target_date,
+        OutcomeSlot.AFTERNOON,
+    )
+    restarted_session._submit_due_outcome_fallbacks(stamp(target_date, 14, 48))
+    with restarted_session._outcome_future_lock:
+        futures = tuple(restarted_session._outcome_futures)
+    reports = [future.result(timeout=2) for future in futures]
+
+    assert sum(report.settled for report in reports) == 3
+    assert {
+        row["status"] for row in restarted_session.store.list_candidate_outcomes(trading_days=None)
+    } == {"settled"}
+    restarted_session.shutdown(exit_reason="test")
+
+
+def test_current_slot_backfill_is_not_stolen_by_old_backlog(tmp_path: Path) -> None:
+    old_entry = date(2026, 8, 7)
+    old_target = date(2026, 8, 10)
+    current_entry = old_target
+    current_target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((old_target, current_target))
+    store = SQLiteStore(tmp_path / "slot-isolation.sqlite3")
+    tracker = CandidateOutcomeTracker(store, provider)
+    tracker.record_scheduled_batch(
+        candidate_batch(stamp(old_entry, 9, 45), codes=("000101.SZ", "000102.SZ", "000103.SZ")),
+        snapshot_id=54,
+        alert_id=54,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(old_entry, 9, 45),
+    )
+    current_batch = candidate_batch(
+        stamp(current_entry, 9, 45),
+        codes=("000201.SZ", "000202.SZ", "000203.SZ"),
+    )
+    tracker.record_scheduled_batch(
+        current_batch,
+        snapshot_id=55,
+        alert_id=55,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(current_entry, 9, 45),
+    )
+    for candidate in current_batch.candidates:
+        target = f"{current_target.isoformat()} 09:45:00"
+        provider.historical_records[(candidate.code, target)] = (
+            {
+                "ts_code": candidate.code,
+                "trade_time": target,
+                "close": candidate.price + 0.1,
+                "vol": 100,
+                "amount": 1000,
+            },
+        )
+
+    assert tracker.due_backfill_groups(now=stamp(current_target, 9, 46))[0] == (
+        current_target,
+        OutcomeSlot.MORNING,
+    )
+    report = tracker.backfill_due(
+        now=stamp(current_target, 9, 46),
+        target_trade_date=current_target,
+        target_slot=OutcomeSlot.MORNING,
+        limit=3,
+    )
+    rows = store.list_candidate_outcomes(trading_days=None)
+
+    assert report.settled == 3
+    assert {code for code, _target in provider.historical_calls} == {
+        candidate.code for candidate in current_batch.candidates
     }
+    assert {row["status"] for row in rows if row["entry_snapshot_id"] == 54} == {"pending"}
+
+
+def test_restart_discovery_prefers_current_slot_beyond_five_hundred_pending(
+    tmp_path: Path,
+) -> None:
+    old_target = date(2026, 8, 10)
+    current_target = date(2026, 8, 11)
+    store = SQLiteStore(tmp_path / "large-restart-backlog.sqlite3")
+    created_at = stamp(date(2026, 8, 7), 9, 45).isoformat()
+    entries = [
+        {
+            "entry_snapshot_id": index,
+            "entry_alert_id": index,
+            "entry_trade_date": "2026-08-07",
+            "slot": "09:45",
+            "rank": index % 3 + 1,
+            "code": f"{index:06d}.SZ",
+            "name": f"旧积压{index}",
+            "entry_price": 10.0,
+            "entry_source_ts": created_at,
+            "target_trade_date": old_target.isoformat(),
+            "target_slot": "09:45",
+            "quality": "GOOD",
+            "provider_version": "tushare-test-v1",
+            "config_version": "candidate-outcome-test-v1",
+            "app_version": "0.6.0a2",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "safe_reason": None,
+            "next_retry_at": stamp(old_target, 9, 46).isoformat(),
+        }
+        for index in range(1, 502)
+    ]
+    current_created_at = stamp(date(2026, 8, 10), 9, 45).isoformat()
+    entries.extend(
+        {
+            "entry_snapshot_id": 600 + rank,
+            "entry_alert_id": 600 + rank,
+            "entry_trade_date": "2026-08-10",
+            "slot": "09:45",
+            "rank": rank,
+            "code": f"00020{rank}.SZ",
+            "name": f"当前候选{rank}",
+            "entry_price": 10.0,
+            "entry_source_ts": current_created_at,
+            "target_trade_date": current_target.isoformat(),
+            "target_slot": "09:45",
+            "quality": "GOOD",
+            "provider_version": "tushare-test-v1",
+            "config_version": "candidate-outcome-test-v1",
+            "app_version": "0.6.0a2",
+            "created_at": current_created_at,
+            "updated_at": current_created_at,
+            "safe_reason": None,
+            "next_retry_at": stamp(current_target, 9, 46).isoformat(),
+        }
+        for rank in (1, 2, 3)
+    )
+    assert store.create_candidate_outcomes(entries) == 504
+    tracker = CandidateOutcomeTracker(store, FakeOutcomeProvider((current_target,)))
+
+    assert tracker.due_backfill_groups(now=stamp(current_target, 9, 46), limit=1) == (
+        (current_target, OutcomeSlot.MORNING),
+    )
+
+
+def test_afternoon_backfill_does_not_consume_morning_pending_rows(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    store = SQLiteStore(tmp_path / "slot-boundary.sqlite3")
+    tracker = CandidateOutcomeTracker(store, provider)
+    tracker.record_scheduled_batch(
+        candidate_batch(stamp(entry_date, 9, 45)),
+        snapshot_id=57,
+        alert_id=57,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(entry_date, 9, 45),
+    )
+    afternoon = candidate_batch(
+        stamp(entry_date, 14, 45),
+        codes=("600101.SH", "600102.SH", "600103.SH"),
+    )
+    tracker.record_scheduled_batch(
+        afternoon,
+        snapshot_id=58,
+        alert_id=58,
+        trigger_type="scheduled-14:45",
+        recorded_at=stamp(entry_date, 14, 45),
+    )
+    for candidate in afternoon.candidates:
+        target = f"{target_date.isoformat()} 14:45:00"
+        provider.historical_records[(candidate.code, target)] = (
+            {
+                "ts_code": candidate.code,
+                "trade_time": target,
+                "close": candidate.price + 0.1,
+                "vol": 100,
+                "amount": 1000,
+            },
+        )
+
+    report = tracker.backfill_due(
+        now=stamp(target_date, 14, 46),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.AFTERNOON,
+        limit=3,
+    )
+    rows = store.list_candidate_outcomes(trading_days=None)
+
+    assert report.settled == 3
+    assert {row["status"] for row in rows if row["target_slot"] == "09:45"} == {"pending"}
+    assert {row["status"] for row in rows if row["target_slot"] == "14:45"} == {"settled"}
 
 
 def test_statistics_exclude_pending_and_require_all_six_for_portfolio() -> None:
@@ -611,6 +1229,66 @@ def test_historical_backfill_accepts_only_real_scheduled_three(tmp_path: Path) -
     assert {row["provider_version"] for row in rows} == {"tushare-test-v1"}
 
 
+def test_historical_backfill_uses_final_confirmation_for_past_dates(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 7)
+    target_date = date(2026, 8, 10)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.EMPTY_DATA)
+    store = SQLiteStore(tmp_path / "history-final-confirmation.sqlite3")
+    batch = candidate_batch(stamp(entry_date, 9, 45))
+    snapshot_id = store.record_batch(batch)
+    store.record_alert_event(
+        snapshot_id,
+        stamp(entry_date, 9, 45).isoformat(),
+        "scheduled-09:45",
+        "macos-desktop",
+        "scheduled-09:45",
+    )
+
+    report = CandidateOutcomeTracker(store, provider).backfill_recent_scheduled(
+        now=stamp(date(2026, 8, 11), 9, 30),
+        days=30,
+    )
+    rows = store.list_candidate_outcomes(trading_days=None)
+    status = store.get_app_setting("candidate_outcome_backfill_status")
+
+    assert report.unavailable == 3
+    assert {row["status"] for row in rows} == {"unavailable"}
+    assert isinstance(status, dict)
+    assert status["status"] == "partial"
+    assert status["pending"] == 0
+    assert "3笔" in str(status["message"])
+
+
+def test_historical_backfill_persists_pending_retry_count(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.EMPTY_DATA)
+    store = SQLiteStore(tmp_path / "history-pending-status.sqlite3")
+    batch = candidate_batch(stamp(entry_date, 9, 45))
+    snapshot_id = store.record_batch(batch)
+    store.record_alert_event(
+        snapshot_id,
+        stamp(entry_date, 9, 45).isoformat(),
+        "scheduled-09:45",
+        "macos-desktop",
+        "scheduled-09:45",
+    )
+
+    report = CandidateOutcomeTracker(store, provider).backfill_recent_scheduled(
+        now=stamp(target_date, 9, 46),
+        days=30,
+    )
+    status = store.get_app_setting("candidate_outcome_backfill_status")
+
+    assert report.pending == 3
+    assert isinstance(status, dict)
+    assert status["status"] == "partial"
+    assert status["pending"] == 3
+    assert _backfill_status_text(status).endswith("另有3笔等待重试。")
+
+
 def test_alert_retention_does_not_delete_candidate_outcomes(tmp_path: Path) -> None:
     entry_date = date(2026, 6, 1)
     target_date = date(2026, 6, 2)
@@ -668,10 +1346,78 @@ def test_v7_migration_failure_rolls_back_and_degrades_read_only(
     assert store.read_only
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
-        assert connection.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'partial_outcome_table'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'partial_outcome_table'"
+            ).fetchone()
+            is None
+        )
     assert path.with_suffix(".sqlite3.pre-v7.bak").exists()
+
+
+def test_v7_to_v8_migration_persists_retry_state_and_backup(tmp_path: Path) -> None:
+    path = tmp_path / "v7-to-v8.sqlite3"
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_version VALUES (7, '2026-08-11T09:00:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
+        SQLiteStore._apply_v6_migration(connection)
+        SQLiteStore._apply_v7_migration(connection)
+
+    migrated = SQLiteStore(path)
+    migrated.initialize()
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (8,)
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
+        }
+        assert {"settlement_attempts", "last_attempt_at", "next_retry_at"} <= columns
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert path.with_suffix(".sqlite3.pre-v8.bak").exists()
+
+
+def test_v8_migration_failure_rolls_back_and_releases_handles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "v8-failure.sqlite3"
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_version VALUES (7, '2026-08-11T09:00:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
+        SQLiteStore._apply_v6_migration(connection)
+        SQLiteStore._apply_v7_migration(connection)
+
+    def fail_v8(connection: sqlite3.Connection) -> None:
+        connection.execute("ALTER TABLE candidate_outcomes ADD COLUMN partial_retry_state TEXT")
+        raise RuntimeError("injected v8 failure")
+
+    monkeypatch.setattr(SQLiteStore, "_apply_v8_migration", staticmethod(fail_v8))
+    store = SQLiteStore(path)
+    with pytest.raises(RuntimeError, match="injected v8 failure"):
+        store.initialize()
+    assert store.read_only
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
+        }
+        assert "partial_retry_state" not in columns
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert path.with_suffix(".sqlite3.pre-v8.bak").exists()
+    path.replace(tmp_path / "v8-failure-renamed.sqlite3")
 
 
 def test_outcome_failure_cannot_undo_durable_fixed_alert(tmp_path: Path) -> None:
@@ -740,7 +1486,11 @@ def test_pending_realtime_settlement_waits_for_closed_minute_before_backfill(
 ) -> None:
     trade_date = date(2026, 8, 11)
     at = stamp(trade_date, 9, 45) + timedelta(seconds=20)
-    session = TushareV1Session(tmp_path / "delayed-backfill.sqlite3", clock=lambda: at)
+    clock_now = {"value": at}
+    session = TushareV1Session(
+        tmp_path / "delayed-backfill.sqlite3",
+        clock=lambda: clock_now["value"],
+    )
     submitted: list[Any] = []
     backfill_attempts: list[datetime] = []
 
@@ -754,12 +1504,32 @@ def test_pending_realtime_settlement_waits_for_closed_minute_before_backfill(
             self.settle_attempts += 1
             return OutcomeActionReport(pending=3)
 
-        def backfill_due(self, *, now: datetime, limit: int) -> OutcomeActionReport:
+        def due_backfill_groups(
+            self,
+            *,
+            now: datetime,
+            limit: int,
+        ) -> tuple[tuple[date, OutcomeSlot], ...]:
+            assert limit == 4
+            if now >= stamp(trade_date, 9, 46):
+                return ((trade_date, OutcomeSlot.MORNING),)
+            return ()
+
+        def backfill_due(
+            self,
+            *,
+            now: datetime,
+            target_trade_date: date,
+            target_slot: OutcomeSlot,
+            limit: int,
+        ) -> OutcomeActionReport:
             backfill_attempts.append(now)
             assert limit == 3
+            assert target_trade_date == trade_date
+            assert target_slot is OutcomeSlot.MORNING
             return OutcomeActionReport(settled=3)
 
-    def capture(task: Any) -> bool:
+    def capture(task: Any, **_kwargs: Any) -> bool:
         submitted.append(task)
         return True
 
@@ -785,14 +1555,22 @@ def test_pending_realtime_settlement_waits_for_closed_minute_before_backfill(
     assert len(submitted) == 1
     submitted[0]()
     assert tracker.settle_attempts == 1
-    session._submit_due_outcome_fallbacks(stamp(trade_date, 9, 45,))
+    session._submit_due_outcome_fallbacks(
+        stamp(
+            trade_date,
+            9,
+            45,
+        )
+    )
     assert len(submitted) == 1
 
     due = stamp(trade_date, 9, 45) + timedelta(minutes=1)
     session._submit_due_outcome_fallbacks(due)
     assert len(submitted) == 2
+    executed_at = stamp(trade_date, 15, 5)
+    clock_now["value"] = executed_at
     submitted[1]()
-    assert backfill_attempts == [due]
+    assert backfill_attempts == [executed_at]
     session.shutdown(exit_reason="test")
 
 
@@ -852,7 +1630,35 @@ def test_review_copy_covers_pending_unavailable_and_settled_states() -> None:
     assert _result(unavailable) == "不计入胜率"
     assert _result(settled) == "+5.00% · 赢"
     assert _method(settled) == "同次全市场扫描结算"
+    assert _method(unavailable) == "目标分钟暂无可验证行情"
+    assert _safe_reason_text("calendar:ValueError") == "交易日历暂不可用"
     assert issubclass(OutcomeReviewWorker, QThread)
+
+
+def test_review_backfill_copy_requires_explicit_persisted_status() -> None:
+    assert _backfill_status_text(None) == "历史回补状态待确认；从新固定提醒开始记录不受影响。"
+    assert _backfill_status_text({"message": "可验证历史已回补；无法验证的数据不计入统计。"}) == (
+        "历史回补状态待确认；从新固定提醒开始记录不受影响。"
+    )
+    assert _backfill_status_text({"status": "running"}) == "正在检查可验证的固定提醒历史……"
+    assert _backfill_status_text({"status": "completed"}) == (
+        "可验证历史已回补；无法验证的数据不计入统计。"
+    )
+    assert (
+        _backfill_status_text(
+            {
+                "status": "partial",
+                "settled": 18,
+                "unavailable": 4,
+                "skipped": 2,
+                "pending": 3,
+            }
+        )
+        == "已回补18笔，6笔因缺少可验证行情未纳入统计。另有3笔等待重试。"
+    )
+    assert _backfill_status_text({"status": "failed"}) == (
+        "历史回补检查失败；从新固定提醒开始记录不受影响。"
+    )
 
 
 def outcome_record(
@@ -904,7 +1710,7 @@ def outcome_record(
         quality="GOOD" if status is OutcomeStatus.SETTLED else "UNVERIFIED",
         provider_version="tushare-test-v1",
         config_version="test-v1",
-        app_version="0.6.0a1",
+        app_version="0.6.0a2",
         created_at=entry_ts,
         updated_at=entry_ts,
     )

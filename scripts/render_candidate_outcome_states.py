@@ -72,7 +72,7 @@ def _seed(store: SQLiteStore, *, settled: bool) -> None:
                 "quality": "GOOD",
                 "provider_version": "deterministic-screenshot-v1",
                 "config_version": "candidate-outcomes-v1",
-                "app_version": "0.6.0a1",
+                "app_version": "0.6.0a2",
                 "created_at": created_at.isoformat(),
                 "updated_at": created_at.isoformat(),
                 "safe_reason": None,

@@ -20,6 +20,7 @@ from stock_watcher.domain import (
 from stock_watcher.engine import CandidateBatch
 from stock_watcher.providers.tushare.errors import ProviderError, ProviderFailureReason
 from stock_watcher.providers.tushare.models import DataQuality as TransportQuality
+from stock_watcher.providers.tushare.models import SourceTimestampKind as TransportTimestampKind
 from stock_watcher.providers.tushare.models import TransportResult
 from stock_watcher.storage import SQLiteStore
 
@@ -61,6 +62,10 @@ class CandidateOutcomeTracker:
         "scheduled-09:45": OutcomeSlot.MORNING,
         "scheduled-14:45": OutcomeSlot.AFTERNOON,
     }
+    calendar_profile = "tushare_15000"
+    calendar_endpoint = "/"
+    calendar_fields = ("exchange", "cal_date", "is_open", "pretrade_date")
+    max_historical_attempts = 5
 
     def __init__(
         self,
@@ -127,6 +132,9 @@ class CandidateOutcomeTracker:
                 "created_at": now.isoformat(),
                 "updated_at": now.isoformat(),
                 "safe_reason": calendar_reason,
+                "next_retry_at": (
+                    _initial_retry_at(target_date, slot).isoformat() if target_date else None
+                ),
             }
             for rank, candidate in enumerate(batch.candidates, start=1)
         ]
@@ -147,17 +155,15 @@ class CandidateOutcomeTracker:
             end_date=end.strftime("%Y%m%d"),
             is_open="1",
         )
-        if result.provenance.quality is not TransportQuality.HEALTHY:
-            raise ValueError("trade calendar quality is not healthy")
-        open_dates = sorted(
-            parsed
-            for record in result.records
-            if _is_open(record.get("is_open"))
-            and (parsed := _parse_date(record.get("cal_date"))) is not None
-            and parsed > entry_date
+        open_dates = _validated_trade_calendar_open_dates(
+            result,
+            entry_date=entry_date,
+            start_date=start,
+            end_date=end,
+            provider_profile=self.calendar_profile,
+            endpoint=self.calendar_endpoint,
+            fields=self.calendar_fields,
         )
-        if not open_dates:
-            raise ValueError("trade calendar has no next open date")
         return open_dates[0]
 
     def resolve_pending_targets(
@@ -189,9 +195,17 @@ class CandidateOutcomeTracker:
                 except Exception as error:  # noqa: BLE001 - remains pending
                     reasons.append(_safe_failure("calendar", error))
                     continue
+            target_slot = _parse_slot(row.get("target_slot"))
+            if target_slot is None:
+                reasons.append("invalid_target_slot")
+                continue
             if self.store.assign_candidate_outcome_target(
                 int(row["id"]),
                 target_trade_date=targets[entry_date].isoformat(),
+                next_retry_at=_initial_retry_at(
+                    targets[entry_date],
+                    target_slot,
+                ).isoformat(),
                 updated_at=current.isoformat(),
             ):
                 resolved += 1
@@ -238,9 +252,7 @@ class CandidateOutcomeTracker:
                 reasons.append(f"realtime_scan:{reason}")
                 continue
             assert point is not None
-            settled += int(
-                self._settle(row, point, SettlementMethod.REALTIME_SCAN, now=current)
-            )
+            settled += int(self._settle(row, point, SettlementMethod.REALTIME_SCAN, now=current))
         if unresolved:
             codes = tuple(str(row["code"]) for row in unresolved)
             try:
@@ -281,6 +293,39 @@ class CandidateOutcomeTracker:
         days: int = 30,
         settlement_limit: int = 180,
     ) -> OutcomeActionReport:
+        """Run the initial history lane with a truthful persisted lifecycle."""
+        current = _shanghai(now)
+        self._set_backfill_status(
+            {
+                "status": "running",
+                "attempted_at": current.isoformat(),
+                "message": "正在检查可验证的固定提醒历史……",
+            }
+        )
+        try:
+            return self._backfill_recent_scheduled(
+                now=current,
+                days=days,
+                settlement_limit=settlement_limit,
+            )
+        except Exception as error:
+            self._set_backfill_status(
+                {
+                    "status": "failed",
+                    "attempted_at": current.isoformat(),
+                    "safe_reason": _safe_failure("historical_backfill", error),
+                    "message": "历史回补检查失败；从新固定提醒开始记录不受影响。",
+                }
+            )
+            raise
+
+    def _backfill_recent_scheduled(
+        self,
+        *,
+        now: datetime,
+        days: int = 30,
+        settlement_limit: int = 180,
+    ) -> OutcomeActionReport:
         """Create verifiable historical entries and serially settle exact minutes."""
         current = _shanghai(now)
         entries = self.store.list_scheduled_candidate_entries(now=current, days=days)
@@ -303,63 +348,101 @@ class CandidateOutcomeTracker:
                 continue
             created += self.store.create_candidate_outcomes(prepared)
         self.resolve_pending_targets(now=current, limit=settlement_limit)
-        due = self.store.list_pending_candidate_outcomes(limit=settlement_limit)
+        pending_rows = self.store.list_pending_candidate_outcomes(
+            newest_first=True,
+            limit=None,
+        )
+        due = [
+            row
+            for row in pending_rows
+            if _historical_settlement_is_due(
+                row,
+                current,
+                ignore_attempt_limit=True,
+            )
+        ][:settlement_limit]
         settled = 0
         unavailable = 0
         for row in due:
-            if not _historical_settlement_is_due(row, current):
+            if not _historical_settlement_is_due(
+                row,
+                current,
+                ignore_attempt_limit=True,
+            ):
                 continue
-            result = self._settle_historical(row, now=current)
+            result = self._settle_historical(
+                row,
+                now=current,
+                final_confirmation=_historical_final_confirmation(row, current),
+            )
             settled += result.settled
             unavailable += result.unavailable
             reasons.extend(result.safe_reasons)
+        pending = len(self.store.list_pending_candidate_outcomes(limit=None))
+        unverified = unavailable + skipped
+        status = "completed" if unverified == 0 and pending == 0 else "partial"
+        message = "可验证历史已回补；无法验证的数据不计入统计。"
+        if status == "partial":
+            message = f"已回补{settled}笔，{unverified}笔因缺少可验证行情未纳入统计。"
+            if pending:
+                message += f"另有{pending}笔等待重试。"
         summary = {
+            "status": status,
             "attempted_at": current.isoformat(),
             "window_days": days,
             "created": created,
             "settled": settled,
             "unavailable": unavailable,
             "skipped": skipped,
+            "pending": pending,
             "safe_reasons": dict(Counter(reasons)),
-            "message": "可验证历史已回补；无法验证的数据不计入统计。",
+            "message": message,
         }
-        try:
-            self.store.set_app_setting("candidate_outcome_backfill_status", summary)
-        except Exception:
-            pass
+        self._set_backfill_status(summary)
         return OutcomeActionReport(
             created=created,
             settled=settled,
-            pending=max(0, len(due) - settled - unavailable),
+            pending=pending,
             unavailable=unavailable,
             skipped=skipped,
             safe_reasons=tuple(sorted(set(reasons))),
         )
 
+    def _set_backfill_status(self, value: dict[str, object]) -> None:
+        try:
+            self.store.set_app_setting("candidate_outcome_backfill_status", value)
+        except Exception:
+            pass
+
     def backfill_due(
         self,
         *,
         now: datetime,
+        target_trade_date: date,
+        target_slot: OutcomeSlot,
         limit: int = 3,
     ) -> OutcomeActionReport:
-        """Low-priority serial fallback for a bounded number of due rows."""
+        """Retry one exact target date/slot without allowing old backlog to steal its limit."""
         if limit < 1:
             raise ValueError("candidate outcome backfill limit must be positive")
         current = _shanghai(now)
-        self.resolve_pending_targets(now=current, limit=max(limit, 3))
-        rows = self.store.list_pending_candidate_outcomes(limit=100)
+        rows = self.store.list_pending_candidate_outcomes(
+            target_trade_date=target_trade_date.isoformat(),
+            target_slot=target_slot.value,
+            limit=limit,
+        )
         settled = 0
         unavailable = 0
         pending = 0
         reasons: list[str] = []
-        processed = 0
         for row in rows:
-            if processed >= limit:
-                break
             if not _historical_settlement_is_due(row, current):
                 continue
-            processed += 1
-            result = self._settle_historical(row, now=current)
+            result = self._settle_historical(
+                row,
+                now=current,
+                final_confirmation=_historical_final_confirmation(row, current),
+            )
             settled += result.settled
             unavailable += result.unavailable
             pending += result.pending
@@ -369,6 +452,28 @@ class CandidateOutcomeTracker:
             pending=pending,
             unavailable=unavailable,
             safe_reasons=tuple(sorted(set(reasons))),
+        )
+
+    def due_backfill_groups(
+        self,
+        *,
+        now: datetime,
+        limit: int = 4,
+    ) -> tuple[tuple[date, OutcomeSlot], ...]:
+        """Discover persisted due groups, newest first, so restarts resume safely."""
+        if limit < 1:
+            raise ValueError("candidate outcome due group limit must be positive")
+        current = _shanghai(now)
+        groups: set[tuple[date, OutcomeSlot]] = set()
+        for row in self.store.list_pending_candidate_outcomes(newest_first=True, limit=None):
+            if not _historical_settlement_is_due(row, current):
+                continue
+            target_date = _parse_date(row.get("target_trade_date"))
+            target_slot = _parse_slot(row.get("target_slot"))
+            if target_date is not None and target_slot is not None:
+                groups.add((target_date, target_slot))
+        return tuple(
+            sorted(groups, key=lambda item: (item[0], item[1].value), reverse=True)[:limit]
         )
 
     def _prepare_historical_entries(
@@ -409,10 +514,7 @@ class CandidateOutcomeTracker:
         prepared: list[dict[str, Any]] = []
         for row in rows:
             payload = _json_dict(row.get("candidate_payload_json"))
-            if (
-                payload.get("is_formal") is not True
-                or payload.get("is_supplement") is not False
-            ):
+            if payload.get("is_formal") is not True or payload.get("is_supplement") is not False:
                 return [], "scheduled_candidate_not_formal"
             source_ts = _parse_datetime(payload.get("source_ts"))
             entry_price = _positive_float(row.get("entry_price"))
@@ -443,6 +545,7 @@ class CandidateOutcomeTracker:
                     "created_at": current.isoformat(),
                     "updated_at": current.isoformat(),
                     "safe_reason": None,
+                    "next_retry_at": _initial_retry_at(target, slot).isoformat(),
                 }
             )
         return prepared, None
@@ -452,6 +555,7 @@ class CandidateOutcomeTracker:
         row: dict[str, Any],
         *,
         now: datetime,
+        final_confirmation: bool = False,
     ) -> OutcomeActionReport:
         target_date = _parse_date(row.get("target_trade_date"))
         slot = _parse_slot(row.get("target_slot"))
@@ -462,6 +566,23 @@ class CandidateOutcomeTracker:
             time.fromisoformat(slot.value),
             tzinfo=SHANGHAI,
         )
+        final = final_confirmation or _historical_final_confirmation(row, now)
+        attempt_number = int(row.get("settlement_attempts") or 0) + 1
+        next_retry = (
+            None
+            if final
+            else _next_historical_retry_at(
+                target_ts,
+                now=now,
+                attempt_number=attempt_number,
+            )
+        )
+        if not self.store.record_candidate_outcome_attempt(
+            int(row["id"]),
+            attempted_at=now.isoformat(),
+            next_retry_at=(next_retry.isoformat() if next_retry else None),
+        ):
+            return OutcomeActionReport(skipped=1)
         try:
             result = self.provider.historical_minutes(
                 ts_code=str(row["code"]),
@@ -471,40 +592,64 @@ class CandidateOutcomeTracker:
             )
         except ProviderError as error:
             if error.reason is ProviderFailureReason.EMPTY_DATA:
-                changed = self.store.mark_candidate_outcome_unavailable(
-                    int(row["id"]),
-                    quality="UNAVAILABLE",
-                    safe_reason="historical_minute_missing_or_ambiguous",
-                    updated_at=now.isoformat(),
+                reason = "historical_minute_missing_or_ambiguous"
+                if final:
+                    changed = self.store.mark_candidate_outcome_unavailable(
+                        int(row["id"]),
+                        quality="UNAVAILABLE",
+                        safe_reason=reason,
+                        updated_at=now.isoformat(),
+                    )
+                    return OutcomeActionReport(
+                        unavailable=int(changed),
+                        safe_reasons=(reason,),
+                    )
+                return self._defer_historical(
+                    row,
+                    reason=reason,
+                    next_retry=next_retry,
+                    now=now,
                 )
-                return OutcomeActionReport(
-                    unavailable=int(changed),
-                    safe_reasons=("historical_minute_missing_or_ambiguous",),
-                )
-            return OutcomeActionReport(
-                pending=1,
-                safe_reasons=(_safe_failure("historical_minute", error),),
+            return self._defer_historical(
+                row,
+                reason=_safe_failure("historical_minute", error),
+                next_retry=next_retry,
+                now=now,
             )
         except Exception as error:  # noqa: BLE001 - leave pending for retry
-            return OutcomeActionReport(
-                pending=1,
-                safe_reasons=(_safe_failure("historical_minute", error),),
+            return self._defer_historical(
+                row,
+                reason=_safe_failure("historical_minute", error),
+                next_retry=next_retry,
+                now=now,
             )
-        point, reason = _point_from_historical_result(
+        point, point_reason = _point_from_historical_result(
             result,
             code=str(row["code"]),
             target_ts=target_ts,
         )
         if point is None:
-            changed = self.store.mark_candidate_outcome_unavailable(
-                int(row["id"]),
-                quality="UNAVAILABLE",
-                safe_reason=reason or "historical_minute_unavailable",
-                updated_at=now.isoformat(),
-            )
-            return OutcomeActionReport(
-                unavailable=int(changed),
-                safe_reasons=((reason,) if reason else ()),
+            safe_reason = point_reason or "historical_minute_unavailable"
+            conclusive = safe_reason in {
+                "historical_minute_missing_or_ambiguous",
+                "historical_minute_suspended_or_no_trade",
+            }
+            if final and conclusive:
+                changed = self.store.mark_candidate_outcome_unavailable(
+                    int(row["id"]),
+                    quality="UNAVAILABLE",
+                    safe_reason=safe_reason,
+                    updated_at=now.isoformat(),
+                )
+                return OutcomeActionReport(
+                    unavailable=int(changed),
+                    safe_reasons=(safe_reason,),
+                )
+            return self._defer_historical(
+                row,
+                reason=safe_reason,
+                next_retry=next_retry,
+                now=now,
             )
         changed = self._settle(
             row,
@@ -513,6 +658,26 @@ class CandidateOutcomeTracker:
             now=now,
         )
         return OutcomeActionReport(settled=int(changed))
+
+    def _defer_historical(
+        self,
+        row: dict[str, Any],
+        *,
+        reason: str,
+        next_retry: datetime | None,
+        now: datetime,
+    ) -> OutcomeActionReport:
+        changed = self.store.defer_candidate_outcome(
+            int(row["id"]),
+            safe_reason=reason,
+            next_retry_at=(next_retry.isoformat() if next_retry else None),
+            updated_at=now.isoformat(),
+        )
+        return OutcomeActionReport(
+            pending=int(changed),
+            skipped=int(not changed),
+            safe_reasons=(reason,),
+        )
 
     def _settle(
         self,
@@ -586,10 +751,7 @@ def _scheduled_batch_rejection(
         batch.health.value != "HEALTHY"
         or len(batch.candidates) != 3
         or batch.formal_count != 3
-        or any(
-            not candidate.is_formal or candidate.is_supplement
-            for candidate in batch.candidates
-        )
+        or any(not candidate.is_formal or candidate.is_supplement for candidate in batch.candidates)
     ):
         return "scheduled_batch_not_healthy_three"
     if batch.source_ts.date() != recorded_at.date():
@@ -698,7 +860,12 @@ def _historical_timestamp(record: Mapping[str, object]) -> datetime | None:
     return None
 
 
-def _historical_settlement_is_due(row: dict[str, Any], now: datetime) -> bool:
+def _historical_settlement_is_due(
+    row: dict[str, Any],
+    now: datetime,
+    *,
+    ignore_attempt_limit: bool = False,
+) -> bool:
     target_date = _parse_date(row.get("target_trade_date"))
     slot = _parse_slot(row.get("target_slot"))
     if target_date is None or slot is None:
@@ -708,7 +875,165 @@ def _historical_settlement_is_due(row: dict[str, Any], now: datetime) -> bool:
         time.fromisoformat(slot.value),
         tzinfo=SHANGHAI,
     )
-    return now >= target_ts + timedelta(minutes=1)
+    if now < target_ts + timedelta(minutes=1):
+        return False
+    if (
+        not ignore_attempt_limit
+        and int(row.get("settlement_attempts") or 0)
+        >= CandidateOutcomeTracker.max_historical_attempts
+    ):
+        return False
+    next_retry = _parse_datetime(row.get("next_retry_at"))
+    if next_retry is None:
+        return ignore_attempt_limit or int(row.get("settlement_attempts") or 0) == 0
+    return now >= next_retry
+
+
+def _initial_retry_at(target_date: date, slot: OutcomeSlot) -> datetime:
+    return datetime.combine(
+        target_date,
+        time.fromisoformat(slot.value),
+        tzinfo=SHANGHAI,
+    ) + timedelta(minutes=1)
+
+
+def _next_historical_retry_at(
+    target_ts: datetime,
+    *,
+    now: datetime,
+    attempt_number: int,
+) -> datetime | None:
+    if attempt_number >= CandidateOutcomeTracker.max_historical_attempts:
+        return None
+    close_confirmation = datetime.combine(
+        target_ts.date(),
+        time(15, 5),
+        tzinfo=SHANGHAI,
+    )
+    schedule = sorted(
+        {
+            target_ts + timedelta(minutes=1),
+            target_ts + timedelta(minutes=3),
+            target_ts + timedelta(minutes=8),
+            target_ts + timedelta(minutes=20),
+            close_confirmation,
+        }
+    )
+    return next((candidate for candidate in schedule if candidate > now), None)
+
+
+def _historical_final_confirmation(row: Mapping[str, object], now: datetime) -> bool:
+    target_date = _parse_date(row.get("target_trade_date"))
+    slot = _parse_slot(row.get("target_slot"))
+    if target_date is None or slot is None:
+        return False
+    if target_date < now.date():
+        return True
+    if target_date > now.date():
+        return False
+    target_ts = datetime.combine(
+        target_date,
+        time.fromisoformat(slot.value),
+        tzinfo=SHANGHAI,
+    )
+    return now >= max(
+        target_ts + timedelta(minutes=20),
+        datetime.combine(target_date, time(15, 5), tzinfo=SHANGHAI),
+    )
+
+
+def _validated_trade_calendar_open_dates(
+    result: TransportResult,
+    *,
+    entry_date: date,
+    start_date: date,
+    end_date: date,
+    provider_profile: str,
+    endpoint: str,
+    fields: tuple[str, ...],
+) -> list[date]:
+    provenance = result.provenance
+    if provenance.provider_profile != provider_profile:
+        raise ValueError("trade calendar provider profile is not controlled")
+    if provenance.endpoint != endpoint or tuple(provenance.fields_used) != fields:
+        raise ValueError("trade calendar route contract changed")
+    if not _valid_received_timestamp(provenance.received_ts):
+        raise ValueError("trade calendar received timestamp is invalid")
+    if provenance.quality is TransportQuality.DEGRADED:
+        kind = getattr(
+            provenance.source_timestamp_kind,
+            "value",
+            str(provenance.source_timestamp_kind),
+        )
+        if provenance.source_ts is not None or kind not in {
+            TransportTimestampKind.MISSING.value,
+            "received_fallback",
+        }:
+            raise ValueError("trade calendar degraded provenance is not expected")
+    elif provenance.quality is TransportQuality.HEALTHY:
+        if not _valid_received_timestamp(provenance.source_ts):
+            raise ValueError("healthy trade calendar source timestamp is invalid")
+    else:
+        raise ValueError("trade calendar quality is not accepted")
+    if not result.records:
+        raise ValueError("trade calendar response is empty")
+
+    expected_fields = set(fields)
+    states: dict[date, bool] = {}
+    for record in result.records:
+        record_fields = set(record)
+        if not {"cal_date", "is_open"} <= record_fields or not record_fields <= expected_fields:
+            raise ValueError("trade calendar record schema changed")
+        exchange = record.get("exchange")
+        if exchange not in (None, "", "SSE"):
+            raise ValueError("trade calendar exchange is unexpected")
+        calendar_date = _parse_date(record.get("cal_date"))
+        if calendar_date is None:
+            raise ValueError("trade calendar date is invalid")
+        if not start_date <= calendar_date <= end_date:
+            raise ValueError("trade calendar date is outside request range")
+        pretrade = record.get("pretrade_date")
+        if pretrade not in (None, "") and _parse_date(pretrade) is None:
+            raise ValueError("trade calendar pretrade date is invalid")
+        is_open = _parse_open_flag(record.get("is_open"))
+        if is_open is None:
+            raise ValueError("trade calendar open flag is invalid")
+        previous = states.get(calendar_date)
+        if previous is not None and previous is not is_open:
+            raise ValueError("trade calendar has contradictory duplicate dates")
+        states[calendar_date] = is_open
+
+    open_dates = sorted(
+        calendar_date
+        for calendar_date, is_open in states.items()
+        if is_open and calendar_date > entry_date
+    )
+    if not open_dates:
+        raise ValueError("trade calendar has no next open date")
+    return open_dates
+
+
+def _valid_received_timestamp(value: object) -> bool:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return False
+    try:
+        if value.utcoffset() is None:
+            return False
+        datetime.fromisoformat(value.isoformat())
+        value.astimezone(SHANGHAI)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _parse_open_flag(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str) and value.strip() in {"0", "1"}:
+        return value.strip() == "1"
+    return None
 
 
 def _parse_slot(value: object) -> OutcomeSlot | None:
@@ -773,10 +1098,6 @@ def _nonnegative_float(value: object) -> float | None:
     except ValueError:
         return None
     return parsed if parsed >= 0 else None
-
-
-def _is_open(value: object) -> bool:
-    return value is True or value == 1 or str(value).strip().lower() in {"1", "true"}
 
 
 def _safe_failure(stage: str, error: Exception) -> str:

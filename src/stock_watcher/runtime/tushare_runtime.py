@@ -608,7 +608,7 @@ class TushareV1Runtime:
         self.movement_detector = movement_detector or StrongMovementDetector()
         self.candidate_config = candidate_config or CandidateConfig(
             version="v1-real-candidates-20260729",
-            app_version="0.6.0a1",
+            app_version="0.6.0a2",
         )
         self.universe_cache = universe_cache
         self.universe_seed_path = universe_seed_path
