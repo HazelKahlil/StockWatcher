@@ -1,28 +1,31 @@
 # StockWatcher 项目索引
 
-> 状态：2026-08-07 macOS 收口中；本文件只记录已核验事实，不代表商业发布。
+> 状态：2026-08-11 三轨内部试用基准；不是商业发布或完整三平台验收。
 
 ## 唯一权威开发目录
 
-- 路径：`~/Documents/700-AI-Workspace/20-Projects/StockWatcher`
-- 分支：本地 `main`
-- 应用代码基线 / 审计冻结 HEAD：`88ccf49f91fa814af83a004232315286feca3fb7`。
-- 收口治理文档在该代码基线之上提交；最终 Git HEAD 以审计报告和 `git rev-parse HEAD` 为准。治理提交不改变 App 二进制，不为追平 HEAD 覆盖安装 App。
-- Shared Core 与 Desktop App Mac 以该代码基线及本目录为权威；不从 ZIP、Finder 副本或旧 worktree 开发。
+- 路径：`~/Documents/700-AI-Workspace/20-Projects/StockWatcher`。
+- 分支：本地 `main`。
+- 当前应用代码基线：`ad04e392158c7050f84e0318fe1d53aaa0370c34`（Python `0.4.0a2`）。
+- 基准版本入口：annotated tag `v0.4.0-alpha.2`；tag 不存在时表示里程碑同步尚未闭环。
+- Shared Core 与 Desktop App 源码只从本目录/tag 重建，不从 ZIP、Finder 副本、Web worktree
+  或旧 Windows portable 反向恢复。
 
-## 三条轨道
+## 三条交付轨道
 
 | 轨道 | 当前事实 | 状态 | 下一步 |
 | --- | --- | --- | --- |
-| Shared Core | Provider/Transport、全市场扫描、股票池/缓存、板块、1/3/5 分钟特征、CandidateEngine、StableTop3、StrongMovementDetector、固定时点、历史/总结、Selection Audit、SQLite/迁移均在 main | `accepted`（内部试用基线） | 继续 Mac 真实交易窗口验收，不改业务口径 |
-| Desktop App / Mac | `~/Applications/StockWatcher.app`；`SOURCE_COMMIT`=`88ccf49f...`，与应用代码基线一致；治理文档提交不改 App；arm64、ad-hoc 签名验证通过；可执行文件 SHA-256 见 `docs/tracks/app-mac.md` | `internal_trial` | 新鲜 09:45/14:45、15:30 准点、冷启动/睡眠/网络恢复补验 |
-| Web 内部测试 | 分支 `web/internal-test-v1`，HEAD=`87a8b856...`，基线=`502a447...`；独立 worktree 在 `90-Archive/StockWatcher/00-current/web/` | `blocked / not_accepted` | 修复 validator 环境门，取得 VPS/域名授权后再做 Linux 与完整交易日验收；不得合入 main |
-| Windows | 只保留历史交接、现有 packaging/scripts 与规划文档；未创建未来活跃分支 | `planned` | 真正开始时从已验证 main HEAD 创建 `windows/internal-test-v1`，只做 Windows 平台适配和独立 Live 验收 |
+| Shared Core | `ad04e39` 包含 Tushare 主路线、确定性候选、StableTop3、强异动、固定时点、历史/总结、SQLite 安全恢复及 alpha.2 版本元数据 | `internal_trial_source_baseline` | 后续修改从 tag 继续，保持数据健康 fail-closed |
+| Desktop App / Mac | 现有 `~/Applications/StockWatcher.app` 的已记录 `SOURCE_COMMIT=88ccf49f...`；本轮未覆盖或重装，早于 alpha.2 源码 | `internal_trial` | 需要新包时从 tag 重建；继续真实固定时点/恢复补验 |
+| Web 内部测试 | 独立 `web/internal-test-v1@bf447ba`；Mac Docker + Cloudflare Tunnel 当前可达；完整工程门通过 | **`BLOCKED / NOT_ACCEPTED`** | 补完整交易日、通知/重放、断线与备份恢复；不合 main |
+| Windows | PR #4 merge `a5da270` 已进入 main；Windows 3.11/3.12 CI、Setup、PyInstaller/Inno 和制品上传通过 | `WINDOWS_SMOKE_PASS`，非权威 M0 | 需要新包时从 tag fresh clone 重建；现场验收另行进行 |
+
+详细证据与边界见
+[v0.4.0-alpha.2 内部基准](docs/visions/v0.4.0-alpha.2-internal-baseline/README.md)。
 
 ## Tags
 
-最新本地 tags：
-
+- `v0.4.0-alpha.2`：当前 Mac / Web / Windows 内部试用源码基准；不是 stable release。
 - `mac-v1-reliability-rc4-source-20260807`
 - `mac-v1-reliability-rc3-20260806`
 - `mac-v1-reliability-rc2-20260806`
@@ -31,29 +34,35 @@
 
 ## 归档入口
 
-- 本轮审计报告：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/90-cleanup-reports/consolidation-20260807-2354/`
-- Mac 当前资料：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/app-mac/`
-- Web 当前资料：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/`
-- Windows 历史交接：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/windows/historical-handoffs/`
-- 历史资料：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/10-history/`
-- 恢复 Bundle、旧工作区和重复候选：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/30-backups/`
+- Mac 当前资料：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/app-mac/`。
+- Web 当前资料与独立 worktree：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/`。
+- Windows 历史交接：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/windows/historical-handoffs/`。
+- 历史资料与恢复包：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/10-history/`、
+  `30-backups/`。
 
-## 部署与域名
+## 部署与凭据边界
 
-- Desktop App 只在本机 macOS 内部使用。
-- Web 的 Compose/Caddy/Worker 资产只属于独立 Web 线；当前没有已核验的生产域名或 VPS 部署，不得称为已上线。
-- Web 线的部署源在其独立 worktree 的 `deploy/`；main 中不复制 Web 选股内核或部署实现。
-- 凭据只走 macOS Keychain / Windows Credential Manager / Web 端 Owner 输入的安全边界；索引不保存实际 secret。
+- Desktop App 只在本机 macOS 内部使用；当前安装资产没有冒充 alpha.2 重建包。
+- Web 当前由本机 Mac Docker + Cloudflare Tunnel 提供，仍依赖 Mac 开机、联网和 Docker
+  Desktop；VPS 后置，不把当前状态写成独立托管或生产稳定。
+- Windows 当前结论是 smoke，不是连续 M0、完整交易日或签名安装器验收。
+- 凭据只走 macOS Keychain / Windows Credential Manager / Web Owner 安全流程；索引、Git、
+  SQLite、日志、截图和打包制品不保存实际 secret。
 
 ## 当前开放问题
 
-1. Mac 新鲜固定时点 Top3、15:30 准点报告、真实冷启动与睡眠/断网恢复仍未全部完成。
-2. Windows 真实 M0、交易时段、通知、安装/卸载/回滚仍为 `FAIL` 或未验证；Mac 证据不能替代。
-3. Web 当前完整 pytest 现场为 `391 passed, 20 skipped, 2 deselected`，但 workspace validator 被 `.venv` 内 Playwright 示例坏链阻断，VPS/live 验收仍 pending，因此状态仍是 `blocked/not_accepted`。
-4. `import/rc4-strict-audit` 的 patch-id 与 main 中 `6078337` 等价但不是 ancestry 上的祖先；按禁止 force 删除规则保留并记录，不重新应用。
+1. 已安装 Mac App 尚未从 `0.4.0a2` 重建；新鲜固定时点、15:30 准点和真实睡眠/断网恢复
+   仍是现场补验项。
+2. Web 继续 `BLOCKED / NOT_ACCEPTED`；浏览器完全关闭后的 Web Push 未实现，完整交易日与
+   运行恢复门未完成。
+3. Windows 目标机现有 portable 早于最终 SQLite 恢复与 alpha.2 打包元数据；权威 M0、
+   安装/卸载/回滚和签名包未验证。
+4. GitHub Actions 的 Node.js 20 action 弃用提示为非阻塞 P2，后续独立升级 action 主版本。
 
 ## 规则
 
-- 不访问 GitHub，不 fetch/pull/push，不创建 PR/Release。
-- 不读取或清理 Keychain、用户数据库、真实运行日志、Application Support 或已安装 App。
-- 不复制 CandidateEngine、StableTop3、调度器或 Shared Core；Web 只通过服务/适配器消费共享内核。
+- 日常权威仍是本地 `main`；GitHub 只在里程碑节点同步。
+- 不读取或清理 Keychain、Credential Manager、用户数据库、真实运行日志、Application
+  Support 或已安装 App。
+- 不复制 CandidateEngine、StableTop3、调度器或 Shared Core；Web 保持独立 provenance。
+- 测试、截图、CI 或公网可访问均不能单独升级为 `ACCEPTED`、正式 M0 或商业稳定结论。

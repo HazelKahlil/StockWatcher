@@ -16,6 +16,7 @@
 | `v0.2-mac-local-alpha` | Mac 本地可运行 Alpha | `v0.2.0` |
 | `v0.3-windows-data-gate` | Windows/通达信真实 M0 | `v0.3.0` 或明确 PASS/PASS_WITH_LIMITS/FAIL 结论 |
 | `v0.4-v1-feature-complete` | 真实数据路线上的完整 V1 功能 | `v0.4.0`，尚不等于稳定发布 |
+| `v0.4.0-alpha.2-internal-baseline` | 固定 Mac / Web / Windows 当前内部试用源码与证据边界 | `v0.4.0-alpha.2`，不是权威 M0 或 stable release |
 | `v0.5-stabilization` | 目标环境稳定化、安装与试用 | 通过后发布 `v1.0.0` |
 
 后续风险异动与自动软参数优化是候选方向，不在实现启动前预先承诺 tag。

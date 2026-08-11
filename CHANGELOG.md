@@ -6,6 +6,9 @@
 
 ### Mainline
 
+- 2026-08-11：建立 `v0.4.0-alpha.2` Mac / Web / Windows 内部试用源码基准；Shared Core
+  应用代码为 `ad04e39`，Web 固定 `bf447ba` 并继续 `BLOCKED / NOT_ACCEPTED`，Windows
+  PR #4 已达到 `WINDOWS_SMOKE_PASS`。该版本不代表权威 M0、完整三平台验收或商业稳定。
 - 2026-08-01：将 Mac V1 内部试用成果及其完整 Git 历史整合到唯一主目录的本地 `main`。
   当前主线包含真实全市场扫描、行业/概念板块、稳定 Top3、候选池强异动、09:45/14:45
   调度、30 天历史、15:30 盘后总结和 Mac arm64 App；`fix/macos-v1-internal-acceptance`、
@@ -69,7 +72,7 @@
   硬门形成市场广度、强势行业与回溯 Top3；不把收盘回放伪装成盘中提醒，也不虚构
   1/3/5 分钟涨速或资金增强。2026-07-29 回放统计 5,516 只有效证券、4,248 只上涨，
   回溯观察为欢乐家、东百集团、国芳集团。
-- Windows 0.4.0-alpha 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
+- Windows 0.4.0-alpha.2 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
   保持仓库外发布，未签名包在受管设备上仍需可信代码签名或管理员允许规则。
 - 经 Human Owner 明确授权的 Tushare SDK 原生实时 Provider：固定供应商验证入口、
   800 只批次上限、0.5 秒最小请求间隔、供应商日期/时间来源校验、脱敏全市场 M0
@@ -94,8 +97,13 @@
 
 ### Fixed
 
+- 生产全市场缓存默认至少 4500 只并要求行业覆盖 95%；日线必须匹配请求交易日，缺最新日线、
+  复权变化和当日复牌统一排除，避免截断证券池或机械跳变污染候选。
+- 实时扫描拒绝混合日期和日期回退；交易日切换清空盘中价格/成交量、稳定 Top3 与强异动
+  基线，强制基础刷新重新读取证券和日线。
 - Windows `uv sync` no longer attempts to build the macOS-only PyObjC dependency; the dependency and lockfile now restrict it to Darwin.
 - Windows SQLite damage recovery now integrity-checks a same-directory staging copy, preserves `.corrupt` plus old WAL/SHM evidence, and atomically restores only when the live path is replaceable; an external handle now defers recovery without overwriting active bytes.
+- Windows Governance artifact upload now follows the actual `0.4.0-alpha.2` portable ZIP name instead of a stale `0.3.0-alpha` path, so a green upload step cannot silently omit the portable package.
 - RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
 - A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
 - Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.

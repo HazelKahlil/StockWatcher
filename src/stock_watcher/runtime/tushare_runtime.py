@@ -145,14 +145,19 @@ class TushareBootstrapLoader:
 
     completed_session_count = 4
     maximum_calendar_lookback_days = 20
+    minimum_profile_count = 4_500
 
     def __init__(
         self,
         provider: BootstrapProvider,
         *,
+        minimum_profile_count: int = minimum_profile_count,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        if minimum_profile_count < 1:
+            raise ValueError("minimum_profile_count must be positive")
         self.provider = provider
+        self.minimum_profile_count = minimum_profile_count
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._stock_result: TransportResult | None = None
         self._daily_results: dict[date, TransportResult] = {}
@@ -170,6 +175,14 @@ class TushareBootstrapLoader:
             self._stock_result = stock_result
         if not stock_result.records:
             raise RuntimeError("证券列表为空")
+        listed_codes = {
+            code
+            for record in stock_result.records
+            if (code := _text(record.get("ts_code")).upper())
+            and code.rpartition(".")[2] in {"SH", "SZ", "BJ"}
+        }
+        if len(listed_codes) < self.minimum_profile_count:
+            raise RuntimeError("证券列表覆盖不足")
         include_today = now.timetz().replace(tzinfo=None) >= time(15, 30)
         latest_dates, daily_results = self._recent_daily_snapshots(
             now.date() if include_today else now.date() - timedelta(days=1)
@@ -187,15 +200,19 @@ class TushareBootstrapLoader:
             # authoritative fail-closed check on exchange holidays.
             open_dates = tuple(sorted((*open_dates, now.date())))
         trends, high_3d = _daily_context(tuple(daily_records))
+        mechanical_jump_codes = _missing_latest_daily_codes(
+            tuple(daily_records),
+            latest_date=latest_dates[-1],
+            expected_codes=listed_codes,
+        )
+        mechanical_jump_codes.update(self._corporate_action_codes(open_dates))
+        mechanical_jump_codes.update(self._resumption_codes(now.date()))
         profiles = _security_profiles(
             stock_result,
             open_dates,
-            _missing_latest_daily_codes(
-                tuple(daily_records),
-                latest_date=latest_dates[-1],
-            ),
+            mechanical_jump_codes,
         )
-        if len(profiles) < 100:
+        if len(profiles) < self.minimum_profile_count:
             raise RuntimeError("证券列表覆盖不足")
         profile_codes = {profile.security.code for profile in profiles}
         trends = {
@@ -213,7 +230,10 @@ class TushareBootstrapLoader:
             stock_result,
             observed_at=now,
         )
-        if len({membership.security.code for membership in industry_memberships}) < 100:
+        industry_codes = {
+            membership.security.code for membership in industry_memberships
+        }
+        if len(industry_codes) / len(profiles) < 0.95:
             raise RuntimeError("行业成分覆盖不足")
         # Concept membership is an optional, separately cached capability.  A
         # temporary 429 or an older provider that does not expose tdx_* must not
@@ -274,6 +294,15 @@ class TushareBootstrapLoader:
             if not result.records:
                 self._empty_daily_dates.add(trading_date)
                 continue
+            mismatched = [
+                record
+                for record in result.records
+                if _compact_date(record.get("trade_date")) != trading_date
+            ]
+            if mismatched:
+                raise RuntimeError(
+                    f"日线响应日期不匹配：请求 {trading_date.isoformat()}"
+                )
             self._daily_results[trading_date] = result
             daily_results[trading_date] = result
             if len(daily_results) == self.completed_session_count:
@@ -282,6 +311,12 @@ class TushareBootstrapLoader:
             raise RuntimeError("已完成日线不足4个交易日，保留上一版基础缓存")
         latest_dates = tuple(sorted(daily_results))
         return latest_dates, daily_results
+
+    def invalidate_cached_static(self) -> None:
+        """Force the next refresh to re-read securities and daily context."""
+        self._stock_result = None
+        self._daily_results.clear()
+        self._empty_daily_dates.clear()
 
     def warmup_minutes(
         self,
@@ -572,12 +607,13 @@ class TushareV1Runtime:
         self.movement_detector = movement_detector or StrongMovementDetector()
         self.candidate_config = candidate_config or CandidateConfig(
             version="v1-real-candidates-20260729",
-            app_version="0.4.0a1",
+            app_version="0.4.0a2",
         )
         self.universe_cache = universe_cache
         self.universe_seed_path = universe_seed_path
         self._clock = clock or (lambda: datetime.now(SHANGHAI))
         self._state_lock = RLock()
+        self._last_scan_trade_date: date | None = None
         self.universe: RuntimeUniverse | None = None
         self.universe_cache_failure: str | None = None
         self.concept_cache_preserved = False
@@ -603,7 +639,7 @@ class TushareV1Runtime:
                     except UniverseCacheError:
                         self.universe = None
 
-    def prepare(self) -> RuntimeUniverse:
+    def prepare(self, *, force_refresh: bool = False) -> RuntimeUniverse:
         """Refresh static context outside the critical realtime scan path.
 
         The provider work happens before the state swap. A failed refresh therefore
@@ -611,6 +647,8 @@ class TushareV1Runtime:
         """
         previous = self.universe
         cold_start = previous is None
+        if force_refresh:
+            self.loader.invalidate_cached_static()
         fresh = self.loader.load()
         effective = _merge_last_known_good_concepts(fresh, previous)
         self.concept_cache_preserved = effective is not fresh
@@ -632,6 +670,7 @@ class TushareV1Runtime:
                 self.stable_selector.reset()
                 self.movement_detector.reset()
                 self.health.reset_for_initial()
+                self._last_scan_trade_date = None
             else:
                 # A routine static-context refresh must not erase the live
                 # minute buffer or the visible stable Top3.  That reset was the
@@ -647,12 +686,25 @@ class TushareV1Runtime:
     def universe_is_current(self, now: datetime) -> bool:
         with self._state_lock:
             universe = self.universe
-        return universe is not None and universe_is_current(universe, now=now)
+        return universe is not None and universe_is_current(
+            universe,
+            now=now,
+            minimum_profiles=self._minimum_profile_count(),
+        )
 
     def universe_is_usable(self, now: datetime) -> bool:
         with self._state_lock:
             universe = self.universe
-        return universe is not None and universe_is_usable(universe, now=now)
+        return universe is not None and universe_is_usable(
+            universe,
+            now=now,
+            minimum_profiles=self._minimum_profile_count(),
+        )
+
+    def _minimum_profile_count(self) -> int:
+        if self.universe_cache is not None:
+            return self.universe_cache.minimum_profile_count
+        return int(getattr(self.loader, "minimum_profile_count", 4_500))
 
     def request_scan_cancellation(self) -> None:
         self.coordinator.cancel_current_scan()
@@ -666,6 +718,7 @@ class TushareV1Runtime:
             self.stable_selector.reset()
             self.movement_detector.reset()
             self.health.reset_for_recovery()
+            self._last_scan_trade_date = None
 
     def scan_once(self) -> ScanOutcome:
         with self._state_lock:
@@ -687,6 +740,25 @@ class TushareV1Runtime:
             )
         try:
             scan = self.coordinator.fetch_once(universe.securities)
+            quote_dates = {quote.source_ts.date() for quote in scan.quotes}
+            if len(quote_dates) != 1:
+                raise SnapshotSequenceError("scan contains mixed trade dates")
+            scan_trade_date = next(iter(quote_dates))
+            if (
+                self._last_scan_trade_date is not None
+                and scan_trade_date < self._last_scan_trade_date
+            ):
+                raise SnapshotSequenceError("scan trade date moved backwards")
+            if (
+                self._last_scan_trade_date is not None
+                and scan_trade_date > self._last_scan_trade_date
+            ):
+                self.buffer.clear()
+                self.pipeline.reset()
+                self.stable_selector.reset()
+                self.movement_detector.reset()
+                self.health.reset_for_initial()
+            self._last_scan_trade_date = scan_trade_date
             features = self.buffer.update(
                 scan.quotes,
                 high_3d=universe.high_3d,
@@ -845,6 +917,7 @@ def _missing_latest_daily_codes(
     records: tuple[dict[str, str | int | float | bool | None], ...],
     *,
     latest_date: date,
+    expected_codes: set[str] | None = None,
 ) -> set[str]:
     """Conservatively exclude codes absent from the latest completed session."""
 
@@ -857,7 +930,7 @@ def _missing_latest_daily_codes(
         all_codes.add(code)
         if _compact_date(record.get("trade_date")) == latest_date:
             latest_codes.add(code)
-    return all_codes - latest_codes
+    return (expected_codes or all_codes) - latest_codes
 
 
 def _stock_basic_industry_memberships(

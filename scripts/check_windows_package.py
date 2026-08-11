@@ -92,8 +92,14 @@ def main() -> int:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
-    if "StockWatcher-0.4.0-alpha" not in powershell or "0.3.1-alpha" in powershell:
-        errors.append("PowerShell build must publish only the current 0.4.0-alpha artifacts")
+    if (
+        "StockWatcher-0.4.0-alpha.2" not in powershell
+        or "StockWatcher-0.4.0-alpha-" in powershell
+        or "0.3.1-alpha" in powershell
+    ):
+        errors.append(
+            "PowerShell build must publish only the current 0.4.0-alpha.2 artifacts"
+        )
     portable_entry = _read_ascii(required[4], errors)
     portable_runtime = required[5].read_text(encoding="utf-8")
     if "pythonw.exe" not in portable_entry or "Get-Command pyw.exe" not in portable_entry:
@@ -172,8 +178,13 @@ def main() -> int:
         errors.append(
             "PyInstaller bundle must collect the approved V1 Pro and native realtime routes"
         )
-    if "0.4.0-alpha" not in installer:
-        errors.append("installer must identify the V1 real-candidate build as 0.4.0-alpha")
+    if (
+        '#define MyAppVersion "0.4.0-alpha.2"' not in installer
+        or "StockWatcher-0.4.0-alpha.2-setup" not in installer
+    ):
+        errors.append(
+            "installer must identify the internal baseline as 0.4.0-alpha.2"
+        )
     if "SetupIconFile={#MyAppIcon}" not in installer:
         errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:

@@ -2,10 +2,11 @@
 
 ## Provenance
 
-- 应用代码基线：`88ccf49f91fa814af83a004232315286feca3fb7`。
+- 当前可重建源码基线：`ad04e392158c7050f84e0318fe1d53aaa0370c34`（`0.4.0a2`）。
 - 安装路径：`~/Applications/StockWatcher.app`。
 - App 内 `Contents/Resources/stock_watcher/SOURCE_COMMIT`：`88ccf49f91fa814af83a004232315286feca3fb7`。
-- 结论：App 与应用代码基线一致；收口治理提交不改变 App，未覆盖或重装 App。
+- 结论：现有 App 仍是已验证的内部试用资产，但早于 alpha.2 源码基线；本轮没有覆盖、重装
+  或读取其 Keychain/运行数据。需要分发 alpha.2 时必须从 tag 重建并重新记录 provenance。
 - 可执行文件：arm64 Mach-O；SHA-256 `b601b4584867f4c5acef5a6f164e4b0ef458e2ef7416cfd598e93a0a667552ed`。
 - 签名：ad-hoc；`codesign --verify --deep --strict` 返回 0；不是 Developer ID/公证发布。
 - 当前 App 归档：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/app-mac/`。
@@ -22,7 +23,15 @@
 - 新鲜 09:45/14:45 固定 Top3。
 - 交易日 15:30 准点总结。
 - 无旧缓存冷启动、真实睡眠/唤醒与断网/网络恢复图形会话。
-- Windows 独立验收继续为 `FAIL`，不得由 Mac 结果覆盖。
+- Windows 已达到 `WINDOWS_SMOKE_PASS`，但权威 M0 和完整现场验收仍未完成；不得由 Mac
+  结果覆盖。
+
+## 当前源码门
+
+- pytest：`363 passed, 20 skipped, 2 deselected`。
+- Ruff、Mypy、workspace validator、lock check、Windows package contract 与
+  `git diff --check` 全部通过。
+- 这些是源码与 macOS 工程证据，不表示已安装 App 已重建为 `0.4.0a2`。
 
 ## 归档与安全
 

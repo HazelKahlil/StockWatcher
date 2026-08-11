@@ -1,49 +1,63 @@
 {
-  "generated_at": "2026-08-07",
-  "environment": "macOS arm64",
+  "generated_at": "2026-08-11",
+  "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
+  "internal_baseline": {
+    "python_version": "0.4.0a2",
+    "tag": "v0.4.0-alpha.2",
+    "status": "internal_trial_source_baseline",
+    "commercial_release": false,
+    "three_platform_acceptance": false,
+    "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
+  },
   "shared_core": {
-    "commit": "88ccf49f91fa814af83a004232315286feca3fb7",
-    "status": "accepted",
-    "scope": "shared provider, runtime, engine, storage and deterministic replay baseline",
-    "commit_role": "application_code_baseline"
+    "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "status": "internal_trial_baseline",
+    "scope": "shared provider, runtime, deterministic candidate engine, alerts, storage, recovery and packaging metadata",
+    "validation": "363 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract and lock check passed"
   },
   "app_mac": {
-    "commit": "88ccf49f91fa814af83a004232315286feca3fb7",
+    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
     "installed_path": "~/Applications/StockWatcher.app",
+    "installed_source_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
     "status": "internal_trial",
-    "source_commit_match_main_governance_head": false,
-    "source_commit_matches_application_code_baseline": true,
-    "provenance_note": "governance-only consolidation commits are on top of the App code baseline; App was not overwritten",
+    "installed_matches_source_baseline": false,
+    "provenance_note": "The installed app was not overwritten or rebuilt during source baselining; rebuild from the tag before distributing alpha.2.",
     "architecture": "arm64",
-    "signature": "ad-hoc",
-    "executable_sha256": "b601b4584867f4c5acef5a6f164e4b0ef458e2ef7416cfd598e93a0a667552ed"
+    "signature": "ad-hoc"
   },
   "web": {
     "branch": "web/internal-test-v1",
-    "commit": "87a8b85609f57504861e09f416694582556b736e",
-    "base_commit": "502a447d7e593d638ea45518f2a5e4d4827f683f",
+    "commit": "bf447ba62957e3d12a766df26c980b96ad4c74b2",
     "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
     "status": "blocked",
     "release_status": "not_accepted",
-    "reason": "current macOS workspace validator failed on a broken .venv Playwright example link; VPS preflight and complete trading-day acceptance remain pending",
+    "deployment": "Mac Docker Desktop plus Cloudflare Tunnel",
+    "public_url": "https://stock.hazelkahlil.com/",
+    "observed_http_status": 200,
+    "containers_observed_healthy": true,
     "pytest_full": {
       "status": "pass_on_current_macos_worktree",
-      "passed": 391,
-      "skipped": 20,
+      "passed": 434,
+      "skipped": 25,
       "deselected": 2
     },
     "ruff": "pass",
-    "mypy": "pass",
-    "docker_compose_config": "pass_with_non_secret_audit_env",
+    "mypy": "pass; 136 source files",
+    "workspace_validator": "pass; 29 required files",
+    "javascript_syntax": "pass",
     "can_merge_main": false,
-    "deployed": false
+    "reason": "Independent deployed Web line remains BLOCKED / NOT_ACCEPTED pending its full trading-day and operational acceptance; it is not folded into main."
   },
   "windows": {
-    "commit": null,
-    "status": "planned",
-    "future_branch": "windows/internal-test-v1",
-    "baseline_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
-    "acceptance": "not_started; historical result remains FAIL"
+    "pr": 4,
+    "integration_merge_commit": "a5da2705ed8c6b8d9670d0b6dbc751018f78828c",
+    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "status": "windows_smoke_pass",
+    "authoritative_m0": false,
+    "governance_runs": [31478494946, 31479040103],
+    "ci": "Windows Python 3.11 and 3.12 tests, Ruff, Mypy, Setup, fail-closed Preflight, PyInstaller, Inno Setup and artifact upload passed",
+    "installed_asset_matches_source_baseline": false,
+    "note": "The existing target-machine portable predates the final safe-recovery and alpha.2 packaging baseline; rebuild from the tag when a new Windows package is needed."
   }
 }

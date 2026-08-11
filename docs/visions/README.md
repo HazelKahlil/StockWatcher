@@ -1,10 +1,13 @@
 # 版本索引
 
-> 最后更新：2026-08-01
+> 最后更新：2026-08-11
 > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
 
 ## 活跃版本
 
+- **[v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md)** —
+  Mac / Web / Windows 当前状态的可重建内部试用基准（状态：源码基准；非商业发布、非权威
+  M0；Web 继续 `BLOCKED / NOT_ACCEPTED`）。
 - **[v0.4.1-shared-connection-gate](v0.4.1-shared-connection-gate/README.md)** —
   跨平台 Tushare Token 连接门、能力检测与应用级限流返修（状态：本地完成，已由 Mac 分支消费）。
 - **[v0.4.2-macos-v1-port](v0.4.2-macos-v1-port/README.md)** —
@@ -20,8 +23,9 @@
 ## 同步状态
 
 - 日常权威源：`/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher` 中的本地 `main`。
-- 本次收口不访问 GitHub；`origin/main` 只作为可能滞后的镜像，不能代表本地 Mac V1 主线已同步。
-- 在里程碑 PR 合入前，必须把远端状态表述为“尚未同步”，不能用本地完成代替 GitHub 交付。
+- `v0.4.0-alpha.2` 通过里程碑发布分支同步；只有发布 PR 合入、local/remote `main` 对齐并
+  创建 annotated tag 后，tag 才是本基准的最终源码入口。
+- Web 的 `bf447ba` 是独立轨道固定点，不因 Shared Core tag 创建而成为 main 的一部分。
 
 ## 版本列表
 
@@ -35,6 +39,7 @@
 | [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | Windows 全市场真实 Top3、提醒、历史与总结闭环 | 进行中 | |
 | [v0.4.1-shared-connection-gate](v0.4.1-shared-connection-gate/README.md) | 从冻结 Windows V1 基线提取的跨平台连接门、能力检测与限流返修 | 本地完成，已由 Mac 分支消费 | |
 | [v0.4.2-macos-v1-port](v0.4.2-macos-v1-port/README.md) | 用共享 Tushare 核心完成 Mac 真机数据、平台行为与内部 `.app` | Mac V1 内部试用主线；新鲜固定时点与15:30准点仍待验收 | |
+| [v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md) | 固定 Mac / Web / Windows 可重建内部试用基准 | 源码基准；Web 未接受、Windows 非权威 M0 | 2026-08-11 |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
 
 ## 候选方向（尚未登记为执行版本）

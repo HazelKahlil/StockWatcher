@@ -9,10 +9,11 @@
 - 当前开发电脑：Mac。真实行情、通知、安装和截图证据必须标明本机 macOS；不能外推为
   Windows 结果。
 - GitHub：`https://github.com/HazelKahlil/StockWatcher`（private，版本节点镜像，不是日常开发工作区）
-- 当前状态：本地 `main` 是唯一日常开发主线，基线为 StockWatcher Mac V1 内部试用主线，
-  不是商业稳定发布版。主线包含真实全市场实时扫描、行业/概念板块、板块硬门、稳定 Top3、
-  候选池强异动、历史/盘后总结和 Mac arm64 App；Windows 真实验收仍为 `FAIL`，不得由 Mac
-  结果覆盖。
+- 当前状态：本地 `main` 是唯一日常开发主线，`v0.4.0-alpha.2` 是 Mac / Web / Windows
+  内部试用源码基准，不是商业稳定发布版。主线包含真实全市场实时扫描、行业/概念板块、
+  板块硬门、稳定 Top3、候选池强异动、历史/盘后总结和 SQLite 安全恢复；Web 独立线继续
+  `BLOCKED / NOT_ACCEPTED`，Windows 仅为 `WINDOWS_SMOKE_PASS`，权威 M0 与完整现场验收
+  不得由 Mac/CI 结果覆盖。
 - 计划技术栈：Python 3.11/3.12、PySide6、SQLite WAL、YAML + Pydantic、pytest、PyInstaller + Inno Setup。
 - 当前验证命令：`uv sync --all-groups`、`uv run pytest`、`uv run ruff check .`、`uv run mypy src tests`、`python3 scripts/validate_workspace.py`、`git diff --check`。
 - 产品代码落地后必须补齐并执行：`pytest`、lint、类型检查、回放 smoke；命令以 `pyproject.toml` 和活跃版本 README 为准。
@@ -20,8 +21,8 @@
 ## 项目工作流
 
 - 启动读取顺序：本文件 → `docs/README.md` → `docs/project/index.md` → `docs/process/index.md` → `docs/visions/README.md` → 活跃或目标版本 README。
-- Mac 真实数据工作先读取活跃版本
-  `docs/visions/v0.4.2-macos-v1-port/README.md`，再读取共享返修
+- 先读取 `docs/visions/v0.4.0-alpha.2-internal-baseline/README.md` 确认三轨源码与验收边界。
+  Mac 真实数据工作再读取活跃版本 `docs/visions/v0.4.2-macos-v1-port/README.md`，并读取共享返修
   `v0.4.1-shared-connection-gate`；Windows 真实验收历史继续参考
   `v0.4-v1-feature-complete`，TdxQuant 只读历史与诊断参考 `v0.3-windows-data-gate`。
 - 中大型任务动手前先在 `docs/visions/` 锚定版本；没有合适版本先建目录（`v0.x-短名` + `README.md`）。
