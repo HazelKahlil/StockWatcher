@@ -55,7 +55,8 @@ Windows 初始回传曾在 `PermissionError` 后先复制 `.corrupt`，再直接
 为损坏主库分配不覆盖历史证据的 `.corrupt[.N]` 文件，隔离同名 WAL/SHM，最后只执行一次
 同文件系统原子替换。Windows 外部句柄仍占用时，原数据库路径和备份都保持不变，恢复进入
 只读失败状态并等待句柄释放；不会向活动文件原地写入备份字节。新增回归测试覆盖
-`PermissionError`、坏的最新备份、旧 WAL/SHM 及 staging 清理。
+`PermissionError`、坏的最新备份、旧 WAL/SHM、staging 清理和连接上下文显式释放；后者
+避免 Python 的 SQLite 上下文只提交但不关闭，从而在 Windows 留下 WAL 文件句柄。
 
 ## 4. 当前验证证据
 
@@ -94,7 +95,7 @@ SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前�
 | --- | --- |
 | `uv lock --check` | exit `0` |
 | `uv sync --all-groups --frozen` | exit `0`；Darwin PyObjC 正常解析 |
-| `uv run pytest` | exit `0`；`357 passed, 20 skipped, 2 deselected` |
+| `uv run pytest` | exit `0`；`358 passed, 20 skipped, 2 deselected` |
 | `uv run ruff check .` | exit `0` |
 | `uv run mypy src tests` | exit `0`；109 source files |
 | `uv run python scripts/validate_workspace.py` | exit `0`；29 个必需文件 |

@@ -1017,6 +1017,18 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     assert path.with_suffix(".sqlite3.corrupt").exists()
 
 
+def test_sqlite_store_context_releases_connection_handle(tmp_path: Path) -> None:
+    """Leaving a store context must close the SQLite handle, not only commit it."""
+
+    store = SQLiteStore(tmp_path / "watcher.sqlite3")
+    store.initialize()
+    with store.connect() as connection:
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+
+
 def test_sqlite_recovery_fails_closed_when_windows_handle_blocks_replace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

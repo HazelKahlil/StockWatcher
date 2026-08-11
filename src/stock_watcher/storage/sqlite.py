@@ -9,10 +9,35 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 if TYPE_CHECKING:
     from stock_watcher.engine.candidates import CandidateBatch
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """Commit or roll back a context block, then release Windows file handles."""
+
+    _context_depth = 0
+
+    def __enter__(self) -> Self:
+        super().__enter__()
+        self._context_depth += 1
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> Literal[False]:
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self._context_depth -= 1
+            if self._context_depth <= 0:
+                self.close()
 
 
 @dataclass(slots=True)
@@ -27,9 +52,11 @@ class SQLiteStore:
 
     def connect(self) -> sqlite3.Connection:
         connection = (
-            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            sqlite3.connect(
+                f"file:{self.path}?mode=ro", uri=True, factory=_ClosingConnection
+            )
             if self.read_only
-            else sqlite3.connect(self.path)
+            else sqlite3.connect(self.path, factory=_ClosingConnection)
         )
         if not self.read_only:
             connection.execute("PRAGMA journal_mode=WAL")
