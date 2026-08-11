@@ -85,6 +85,8 @@ Human Owner 于 2026-07-29 明确批准将默认主数据路线从
 | 2026-07-29 | PyInstaller 6.21.0 + Inno Setup 6.7.3 构建 0.3.1-alpha 安装器与 ZIP | 构建通过；本机 Application Control 阻止未签名冻结 EXE，未绕过策略 |
 | 2026-07-29 | 盘后按明确授权验证 `tushare.realtime_quote(src="sina")` | 单批上限 800；全 A 5,530/5,530、0 重复、7 批总耗时 7.781 秒、每行均有 `DATE/TIME`；仅属非权威盘后工程证据 |
 | 2026-07-29 | 原生实时与 Super 当日日线量额单位交叉核对 | 20/20 匹配；原生成交量 / 日线手数 = 100，原生成交额 / 日线千元 = 1000，两项最大相对偏差均为 0 |
+| 2026-08-08 | 从远端 `main@6b7936f` 完成 Windows 同步、目标测试、portable 构建与 UI smoke | `WINDOWS_SMOKE_PASS`；普通用户启动，无 UAC，未新增 `TdxW.exe`；全量门仍有 Mac-only 测试/类型检查失败 |
+| 2026-08-11 | Human Owner 完成交易日使用并要求以 Draft PR 回传 | 仅作为内部可用性回报；仓库内没有脱敏的连续 30 分钟 M0 指标，因此不写成权威 M0 `PASS` |
 
 ## 当前结论
 
@@ -100,3 +102,11 @@ Tushare 静态、日线、三日历史分钟和板块能力真实可用；Super 
 新增 `native_realtime` 路线已经证明盘后全市场吞吐具备 10 秒预算，但旧日期证券和盘后
 时间语义仍需严格过滤。下一权威交易时段必须连续至少 30 分钟验证逐行新鲜度、价量推进、
 错误率、p50/p95、断线恢复和三周期预热；通过前本版总 M0 结论仍是 `FAIL`。
+
+## 2026-08-11 Windows 回传
+
+本轮修正了 Windows `uv sync` 对 macOS-only PyObjC 的错误构建，以及 SQLite 损坏恢复在
+外部连接占用数据库文件时触发的 `WinError 32`。Windows 目标测试、workspace/package
+检查、Ruff、portable 构建和真实 UI smoke 已通过；全量 pytest 与 mypy 仍只剩现有的
+macOS 单实例/Foundation 平台问题。完整命令、退出码、安全边界、安装证据与下一步见
+[Windows Tushare V1 交接（2026-08-11）](windows-20260811-handoff.md)。

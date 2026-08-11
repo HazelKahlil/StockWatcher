@@ -81,7 +81,13 @@ class SQLiteStore:
                 continue
             corrupt = self.path.with_suffix(f"{self.path.suffix}.corrupt")
             corrupt.unlink(missing_ok=True)
-            self.path.replace(corrupt)
+            try:
+                self.path.replace(corrupt)
+            except PermissionError:
+                # Windows may keep an external SQLite handle open even after
+                # its transaction has ended. Preserve the bytes first, then
+                # overwrite the still-open path; do not hide copy failures.
+                shutil.copy2(self.path, corrupt)
             shutil.copy2(backup, self.path)
             match = re.search(r"pre-v(\d+)\.bak$", backup.name)
             self.last_recovery = {

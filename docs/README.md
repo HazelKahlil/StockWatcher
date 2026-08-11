@@ -42,3 +42,4 @@
 - 可选 TdxQuant 诊断历史：[visions/v0.3-windows-data-gate/README.md](visions/v0.3-windows-data-gate/README.md)
 - Windows 一页交接：[visions/v0.3-windows-data-gate/windows-handoff.md](visions/v0.3-windows-data-gate/windows-handoff.md)
 - Windows Codex 直接交接：[visions/v0.3-windows-data-gate/session-handoff-windows-codex.md](visions/v0.3-windows-data-gate/session-handoff-windows-codex.md)
+- Windows Tushare 2026-08-11 回传：[visions/v0.3.1-windows-tushare-data-gate/windows-20260811-handoff.md](visions/v0.3.1-windows-tushare-data-gate/windows-20260811-handoff.md)

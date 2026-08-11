@@ -94,6 +94,8 @@
 
 ### Fixed
 
+- Windows `uv sync` no longer attempts to build the macOS-only PyObjC dependency; the dependency and lockfile now restrict it to Darwin.
+- Windows SQLite damage recovery now preserves the `.corrupt` evidence with a copy when another process holds the database file, then restores the verified backup; unrelated I/O errors still fail explicitly.
 - RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
 - A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
 - Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.
