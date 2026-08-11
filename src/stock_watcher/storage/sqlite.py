@@ -158,9 +158,12 @@ class SQLiteStore:
                 if handle.read(16) != cls._SQLITE_MAGIC:
                     return False
             uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
-            with sqlite3.connect(uri, uri=True) as connection:
+            connection = sqlite3.connect(uri, uri=True)
+            try:
                 result = connection.execute("PRAGMA integrity_check").fetchone()
                 return result is not None and str(result[0]) == "ok"
+            finally:
+                connection.close()
         except (OSError, sqlite3.DatabaseError):
             return False
 

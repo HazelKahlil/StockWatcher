@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -317,7 +318,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
         assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
 
     path = tmp_path / "watcher.sqlite3"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
         )
@@ -1007,7 +1008,7 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     recovered.initialize()
     assert recovered.last_recovery is not None
     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
-    with recovered.connect() as connection:
+    with closing(recovered.connect()) as connection, connection:
         assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'probe'"
@@ -1023,7 +1024,7 @@ def test_sqlite_recovery_fails_closed_when_windows_handle_blocks_replace(
 
     path = tmp_path / "watcher.sqlite3"
     backup = path.with_suffix(".sqlite3.pre-v6.bak")
-    with sqlite3.connect(backup) as connection:
+    with closing(sqlite3.connect(backup)) as connection, connection:
         connection.execute(
             "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
         )
@@ -1074,7 +1075,7 @@ def test_sqlite_recovery_quarantines_old_wal_and_skips_invalid_newest_backup(
 
     path = tmp_path / "watcher.sqlite3"
     valid_backup = path.with_suffix(".sqlite3.pre-v6.bak")
-    with sqlite3.connect(valid_backup) as connection:
+    with closing(sqlite3.connect(valid_backup)) as connection, connection:
         connection.execute(
             "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
         )

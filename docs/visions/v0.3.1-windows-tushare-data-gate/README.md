@@ -1,8 +1,8 @@
 # v0.3.1-windows-tushare-data-gate：跨平台 Tushare 数据闸门
 
-> 状态：进行中  
-> 创建：2026-07-29  
-> 当前执行平台：Windows  
+> 状态：进行中
+> 创建：2026-07-29
+> 当前执行平台：Windows
 > 目标分支：`feat/windows-tushare-data-gate`
 
 ## 决策
