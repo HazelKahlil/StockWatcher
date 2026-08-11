@@ -21,6 +21,7 @@
     "validation": "379 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check and diff check passed on macOS",
     "real_trading_time_validation": false,
     "installed_app_rebuilt": false,
+    "local_main_integrated": true,
     "github_synced": false,
     "note": "Formal scheduled Top3 theoretical next-session same-slot review only; no trading account, no order execution, and no claim of live 09:45/14:45 acceptance."
   },
