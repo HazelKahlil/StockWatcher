@@ -393,6 +393,14 @@ function Invoke-PreflightProcess([string[]]$Arguments) {
 
 function Invoke-Setup {
     Write-Title "安装或更新 StockWatcher"
+    $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
+    if ($uv) {
+        Invoke-CheckedNative -Command $uv.Source -Arguments @(
+            "sync", "--all-groups", "--frozen", "--project", $ProjectRoot
+        ) -FailureMessage "同步锁定的 StockWatcher 环境失败"
+        Write-Host "StockWatcher 环境已就绪。" -ForegroundColor Green
+        return
+    }
     if (-not (Test-Path $PythonPath)) {
         $launcher = Resolve-PythonLauncher
         $arguments = @($launcher.Arguments) + @("-m", "venv", $VenvPath)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import gc
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -317,7 +319,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
         assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
 
     path = tmp_path / "watcher.sqlite3"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
         )
@@ -995,10 +997,12 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
         SQLiteStore._apply_v3_migration(connection)
         SQLiteStore._apply_v4_migration(connection)
         SQLiteStore._apply_v5_migration(connection)
+        connection.execute("INSERT INTO notes (key, value) VALUES ('probe', 'kept')")
+    del connection
     store = SQLiteStore(path)
     store.initialize()  # v5 -> v6, creates .pre-v6.bak
-    with store.connect() as connection:
-        connection.execute("INSERT INTO notes (key, value) VALUES ('probe', 'kept')")
+    del store
+    gc.collect()
 
     with path.open("r+b") as handle:
         handle.write(b"lxml._elementpath, lxml.etree, numpy (total: 69)")
@@ -1008,10 +1012,112 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     recovered.initialize()
     assert recovered.last_recovery is not None
     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
-    with recovered.connect() as connection:
+    with closing(recovered.connect()) as connection, connection:
         assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'probe'"
         ).fetchone() == ("kept",)
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     assert path.with_suffix(".sqlite3.corrupt").exists()
+
+
+def test_sqlite_store_context_releases_connection_handle(tmp_path: Path) -> None:
+    """Leaving a store context must close the SQLite handle, not only commit it."""
+
+    store = SQLiteStore(tmp_path / "watcher.sqlite3")
+    store.initialize()
+    with store.connect() as connection:
+        assert connection.execute("SELECT 1").fetchone() == (1,)
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+
+
+def test_sqlite_recovery_fails_closed_when_windows_handle_blocks_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A WinError 32-style replace failure must never overwrite the live path."""
+
+    path = tmp_path / "watcher.sqlite3"
+    backup = path.with_suffix(".sqlite3.pre-v6.bak")
+    with closing(sqlite3.connect(backup)) as connection, connection:
+        connection.execute(
+            "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_version VALUES (5, '2026-08-11T09:45:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
+    damaged = b"not-a-sqlite-database"
+    path.write_bytes(damaged)
+
+    original_replace = Path.replace
+
+    def block_live_replace(source: Path, target: Path) -> Path:
+        if source == path and target.name.startswith("watcher.sqlite3.corrupt"):
+            raise PermissionError(32, "file is being used by another process", str(path))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", block_live_replace)
+    store = SQLiteStore(path)
+    with pytest.raises(sqlite3.OperationalError, match="still in use"):
+        store.initialize()
+
+    assert path.read_bytes() == damaged
+    assert backup.exists()
+    assert path.with_suffix(".sqlite3.corrupt").read_bytes() == damaged
+    assert store.read_only
+    assert store.last_recovery == {
+        "restored": False,
+        "reason": "damaged database is still in use; restore deferred",
+        "source_backup": backup.name,
+        "preserved_corrupt_file": "watcher.sqlite3.corrupt",
+    }
+    assert not tuple(tmp_path.glob(f".{path.name}.restore-*.sqlite3"))
+
+    repeated = SQLiteStore(path)
+    with pytest.raises(sqlite3.OperationalError, match="still in use"):
+        repeated.initialize()
+    assert path.with_suffix(".sqlite3.corrupt").read_bytes() == damaged
+    assert path.with_suffix(".sqlite3.corrupt.1").read_bytes() == damaged
+
+
+def test_sqlite_recovery_quarantines_old_wal_and_skips_invalid_newest_backup(
+    tmp_path: Path,
+) -> None:
+    """Old WAL bytes cannot replay onto a restored database; invalid backups are skipped."""
+
+    path = tmp_path / "watcher.sqlite3"
+    valid_backup = path.with_suffix(".sqlite3.pre-v6.bak")
+    with closing(sqlite3.connect(valid_backup)) as connection, connection:
+        connection.execute(
+            "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO schema_version VALUES (5, '2026-08-11T09:45:00+08:00')")
+        SQLiteStore._apply_v1_schema(connection)
+        SQLiteStore._apply_v2_migration(connection)
+        SQLiteStore._apply_v3_migration(connection)
+        SQLiteStore._apply_v4_migration(connection)
+        SQLiteStore._apply_v5_migration(connection)
+    invalid_newest = path.with_suffix(".sqlite3.pre-v7.bak")
+    invalid_newest.write_bytes(SQLiteStore._SQLITE_MAGIC + b"not-valid-pages")
+
+    path.write_bytes(b"damaged-main")
+    Path(f"{path}-wal").write_bytes(b"stale-wal")
+    Path(f"{path}-shm").write_bytes(b"stale-shm")
+
+    store = SQLiteStore(path)
+    store._restore_from_backup()
+
+    assert store.last_recovery is not None
+    assert store.last_recovery["source_backup"] == valid_backup.name
+    corrupt = path.with_suffix(".sqlite3.corrupt")
+    assert corrupt.read_bytes() == b"damaged-main"
+    assert Path(f"{corrupt}-wal").read_bytes() == b"stale-wal"
+    assert Path(f"{corrupt}-shm").read_bytes() == b"stale-shm"
+    assert not Path(f"{path}-wal").exists()
+    assert not Path(f"{path}-shm").exists()
+    assert SQLiteStore._is_valid_sqlite_backup(path)
+    assert not tuple(tmp_path.glob(f".{path.name}.restore-*.sqlite3"))

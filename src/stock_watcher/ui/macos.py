@@ -737,7 +737,7 @@ def install_apple_event_quit_handler(callback: Callable[[], None]) -> bool:
     if _AE_INSTALLED:
         return True
     try:
-        from Foundation import (  # type: ignore[import-untyped]
+        from Foundation import (  # type: ignore[import-not-found,import-untyped]
             NSAppleEventManager,
             NSObject,
         )
