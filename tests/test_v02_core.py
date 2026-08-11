@@ -997,8 +997,10 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
         SQLiteStore._apply_v4_migration(connection)
         SQLiteStore._apply_v5_migration(connection)
         connection.execute("INSERT INTO notes (key, value) VALUES ('probe', 'kept')")
+    del connection
     store = SQLiteStore(path)
     store.initialize()  # v5 -> v6, creates .pre-v6.bak
+    del store
 
     with path.open("r+b") as handle:
         handle.write(b"lxml._elementpath, lxml.etree, numpy (total: 69)")
