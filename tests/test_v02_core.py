@@ -1052,7 +1052,7 @@ def test_sqlite_recovery_fails_closed_when_windows_handle_blocks_replace(
     original_replace = Path.replace
 
     def block_live_replace(source: Path, target: Path) -> Path:
-        if source.name.startswith(f".{path.name}.restore-") and target == path:
+        if source == path and target.name.startswith("watcher.sqlite3.corrupt"):
             raise PermissionError(32, "file is being used by another process", str(path))
         return original_replace(source, target)
 

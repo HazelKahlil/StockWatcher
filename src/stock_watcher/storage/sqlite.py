@@ -114,17 +114,8 @@ class SQLiteStore:
                     cause=exc,
                 )
             corrupt = self._next_corrupt_path()
-            try:
-                shutil.copy2(self.path, corrupt)
-            except OSError as exc:
-                staging.unlink(missing_ok=True)
-                self._raise_blocked_recovery(
-                    backup,
-                    reason="damaged database could not be preserved before restore",
-                    cause=exc,
-                )
-
             moved_sidecars: list[tuple[Path, Path]] = []
+            main_moved = False
             try:
                 for suffix in ("-wal", "-shm"):
                     sidecar = Path(f"{self.path}{suffix}")
@@ -134,12 +125,26 @@ class SQLiteStore:
                     sidecar.replace(preserved)
                     moved_sidecars.append((sidecar, preserved))
 
-                # The validated staging file lives beside the active database,
-                # so this is one atomic replace. On Windows an external handle
-                # makes the replace fail without modifying the active path.
+                # Both renames stay in one directory. Windows refuses the first
+                # rename while an external handle is live, leaving the active
+                # path untouched; the validated staging file is installed only
+                # after the damaged main file is safely quarantined.
+                self.path.replace(corrupt)
+                main_moved = True
                 staging.replace(self.path)
             except OSError as exc:
                 rollback_error: OSError | None = None
+                if main_moved:
+                    try:
+                        corrupt.replace(self.path)
+                        shutil.copy2(self.path, corrupt)
+                    except OSError as rollback_exc:
+                        rollback_error = rollback_exc
+                else:
+                    try:
+                        shutil.copy2(self.path, corrupt)
+                    except OSError as preserve_exc:
+                        rollback_error = preserve_exc
                 for sidecar, preserved in reversed(moved_sidecars):
                     if preserved.exists() and not sidecar.exists():
                         try:
@@ -153,7 +158,7 @@ class SQLiteStore:
                 self._raise_blocked_recovery(
                     backup,
                     reason=(
-                        "damaged database sidecars could not be restored; restore deferred"
+                        "damaged database rollback was incomplete; restore deferred"
                         if rollback_error is not None
                         else "damaged database is still in use; restore deferred"
                     ),
