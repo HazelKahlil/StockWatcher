@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from time import sleep
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
@@ -129,9 +130,9 @@ class SQLiteStore:
                 # rename while an external handle is live, leaving the active
                 # path untouched; the validated staging file is installed only
                 # after the damaged main file is safely quarantined.
-                self.path.replace(corrupt)
+                self._replace_with_retry(self.path, corrupt)
                 main_moved = True
-                staging.replace(self.path)
+                self._replace_with_retry(staging, self.path)
             except OSError as exc:
                 rollback_error: OSError | None = None
                 if main_moved:
@@ -228,6 +229,23 @@ class SQLiteStore:
             candidate = base.with_name(f"{base.name}.{suffix}")
             suffix += 1
         return candidate
+
+    @staticmethod
+    def _replace_with_retry(source: Path, target: Path) -> None:
+        """Tolerate only brief Windows handle-release races, never a live owner."""
+
+        last_error: PermissionError | None = None
+        for delay_seconds in (0.0, 0.02, 0.05, 0.1, 0.2):
+            if delay_seconds:
+                sleep(delay_seconds)
+            try:
+                source.replace(target)
+                return
+            except PermissionError as exc:
+                last_error = exc
+        if last_error is None:  # pragma: no cover - the loop always runs
+            raise RuntimeError("SQLite replace retry loop did not run")
+        raise last_error
 
     def _raise_blocked_recovery(
         self,
