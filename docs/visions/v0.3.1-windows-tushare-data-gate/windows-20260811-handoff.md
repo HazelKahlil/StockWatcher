@@ -47,9 +47,15 @@
 外部句柄仍保持打开，会得到 `PermissionError: [WinError 32]`，恢复流程在保存损坏副本前
 中断。
 
-现在仅在 `PermissionError` 时采用保守回退：先 `copy2` 保存 `.corrupt`，再从已验证备份
-覆盖恢复。其他异常不吞掉，原始备份选择、完整性检查、只读降级和审计字段保持不变。
-测试、断言和 fixture 没有为此修改。
+Windows 初始回传曾在 `PermissionError` 后先复制 `.corrupt`，再直接覆盖仍可能被占用的
+活动路径。macOS 合并前安全评审判定该做法可能与外部 SQLite 句柄及旧 WAL/SHM 竞态，
+因此没有按原实现合并。
+
+评审后恢复链改为：对候选备份做 `integrity_check`，复制到主库同目录 staging 后再次校验，
+为损坏主库分配不覆盖历史证据的 `.corrupt[.N]` 文件，隔离同名 WAL/SHM，最后只执行一次
+同文件系统原子替换。Windows 外部句柄仍占用时，原数据库路径和备份都保持不变，恢复进入
+只读失败状态并等待句柄释放；不会向活动文件原地写入备份字节。新增回归测试覆盖
+`PermissionError`、坏的最新备份、旧 WAL/SHM 及 staging 清理。
 
 ## 4. 当前验证证据
 
@@ -81,6 +87,21 @@
 
 SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前的首个 Windows 失败
 `WinError 32` 已保留在交接说明中，没有通过重复运行掩盖。
+
+合并前 macOS 安全评审后的工程门（包含上述恢复链修正）为：
+
+| 命令 / 检查 | 结果 |
+| --- | --- |
+| `uv lock --check` | exit `0` |
+| `uv sync --all-groups --frozen` | exit `0`；Darwin PyObjC 正常解析 |
+| `uv run pytest` | exit `0`；`357 passed, 20 skipped, 2 deselected` |
+| `uv run ruff check .` | exit `0` |
+| `uv run mypy src tests` | exit `0`；109 source files |
+| `uv run python scripts/validate_workspace.py` | exit `0`；29 个必需文件 |
+| `uv run python scripts/check_windows_package.py` | exit `0`；仅离线 contract |
+| `git diff --check` | exit `0` |
+
+以上 macOS 结果关闭源码审查 P1，但不冒充安全修正后的 Windows portable 重建或实机复测。
 
 ## 5. 应用安装与真实启动
 
@@ -116,7 +137,8 @@ SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前�
 3. Windows 通知、多屏、冷启动、睡眠/断网恢复仍需目标机专项验收。
 4. Inno Setup 安装、卸载、回滚和签名包未验证。
 5. 全量 pytest/Mypy 仍需把 macOS-only 检查与 Windows matrix 正确隔离。
-6. PR 合并前需要在 macOS 主环境确认 Darwin 依赖仍可正常锁定和安装。
+6. 安全修正后的 Windows portable 尚未从合并后的最新 `main` 重建；当前安装资产仍对应原始
+   Windows smoke 源码快照。
 
 这些欠项不阻塞本次 Windows smoke 修复回传，但阻塞将版本表述为商业稳定发布或权威
 Windows M0 完成。
@@ -124,8 +146,8 @@ Windows M0 完成。
 ## 8. PR review 重点
 
 1. 确认 PyObjC marker 只限制 Windows，不会让 Darwin 丢失 Cocoa 依赖。
-2. 在 macOS 执行 `uv lock --check`、`uv sync --all-groups` 和全量工程门。
-3. 复核 SQLite `PermissionError` 回退仍保留损坏副本，且不吞掉其他 I/O 错误。
+2. 回读 macOS 完整工程门，确认 Darwin 依赖仍正常锁定和安装。
+3. 复核 SQLite `PermissionError` 路径保持活动数据库不变，并隔离旧 WAL/SHM。
 4. 确认 PR 没有测试删除、断言放宽、secret、运行数据库、日志、行情缓存或 bundle。
 5. 合并后更新 Mac 本地权威 `main`，再从新的 Windows fresh clone 重建，不复制本机产物。
 
@@ -136,7 +158,8 @@ Windows M0 完成。
    `docs/process/rules/storage.md`、本版本 README 和本文件。
 2. fetch Draft PR，核对 base 为 `main@6b7936f`、head 为
    `publish/v0.3.1-windows-smoke`，先 review diff，不读取任何现场凭据或运行数据。
-3. 在 macOS 验证 Darwin 依赖和全量工程门；在 Windows 复跑本文件第 4 节命令。
+3. 回读 macOS 已完成的 Darwin 依赖与全量工程门；后续需要打包时，从合并后的最新 `main`
+   在 Windows 重建并复跑本文件第 4 节命令。
 4. 不把 TdxQuant 恢复为正常启动门，不启动 `TdxW.exe`，不连接券商或调用下单接口。
 5. 如需提升为正式 Windows M0，另起明确验收任务并输出脱敏指标，不改写本 handoff 的
    smoke 结论。
@@ -155,9 +178,9 @@ docs/process/rules/security.md、docs/process/rules/storage.md、
 docs/visions/v0.3.1-windows-tushare-data-gate/README.md 和
 docs/visions/v0.3.1-windows-tushare-data-gate/windows-20260811-handoff.md。
 
-本 PR 只回传两个 Windows 可移植性修复：PyObjC 限定 Darwin，以及 SQLite 损坏恢复遇到
-WinError 32 时保存 .corrupt 副本后从备份恢复；不要改业务规则、测试断言、锁定需求或数据
-供应商路线。正常入口是 Tushare，TdxQuant 仅为可选诊断。
+本 PR 只回传两个 Windows 可移植性修复：PyObjC 限定 Darwin，以及 SQLite 损坏恢复改为
+校验 staging、保留 .corrupt/WAL/SHM 并在 WinError 32 时 fail closed；不要改业务规则、
+锁定需求或数据供应商路线。正常入口是 Tushare，TdxQuant 仅为可选诊断。
 
 请先 review diff 和 secret/二进制边界，再在 macOS 验证 uv lock/sync、pytest、ruff、mypy、
 workspace validator；Windows 结果按 handoff 逐项复核。不得读取或索取 Token、账号、持仓、

@@ -106,7 +106,9 @@ Tushare 静态、日线、三日历史分钟和板块能力真实可用；Super 
 ## 2026-08-11 Windows 回传
 
 本轮修正了 Windows `uv sync` 对 macOS-only PyObjC 的错误构建，以及 SQLite 损坏恢复在
-外部连接占用数据库文件时触发的 `WinError 32`。Windows 目标测试、workspace/package
-检查、Ruff、portable 构建和真实 UI smoke 已通过；全量 pytest 与 mypy 仍只剩现有的
-macOS 单实例/Foundation 平台问题。完整命令、退出码、安全边界、安装证据与下一步见
+外部连接占用数据库文件时触发的 `WinError 32`。后续 macOS 安全评审将恢复改为备份与
+staging 双重完整性校验、损坏主库及 WAL/SHM 取证保留和安全原子替换；句柄未释放时保持
+原路径不变并显式延后恢复。Windows 原目标测试、workspace/package 检查、Ruff、portable
+构建和真实 UI smoke 已通过；安全评审后的完整 macOS 工程门也通过。完整命令、退出码、
+安全边界、安装证据与下一步见
 [Windows Tushare V1 交接（2026-08-11）](windows-20260811-handoff.md)。

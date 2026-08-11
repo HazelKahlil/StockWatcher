@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -73,22 +75,65 @@ class SQLiteStore:
             self.path.parent.glob(f"{self.path.name}.pre-v*.bak"), reverse=True
         )
         for backup in candidates:
-            try:
-                with backup.open("rb") as handle:
-                    if handle.read(16) != self._SQLITE_MAGIC:
-                        continue
-            except OSError:
+            if not self._is_valid_sqlite_backup(backup):
                 continue
-            corrupt = self.path.with_suffix(f"{self.path.suffix}.corrupt")
-            corrupt.unlink(missing_ok=True)
+
             try:
-                self.path.replace(corrupt)
-            except PermissionError:
-                # Windows may keep an external SQLite handle open even after
-                # its transaction has ended. Preserve the bytes first, then
-                # overwrite the still-open path; do not hide copy failures.
+                staging = self._stage_validated_backup(backup)
+            except (OSError, sqlite3.DatabaseError) as exc:
+                self._raise_blocked_recovery(
+                    backup,
+                    reason="verified backup could not be staged safely",
+                    cause=exc,
+                )
+            corrupt = self._next_corrupt_path()
+            try:
                 shutil.copy2(self.path, corrupt)
-            shutil.copy2(backup, self.path)
+            except OSError as exc:
+                staging.unlink(missing_ok=True)
+                self._raise_blocked_recovery(
+                    backup,
+                    reason="damaged database could not be preserved before restore",
+                    cause=exc,
+                )
+
+            moved_sidecars: list[tuple[Path, Path]] = []
+            try:
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(f"{self.path}{suffix}")
+                    if not sidecar.exists():
+                        continue
+                    preserved = Path(f"{corrupt}{suffix}")
+                    sidecar.replace(preserved)
+                    moved_sidecars.append((sidecar, preserved))
+
+                # The validated staging file lives beside the active database,
+                # so this is one atomic replace. On Windows an external handle
+                # makes the replace fail without modifying the active path.
+                staging.replace(self.path)
+            except OSError as exc:
+                rollback_error: OSError | None = None
+                for sidecar, preserved in reversed(moved_sidecars):
+                    if preserved.exists() and not sidecar.exists():
+                        try:
+                            preserved.replace(sidecar)
+                        except OSError as rollback_exc:
+                            rollback_error = rollback_exc
+                try:
+                    staging.unlink(missing_ok=True)
+                except OSError as cleanup_exc:
+                    rollback_error = cleanup_exc
+                self._raise_blocked_recovery(
+                    backup,
+                    reason=(
+                        "damaged database sidecars could not be restored; restore deferred"
+                        if rollback_error is not None
+                        else "damaged database is still in use; restore deferred"
+                    ),
+                    cause=rollback_error or exc,
+                    corrupt=corrupt,
+                )
+
             match = re.search(r"pre-v(\d+)\.bak$", backup.name)
             self.last_recovery = {
                 "restored_at": datetime.now().isoformat(),
@@ -103,6 +148,71 @@ class SQLiteStore:
             "reason": "database file is not SQLite and no valid backup exists",
         }
         raise sqlite3.DatabaseError(self.last_recovery["reason"])
+
+    @classmethod
+    def _is_valid_sqlite_backup(cls, path: Path) -> bool:
+        """Reject header-only lookalikes before they can replace the active database."""
+
+        try:
+            with path.open("rb") as handle:
+                if handle.read(16) != cls._SQLITE_MAGIC:
+                    return False
+            uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
+            with sqlite3.connect(uri, uri=True) as connection:
+                result = connection.execute("PRAGMA integrity_check").fetchone()
+                return result is not None and str(result[0]) == "ok"
+        except (OSError, sqlite3.DatabaseError):
+            return False
+
+    def _stage_validated_backup(self, backup: Path) -> Path:
+        """Copy a backup beside the live database and validate the exact staged bytes."""
+
+        descriptor, raw_path = tempfile.mkstemp(
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.restore-",
+            suffix=".sqlite3",
+        )
+        os.close(descriptor)
+        staging = Path(raw_path)
+        try:
+            shutil.copy2(backup, staging)
+            if not self._is_valid_sqlite_backup(staging):
+                raise sqlite3.DatabaseError("staged SQLite backup failed integrity_check")
+            return staging
+        except (OSError, sqlite3.DatabaseError):
+            staging.unlink(missing_ok=True)
+            raise
+
+    def _next_corrupt_path(self) -> Path:
+        """Allocate a forensic filename without deleting evidence from an earlier attempt."""
+
+        base = self.path.with_suffix(f"{self.path.suffix}.corrupt")
+        candidate = base
+        suffix = 1
+        while any(Path(f"{candidate}{ending}").exists() for ending in ("", "-wal", "-shm")):
+            candidate = base.with_name(f"{base.name}.{suffix}")
+            suffix += 1
+        return candidate
+
+    def _raise_blocked_recovery(
+        self,
+        backup: Path,
+        *,
+        reason: str,
+        cause: Exception,
+        corrupt: Path | None = None,
+    ) -> None:
+        """Fail closed when the live database cannot be replaced safely."""
+
+        self.read_only = True
+        self.last_recovery = {
+            "restored": False,
+            "reason": reason,
+            "source_backup": backup.name,
+        }
+        if corrupt is not None and corrupt.exists():
+            self.last_recovery["preserved_corrupt_file"] = corrupt.name
+        raise sqlite3.OperationalError(reason) from cause
 
     def _schema_version(self, connection: sqlite3.Connection) -> int:
         row = connection.execute(
