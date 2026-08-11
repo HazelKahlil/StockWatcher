@@ -490,5 +490,6 @@ def test_windows_matrix_requires_parseable_report_after_preflight_failure() -> N
     assert "if (-not (Test-Path $reportPath))" in workflow
     assert "Get-Content -Raw -Encoding UTF8 $reportPath | ConvertFrom-Json" in workflow
     assert 'if ($report.status -ne "FAIL")' in workflow
-    assert "dist/StockWatcher-0.3.0-alpha-portable.zip" in workflow
+    assert "dist/StockWatcher-0.4.0-alpha.2-portable.zip" in workflow
+    assert "dist/StockWatcher-0.3.0-alpha-portable.zip" not in workflow
     assert "dist/StockWatcher/**" not in workflow

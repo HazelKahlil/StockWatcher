@@ -69,7 +69,7 @@
   硬门形成市场广度、强势行业与回溯 Top3；不把收盘回放伪装成盘中提醒，也不虚构
   1/3/5 分钟涨速或资金增强。2026-07-29 回放统计 5,516 只有效证券、4,248 只上涨，
   回溯观察为欢乐家、东百集团、国芳集团。
-- Windows 0.4.0-alpha 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
+- Windows 0.4.0-alpha.2 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
   保持仓库外发布，未签名包在受管设备上仍需可信代码签名或管理员允许规则。
 - 经 Human Owner 明确授权的 Tushare SDK 原生实时 Provider：固定供应商验证入口、
   800 只批次上限、0.5 秒最小请求间隔、供应商日期/时间来源校验、脱敏全市场 M0
@@ -100,6 +100,7 @@
   基线，强制基础刷新重新读取证券和日线。
 - Windows `uv sync` no longer attempts to build the macOS-only PyObjC dependency; the dependency and lockfile now restrict it to Darwin.
 - Windows SQLite damage recovery now integrity-checks a same-directory staging copy, preserves `.corrupt` plus old WAL/SHM evidence, and atomically restores only when the live path is replaceable; an external handle now defers recovery without overwriting active bytes.
+- Windows Governance artifact upload now follows the actual `0.4.0-alpha.2` portable ZIP name instead of a stale `0.3.0-alpha` path, so a green upload step cannot silently omit the portable package.
 - RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
 - A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
 - Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.
