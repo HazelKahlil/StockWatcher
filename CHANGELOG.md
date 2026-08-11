@@ -6,7 +6,8 @@
 
 ### Mainline
 
-- 2026-08-11：在 `0.6.0a1` 增加桌面端“次日同点复盘”：正式 09:45/14:45 三只候选按
+- 2026-08-11：在 `0.6.0a2` 完成桌面端“次日同点复盘”契约返修：正式 09:45/14:45
+  三只候选按
   下一真实交易日同档行情做理论复盘，展示近 5/20 个入选交易日与全部记录的个股胜率、
   平均/中位收益、分档统计和完整六笔日组合胜率。功能不连接交易账户、不自动下单，且
   复盘失败不得阻塞原实时扫描、Top3、提醒或弹窗。
@@ -29,9 +30,10 @@
 
 ### Changed
 
-- SQLite 从 v6 升到 v7，新增独立保留至少一年的 `candidate_outcomes`；迁移继续使用前置
-  备份、事务回滚、`integrity_check` 与只读降级，复盘记录不随 31 天提醒历史清理删除。
-- Mac/Windows 重建元数据提升为 `0.6.0-alpha.1`；本轮未构建、覆盖或重装现有 App。
+- SQLite 从 v7 升到 v8，为 `candidate_outcomes` 增加
+  `settlement_attempts/last_attempt_at/next_retry_at`；迁移继续使用前置备份、事务回滚、
+  `integrity_check` 与只读降级，并覆盖 Windows 文件句柄释放。
+- Mac/Windows 重建元数据提升为 `0.6.0-alpha.2`；本轮未构建、覆盖或重装现有 App。
 - V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
   `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
   TdxQuant 只留在高级诊断。
@@ -64,6 +66,9 @@
   再以 `stk_mins` 精确 09:45/14:45 一分钟 close 串行回补；零价、错日、过期、停牌、
   无成交或质量不足均标为 pending/unavailable，不计入胜率分母。日历与补查在独立单线程
   旁路运行，不延迟固定提醒；补位/非正式候选不会进入新记录或历史回补。
+- 分钟回补按目标日期和 09:45/14:45 档位隔离，使用 +1/+3/+8/+20/15:05 最终确认的
+  有界退避；网络、限流、服务器错误和首次空数据保持 pending，App 重启从 SQLite 恢复 due
+  任务，旧积压不会抢占当前三笔。
 - 历史窗口新增“提醒记录 / 次日复盘”标签和近 1 周、近 1 月、全部切换；数据库查询继续在
   Qt 工作线程运行，并提供 empty/pending/settled 确定性截图脚本。
 - 独立 macOS PyInstaller spec：生成本机 arm64 `StockWatcher.app`，包含 Retina 配置与
@@ -110,6 +115,14 @@
 
 ### Fixed
 
+- 真实 Tushare Pro `trade_cal` 缺供应商生成时间时，不再被一概拒绝；仅受控
+  `tushare_15000` 路线的预期 DEGRADED received-fallback 可通过，空响应、STALE/STOPPED、
+  非法/越界日期、矛盾开市状态和 schema 变化继续 fail closed。
+- 历史回补状态不再在缺少持久化证据时默认声称完成；running/completed/partial/failed
+  分开展示，partial 使用真实 settled/unavailable/skipped/pending 数量，内部 reason 映射为
+  简洁中文。
+- 大于 500 笔的旧 pending 积压不再遮蔽当前档位，单线程队列任务也改为使用实际执行时间，
+  避免跨过 15:05 后仍按提交时刻错误延期。
 - 生产全市场缓存默认至少 4500 只并要求行业覆盖 95%；日线必须匹配请求交易日，缺最新日线、
   复权变化和当日复牌统一排除，避免截断证券池或机械跳变污染候选。
 - 实时扫描拒绝混合日期和日期回退；交易日切换清空盘中价格/成交量、稳定 Top3 与强异动

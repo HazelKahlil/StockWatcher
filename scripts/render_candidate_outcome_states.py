@@ -35,6 +35,16 @@ def main() -> int:
             store.initialize()
             if state != "empty":
                 _seed(store, settled=state == "settled")
+            if state == "pending":
+                store.set_app_setting(
+                    "candidate_outcome_backfill_status",
+                    {"status": "running"},
+                )
+            elif state == "settled":
+                store.set_app_setting(
+                    "candidate_outcome_backfill_status",
+                    {"status": "completed"},
+                )
             dialog = HistoryDialog(path)
             dialog._tabs.setCurrentIndex(1)
             dialog.show()

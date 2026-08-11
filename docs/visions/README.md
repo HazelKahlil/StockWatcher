@@ -6,7 +6,7 @@
 ## 活跃版本
 
 - **[v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md)** —
-  正式 09:45/14:45 三只候选的下一真实交易日同档理论复盘、SQLite v7、历史回补与桌面 UI
+  正式 09:45/14:45 三只候选的下一真实交易日同档理论复盘、SQLite v8、历史回补与桌面 UI
   （状态：本地实现与离线工程验证；真实同点行情待交易日现场验收，未同步 GitHub）。
 - **[v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md)** —
   Mac / Web / Windows 当前状态的可重建内部试用基准（状态：源码基准；非商业发布、非权威

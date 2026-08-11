@@ -1,6 +1,6 @@
 # 数据规则：供应商数据必须先证明、归一化并带质量状态
 
-> 最后更新：2026-07-29 ｜ 适用：providers、实时扫描、行情/板块/资金、健康监控
+> 最后更新：2026-08-11 ｜ 适用：providers、实时扫描、行情/板块/资金、健康监控
 
 ## 硬规则（违反按 review P1；伪造数据按 P0）
 
@@ -32,6 +32,10 @@
 - 次日同点复盘只结算正式 `scheduled-09:45` / `scheduled-14:45` 三只：先复用目标档同次
   全市场真实扫描，再对缺失项最多三只做一次批量实时请求，最后串行查询精确同档一分钟
   `stk_mins` close。交易日只认 `trade_cal` 的开市日；不得以工作日猜节假日。
+- `trade_cal` 仅允许受控 `tushare_15000` 普通 Pro 路线因缺供应商生成时间产生的预期
+  DEGRADED：字段必须精确为 `exchange/cal_date/is_open/pretrade_date`，`received_ts`
+  必须合法，日期必须在请求区间且开市状态不得矛盾。其他 DEGRADED、STALE/STOPPED、空响应、
+  越界或 schema 变化全部 fail closed。
 - 复盘行情的价格、源时间、日期、质量和成交状态必须同时有效；停牌、零价、错日、过期、
   缺源时间或无成交统一 pending/unavailable，不得伪装为亏损或进入胜率分母。
 - `native_realtime` 是独立实时 profile：每批最多 800 只、请求启动间隔经上述共享预算控制，
