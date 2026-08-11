@@ -62,7 +62,8 @@
 | Windows/Tushare 目标 pytest 集 | exit `0` | 143 项通过 |
 | `uv run ruff check .` | exit `0` | 全部通过 |
 | `uv run mypy src tests` | exit `1` | 仅 `ui/macos.py` 的 Foundation/ignore 两项 |
-| `uv run python scripts/validate_workspace.py` | exit `0` | 29 个必需文件通过 |
+| `uv run python scripts/validate_workspace.py`（首次） | exit `1` | 源码树内本机生成的 `build/`、`dist/` 含二进制；保留首个真实失败 |
+| 移出本机生成物后再次执行 workspace validator | exit `0` | 29 个必需文件通过；没有删除或修改源码 |
 | `uv run python scripts/check_windows_package.py` | exit `0` | offline package contract 通过 |
 | `git diff --check` | exit `0` | 通过 |
 | PyInstaller Windows bundle | exit `0` | `StockWatcher.exe` 成功生成 |
