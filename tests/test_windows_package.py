@@ -148,6 +148,24 @@ def test_powershell_python_version_probe_is_valid_and_preserves_supported_range(
         assert bool(eval(version_predicate, {"__builtins__": {}}, namespace)) is expected
 
 
+def test_powershell_setup_prefers_frozen_uv_sync_with_pip_fallback() -> None:
+    powershell = Path("scripts/windows/stockwatcher.ps1").read_text(encoding="utf-8-sig")
+    body = _function_body(powershell, "Invoke-Setup")
+
+    uv_lookup = "$uv = Get-Command uv.exe -ErrorAction SilentlyContinue"
+    uv_sync = '"sync", "--all-groups", "--frozen", "--project", $ProjectRoot'
+    pip_upgrade = '@("-m", "pip", "install", "--upgrade", "pip")'
+    editable_install = '@("-m", "pip", "install", "--upgrade", "-e", $ProjectRoot)'
+
+    assert uv_lookup in body
+    assert uv_sync in body
+    assert "if ($uv)" in body
+    assert "return" in body
+    assert pip_upgrade in body
+    assert editable_install in body
+    assert body.index(uv_lookup) < body.index(pip_upgrade)
+
+
 def test_powershell_preflight_preserves_arguments_and_native_failure_exit() -> None:
     powershell = Path("scripts/windows/stockwatcher.ps1").read_text(encoding="utf-8-sig")
     body = _function_body(powershell, "Invoke-Preflight")

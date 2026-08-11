@@ -1,16 +1,43 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 if TYPE_CHECKING:
     from stock_watcher.engine.candidates import CandidateBatch
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """Commit or roll back a context block, then release Windows file handles."""
+
+    _context_depth = 0
+
+    def __enter__(self) -> Self:
+        super().__enter__()
+        self._context_depth += 1
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> Literal[False]:
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self._context_depth -= 1
+            if self._context_depth <= 0:
+                self.close()
 
 
 @dataclass(slots=True)
@@ -25,9 +52,11 @@ class SQLiteStore:
 
     def connect(self) -> sqlite3.Connection:
         connection = (
-            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            sqlite3.connect(
+                f"file:{self.path}?mode=ro", uri=True, factory=_ClosingConnection
+            )
             if self.read_only
-            else sqlite3.connect(self.path)
+            else sqlite3.connect(self.path, factory=_ClosingConnection)
         )
         if not self.read_only:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -73,16 +102,70 @@ class SQLiteStore:
             self.path.parent.glob(f"{self.path.name}.pre-v*.bak"), reverse=True
         )
         for backup in candidates:
-            try:
-                with backup.open("rb") as handle:
-                    if handle.read(16) != self._SQLITE_MAGIC:
-                        continue
-            except OSError:
+            if not self._is_valid_sqlite_backup(backup):
                 continue
-            corrupt = self.path.with_suffix(f"{self.path.suffix}.corrupt")
-            corrupt.unlink(missing_ok=True)
-            self.path.replace(corrupt)
-            shutil.copy2(backup, self.path)
+
+            try:
+                staging = self._stage_validated_backup(backup)
+            except (OSError, sqlite3.DatabaseError) as exc:
+                self._raise_blocked_recovery(
+                    backup,
+                    reason="verified backup could not be staged safely",
+                    cause=exc,
+                )
+            corrupt = self._next_corrupt_path()
+            moved_sidecars: list[tuple[Path, Path]] = []
+            main_moved = False
+            try:
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(f"{self.path}{suffix}")
+                    if not sidecar.exists():
+                        continue
+                    preserved = Path(f"{corrupt}{suffix}")
+                    sidecar.replace(preserved)
+                    moved_sidecars.append((sidecar, preserved))
+
+                # Both renames stay in one directory. Windows refuses the first
+                # rename while an external handle is live, leaving the active
+                # path untouched; the validated staging file is installed only
+                # after the damaged main file is safely quarantined.
+                self.path.replace(corrupt)
+                main_moved = True
+                staging.replace(self.path)
+            except OSError as exc:
+                rollback_error: OSError | None = None
+                if main_moved:
+                    try:
+                        corrupt.replace(self.path)
+                        shutil.copy2(self.path, corrupt)
+                    except OSError as rollback_exc:
+                        rollback_error = rollback_exc
+                else:
+                    try:
+                        shutil.copy2(self.path, corrupt)
+                    except OSError as preserve_exc:
+                        rollback_error = preserve_exc
+                for sidecar, preserved in reversed(moved_sidecars):
+                    if preserved.exists() and not sidecar.exists():
+                        try:
+                            preserved.replace(sidecar)
+                        except OSError as rollback_exc:
+                            rollback_error = rollback_exc
+                try:
+                    staging.unlink(missing_ok=True)
+                except OSError as cleanup_exc:
+                    rollback_error = cleanup_exc
+                self._raise_blocked_recovery(
+                    backup,
+                    reason=(
+                        "damaged database rollback was incomplete; restore deferred"
+                        if rollback_error is not None
+                        else "damaged database is still in use; restore deferred"
+                    ),
+                    cause=rollback_error or exc,
+                    corrupt=corrupt,
+                )
+
             match = re.search(r"pre-v(\d+)\.bak$", backup.name)
             self.last_recovery = {
                 "restored_at": datetime.now().isoformat(),
@@ -98,6 +181,74 @@ class SQLiteStore:
         }
         raise sqlite3.DatabaseError(self.last_recovery["reason"])
 
+    @classmethod
+    def _is_valid_sqlite_backup(cls, path: Path) -> bool:
+        """Reject header-only lookalikes before they can replace the active database."""
+
+        try:
+            with path.open("rb") as handle:
+                if handle.read(16) != cls._SQLITE_MAGIC:
+                    return False
+            uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
+            connection = sqlite3.connect(uri, uri=True)
+            try:
+                result = connection.execute("PRAGMA integrity_check").fetchone()
+                return result is not None and str(result[0]) == "ok"
+            finally:
+                connection.close()
+        except (OSError, sqlite3.DatabaseError):
+            return False
+
+    def _stage_validated_backup(self, backup: Path) -> Path:
+        """Copy a backup beside the live database and validate the exact staged bytes."""
+
+        descriptor, raw_path = tempfile.mkstemp(
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.restore-",
+            suffix=".sqlite3",
+        )
+        os.close(descriptor)
+        staging = Path(raw_path)
+        try:
+            shutil.copy2(backup, staging)
+            if not self._is_valid_sqlite_backup(staging):
+                raise sqlite3.DatabaseError("staged SQLite backup failed integrity_check")
+            return staging
+        except (OSError, sqlite3.DatabaseError):
+            staging.unlink(missing_ok=True)
+            raise
+
+    def _next_corrupt_path(self) -> Path:
+        """Allocate a forensic filename without deleting evidence from an earlier attempt."""
+
+        base = self.path.with_suffix(f"{self.path.suffix}.corrupt")
+        candidate = base
+        suffix = 1
+        while any(Path(f"{candidate}{ending}").exists() for ending in ("", "-wal", "-shm")):
+            candidate = base.with_name(f"{base.name}.{suffix}")
+            suffix += 1
+        return candidate
+
+    def _raise_blocked_recovery(
+        self,
+        backup: Path,
+        *,
+        reason: str,
+        cause: Exception,
+        corrupt: Path | None = None,
+    ) -> None:
+        """Fail closed when the live database cannot be replaced safely."""
+
+        self.read_only = True
+        self.last_recovery = {
+            "restored": False,
+            "reason": reason,
+            "source_backup": backup.name,
+        }
+        if corrupt is not None and corrupt.exists():
+            self.last_recovery["preserved_corrupt_file"] = corrupt.name
+        raise sqlite3.OperationalError(reason) from cause
+
     def _schema_version(self, connection: sqlite3.Connection) -> int:
         row = connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
@@ -109,8 +260,13 @@ class SQLiteStore:
         if not self.path.exists() or version == 0:
             return
         backup = self.path.with_suffix(f"{self.path.suffix}.pre-v{version + 1}.bak")
-        with sqlite3.connect(self.path) as source, sqlite3.connect(backup) as target:
+        source = sqlite3.connect(self.path)
+        target = sqlite3.connect(backup)
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
         if version not in (0, 1, 2, 3, 4, 5):
@@ -1082,15 +1238,25 @@ class SQLiteStore:
 
     def backup(self, destination: Path) -> Path:
         self.initialize()
-        with self.connect() as source, sqlite3.connect(destination) as target:
+        source = self.connect()
+        target = sqlite3.connect(destination)
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
         return destination
 
     def rollback(self, backup: Path) -> None:
         if not backup.exists():
             raise FileNotFoundError(backup)
-        with sqlite3.connect(backup) as source, self.connect() as target:
+        source = sqlite3.connect(backup)
+        target = self.connect()
+        try:
             source.backup(target)
+        finally:
+            target.close()
+            source.close()
         with self.connect() as connection:
             if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                 raise RuntimeError("rollback database failed integrity check")

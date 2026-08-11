@@ -1,0 +1,214 @@
+# Windows Tushare V1 交接（2026-08-11）
+
+> 结论：`WINDOWS_SMOKE_PASS`；应用已达到 Windows 内部试用可启动、可保存凭据、可准备
+> 基础数据的状态。Human Owner 已报告交易日实际使用基本可用，但仓库内没有本轮连续
+> 30 分钟 M0 的脱敏逐轮指标，因此不得据此写成权威 `M0 PASS` 或商业发布完成。
+
+## 1. 交接基线
+
+- 仓库：`HazelKahlil/StockWatcher`。
+- 远端基线：`origin/main@6b7936f795fb93e0babebb7bd70b6c767cadd83e`。
+- 基线 parent：`67ba7b73aee4ea8b21a8d8d4badcd1129e2e066c`、
+  `30595f9f2d4a462b87cee390f8631e1a97158fca`。
+- 发布分支：`publish/v0.3.1-windows-smoke`；最终源码审查 head 为
+  `bc8162510c16510e00054b9feb3f419fc619a9ef`，其后的提交仅更新验证文档。
+- 原执行分支：`windows/internal-test-v1`；没有使用旧 `fix/HAZ-418-blockers`。
+- 当前正常数据路线：Tushare Primary Pro + `tushare.realtime_quote(src="sina")`。
+- TdxQuant 只保留可选诊断；本轮没有启动 `TdxW.exe`，也没有把 TQ 作为启动门。
+
+## 2. Windows 环境
+
+| 项目 | 现场值 |
+| --- | --- |
+| Windows | Windows 11 Home 10.0.26200，x64 |
+| Python | 3.12.10 |
+| PowerShell | 7.6.4 |
+| uv | 0.11.30 |
+| PyInstaller | 6.21.0 |
+| GitHub CLI | 2.97.0 |
+
+没有关闭 Defender、防火墙、Application Control 或 PowerShell 执行策略，没有使用管理员
+权限绕过失败。GitHub 直连在本机超时，发布操作仅对相关进程临时使用已启用的本机系统代理；
+没有修改全局代理配置。
+
+## 3. 本 PR 的源码改动
+
+### 3.1 Windows 依赖同步
+
+`pyobjc-framework-cocoa` 原为无平台条件的直接依赖，Windows 执行
+`uv sync --all-groups` 时会尝试构建 PyObjC，并以 `PyObjC requires macOS to build`
+失败。现在依赖只在 `sys_platform == 'darwin'` 时启用，并由 `uv` 更新锁文件。
+
+这不删除 Mac 依赖，也不改变 Tushare、候选、提醒或业务规则。锁文件同时包含当前
+`uv` 对若干传递依赖 marker 的规范化结果，review 时应与 `pyproject.toml` 一起核对。
+
+### 3.2 Windows SQLite 损坏恢复
+
+损坏库恢复原先用 `Path.replace()` 把主库重命名为 `.corrupt`。Windows 上若 SQLite
+外部句柄仍保持打开，会得到 `PermissionError: [WinError 32]`，恢复流程在保存损坏副本前
+中断。
+
+Windows 初始回传曾在 `PermissionError` 后先复制 `.corrupt`，再直接覆盖仍可能被占用的
+活动路径。macOS 合并前安全评审判定该做法可能与外部 SQLite 句柄及旧 WAL/SHM 竞态，
+因此没有按原实现合并。
+
+评审后恢复链改为：对候选备份做 `integrity_check`，复制到主库同目录 staging 后再次校验，
+为损坏主库分配不覆盖历史证据的 `.corrupt[.N]` 文件，隔离同名 WAL/SHM，再以同目录的
+两次原子重命名先隔离损坏主库、后安装 staging。Windows 外部句柄仍占用时，第一次重命名
+即失败，原数据库路径和备份都保持不变，恢复进入
+只读失败状态并等待句柄释放；不会向活动文件原地写入备份字节。新增回归测试覆盖
+`PermissionError`、坏的最新备份、旧 WAL/SHM、staging 清理和连接上下文显式释放；后者
+避免 Python 的 SQLite 上下文只提交但不关闭，从而在 Windows 留下 WAL 文件句柄。
+
+Windows 一键 Setup 也改为优先执行 `uv sync --all-groups --frozen`。这兼容 `uv` 创建的
+无 pip 锁定环境；只有机器没有 `uv.exe` 时，才保留原 Python venv/pip 兼容路径。
+
+## 4. 当前验证证据
+
+以下均在上述 Windows 真机、发布分支工作树执行；默认 pytest 不包含 `live_tushare`：
+
+| 命令 / 检查 | 结果 | 说明 |
+| --- | --- | --- |
+| `uv sync --all-groups` | exit `0` | 67 packages resolved，56 packages checked |
+| `uv run pytest` | exit `1` | `369 passed, 3 skipped, 2 deselected, 3 failed` |
+| Windows/Tushare 目标 pytest 集 | exit `0` | 143 项通过 |
+| `uv run ruff check .` | exit `0` | 全部通过 |
+| `uv run mypy src tests` | exit `1` | 仅 `ui/macos.py` 的 Foundation/ignore 两项 |
+| `uv run python scripts/validate_workspace.py`（首次） | exit `1` | 源码树内本机生成的 `build/`、`dist/` 含二进制；保留首个真实失败 |
+| 移出本机生成物后再次执行 workspace validator | exit `0` | 29 个必需文件通过；没有删除或修改源码 |
+| `uv run python scripts/check_windows_package.py` | exit `0` | offline package contract 通过 |
+| `git diff --check` | exit `0` | 通过 |
+| PyInstaller Windows bundle | exit `0` | `StockWatcher.exe` 成功生成 |
+
+全量 pytest 的 3 个失败全部位于 `tests/test_macos_port.py`：
+
+1. `test_single_instance_guard_wakes_existing_window`
+2. `test_single_instance_guard_does_not_silently_exit_without_ack`
+3. `test_single_instance_guard_reports_version_conflict_without_replacing_primary`
+
+它们在 Windows 上执行 macOS 单实例实现并得到第二实例也能 acquire 的结果。PR 后续为这
+3 项增加了明确的 Darwin 平台 marker，并保留全部 macOS 断言；全量 Mypy 的两项平台错误
+也通过仅针对 `stock_watcher.ui.macos` 的配置处理。没有删除测试或放宽 macOS 行为合同。
+
+SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前的首个 Windows 失败
+`WinError 32` 已保留在交接说明中，没有通过重复运行掩盖。
+
+合并前 macOS 安全评审后的工程门（包含上述恢复链修正）为：
+
+| 命令 / 检查 | 结果 |
+| --- | --- |
+| `uv lock --check` | exit `0` |
+| `uv sync --all-groups --frozen` | exit `0`；Darwin PyObjC 正常解析 |
+| `uv run pytest` | exit `0`；`359 passed, 20 skipped, 2 deselected` |
+| `uv run ruff check .` | exit `0` |
+| `uv run mypy src tests` | exit `0`；109 source files |
+| `uv run python scripts/validate_workspace.py` | exit `0`；29 个必需文件 |
+| `uv run python scripts/check_windows_package.py` | exit `0`；仅离线 contract |
+| `git diff --check` | exit `0` |
+
+最终 GitHub Actions Governance run
+[`31478494946`](https://github.com/HazelKahlil/StockWatcher/actions/runs/31478494946)
+在源码 head `bc81625` 上完成：
+
+| CI 检查 | 结果 |
+| --- | --- |
+| workspace-integrity | exit `0` |
+| Windows Python 3.11 pytest | exit `0`；`373 passed, 6 skipped, 2 deselected` |
+| Windows Python 3.12 pytest | exit `0`；`373 passed, 6 skipped, 2 deselected` |
+| 两个矩阵的 Ruff / Mypy | exit `0`；Mypy 109 source files |
+| PowerShell Setup / fail-closed Preflight / package contract | exit `0` |
+| PyInstaller folder / Inno Setup installer / artifact upload | exit `0` |
+
+以上 macOS 与 CI 结果关闭源码审查 P1，并证明 PR head 可在 Windows runner 重建；它们不冒充
+安全修正后在 Human Owner Windows 机器上的 UI 重装、通知、断网恢复或交易时段 M0 复测。
+
+## 5. 应用安装与真实启动
+
+- PyInstaller bundle 是本机生成物，不进入 Git。
+- bundle 已移到当前用户的 `%LOCALAPPDATA%\Programs\StockWatcher`。
+- 桌面快捷方式为 `StockWatcher Windows.lnk`，指向上述 bundle。
+- 移动后的打包应用重新启动成功，窗口标题为 `StockWatcher · 当前观察`，进程响应正常。
+- 启动过程没有出现 UAC，没有新增 `TdxW.exe`，关闭后没有 StockWatcher 残留进程。
+- 本机没有 Inno Setup，因此没有生成或验证 Inno Setup 安装器，也没有宣称安装/卸载/回滚
+  已通过；当前交付形态是 portable bundle + 普通用户桌面快捷方式。
+- GitHub Windows runner 已从 PR head 编译并上传 Inno/PyInstaller 制品，但没有在 Human Owner
+  机器执行安装、卸载或回滚，因此不改变上一条现场边界。
+- 构建缓存已移出源码工作树保留；`validate_workspace.py` 随后恢复通过。
+
+本机 bundle 与桌面快捷方式只是现场使用资产，不是源码真源。下一位开发者应从 PR commit
+重新构建，不复制此机器上的 `build/`、`dist/`、数据库、缓存或日志。
+
+## 6. 凭据与数据状态
+
+- Human Owner 只在应用隐藏输入框内输入并确认保存 Tushare Primary 凭据。
+- 只读检查确认 Windows 安全存储中存在 Primary 凭据条目；没有读取或回显凭据值。
+- 非秘密配置显示 `mode=tushare_15000`、Primary profile enabled。
+- 保存后全市场基础缓存得到更新，说明基础连接、保存和基础数据准备链路已实际运行。
+- Human Owner 于 2026-08-11 报告交易日测试完毕、整体基本可用；没有把用户名、完整用户
+  目录、行情响应体、HTTP body、持仓、订单或交易账户数据写入仓库。
+
+上述事实足以支持 `WINDOWS_SMOKE_PASS` 和内部试用交接，但不足以单独证明连续 30 分钟
+实时 M0 的 p50/p95、错误率、停滞恢复、逐行新鲜度和三周期预热全部达标。测试凭据若曾在
+安全 UI 以外暴露，应由 Human Owner 在下一次正式验收前轮换。
+
+## 7. 明确未完成项
+
+1. 仓库内没有本轮连续至少 30 分钟、可审计且脱敏的交易时段 M0 报告。
+2. 没有在本轮重新完成一个完整交易日、09:45/14:45、强异动与 15:30 总结的全套证据。
+3. Windows 通知、多屏、冷启动、睡眠/断网恢复仍需目标机专项验收。
+4. Inno Setup 编译已在 CI 通过，但目标机安装、卸载、回滚和签名包仍未验证。
+5. GitHub Actions 有 Node.js 20 action 弃用提示；当前 runner 强制 Node.js 24 后通过，后续需
+   在独立维护改动中升级 action 主版本。
+6. 安全修正后的 Windows portable 尚未从合并后的最新 `main` 在目标机重建；当前安装资产仍对应原始
+   Windows smoke 源码快照。
+
+这些欠项不阻塞本次 Windows smoke 修复回传，但阻塞将版本表述为商业稳定发布或权威
+Windows M0 完成。
+
+## 8. PR review 重点
+
+1. 确认 PyObjC marker 只限制 Windows，不会让 Darwin 丢失 Cocoa 依赖。
+2. 回读 macOS 完整工程门，确认 Darwin 依赖仍正常锁定和安装。
+3. 复核 SQLite `PermissionError` 路径保持活动数据库不变，并隔离旧 WAL/SHM。
+4. 确认 PR 没有测试删除、断言放宽、secret、运行数据库、日志、行情缓存或 bundle。
+5. 合并后更新 Mac 本地权威 `main`，再从新的 Windows fresh clone 重建，不复制本机产物。
+
+## 9. 下一位 Agent 的直接执行顺序
+
+1. 读取 `AGENTS.md`、`docs/README.md`、`docs/project/index.md`、
+   `docs/process/index.md`、`docs/process/rules/security.md`、
+   `docs/process/rules/storage.md`、本版本 README 和本文件。
+2. fetch Draft PR，核对 base 为 `main@6b7936f`、head 为
+   `publish/v0.3.1-windows-smoke`，先 review diff，不读取任何现场凭据或运行数据。
+3. 回读 macOS 已完成的 Darwin 依赖与全量工程门；后续需要打包时，从合并后的最新 `main`
+   在 Windows 重建并复跑本文件第 4 节命令。
+4. 不把 TdxQuant 恢复为正常启动门，不启动 `TdxW.exe`，不连接券商或调用下单接口。
+5. 如需提升为正式 Windows M0，另起明确验收任务并输出脱敏指标，不改写本 handoff 的
+   smoke 结论。
+
+## 10. 可复制交接提示词
+
+```text
+你现在接手 StockWatcher 的 Windows Tushare V1 回传审查。
+
+仓库：HazelKahlil/StockWatcher
+Base：main@6b7936f795fb93e0babebb7bd70b6c767cadd83e
+Head：publish/v0.3.1-windows-smoke
+
+先完整阅读 AGENTS.md、docs/README.md、docs/process/index.md、
+docs/process/rules/security.md、docs/process/rules/storage.md、
+docs/visions/v0.3.1-windows-tushare-data-gate/README.md 和
+docs/visions/v0.3.1-windows-tushare-data-gate/windows-20260811-handoff.md。
+
+本 PR 只回传两个 Windows 可移植性修复：PyObjC 限定 Darwin，以及 SQLite 损坏恢复改为
+校验 staging、保留 .corrupt/WAL/SHM 并在 WinError 32 时 fail closed；不要改业务规则、
+锁定需求或数据供应商路线。正常入口是 Tushare，TdxQuant 仅为可选诊断。
+
+请先 review diff 和 secret/二进制边界，再在 macOS 验证 uv lock/sync、pytest、ruff、mypy、
+workspace validator；Windows 结果按 handoff 逐项复核。不得读取或索取 Token、账号、持仓、
+订单、HTTP body，不得连接券商、下单、绕过 UAC/Defender/执行策略，也不得把 Human Owner
+“基本可用”的反馈写成权威 30 分钟 M0 PASS。
+
+最终只给出：可否合并、P0/P1/P2 review 发现、各命令 exit code、仍需 owner 的验收项，
+以及合并后 Mac 本地 main 与 Windows fresh clone 的同步步骤。
+```

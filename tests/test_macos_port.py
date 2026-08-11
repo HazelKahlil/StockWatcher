@@ -143,6 +143,7 @@ def test_macos_keyring_store_reports_native_keychain_and_ui_copy(
     dialog.close()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS QLocalServer lifecycle contract")
 def test_single_instance_guard_wakes_existing_window() -> None:
     app = application()
     name = f"stockwatcher-test-{uuid.uuid4().hex}"
@@ -185,6 +186,7 @@ def test_single_instance_guard_wakes_existing_window() -> None:
         primary.close()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS QLocalServer lifecycle contract")
 def test_single_instance_guard_does_not_silently_exit_without_ack() -> None:
     application()
     name = f"stockwatcher-no-ack-{uuid.uuid4().hex}"
@@ -203,6 +205,7 @@ def test_single_instance_guard_does_not_silently_exit_without_ack() -> None:
         primary.close()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS QLocalServer lifecycle contract")
 def test_single_instance_guard_reports_version_conflict_without_replacing_primary() -> None:
     application()
     name = f"stockwatcher-conflict-{uuid.uuid4().hex}"

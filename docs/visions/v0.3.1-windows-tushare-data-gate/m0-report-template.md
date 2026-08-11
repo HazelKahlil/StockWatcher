@@ -51,4 +51,3 @@
 - 候选门：OPEN / WARMING / STOPPED
 - 原始响应保存：必须为 false
 - 凭据保存到报告：必须为 false
-

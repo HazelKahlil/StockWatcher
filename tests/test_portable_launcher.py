@@ -271,6 +271,8 @@ def test_normal_success_path_launches_tushare_without_tdx_preflight(
 ) -> None:
     module = _load_module()
     calls: list[str] = []
+    monkeypatch.setattr(module.sys, "version_info", (3, 12, 0))
+    monkeypatch.setattr(module.sys, "maxsize", 2**63 - 1)
     monkeypatch.setattr(module, "validate_application", lambda _layout: calls.append("layout"))
     monkeypatch.setattr(module, "missing_dependencies", lambda: ())
 
@@ -299,6 +301,8 @@ def test_tdx_preflight_failure_does_not_block_normal_tushare_launch(
 ) -> None:
     module = _load_module()
     calls: list[str] = []
+    monkeypatch.setattr(module.sys, "version_info", (3, 12, 0))
+    monkeypatch.setattr(module.sys, "maxsize", 2**63 - 1)
     monkeypatch.setattr(module, "validate_application", lambda _layout: None)
     monkeypatch.setattr(module, "missing_dependencies", lambda: ())
     monkeypatch.setattr(
