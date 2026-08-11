@@ -315,6 +315,22 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
         assert 'style="' not in content
 
 
+def test_dashboard_refresh_retries_transient_command_poll_failures() -> None:
+    root = Path(__file__).resolve().parents[1]
+    dashboard_script = (root / "src/stock_watcher/server/static/dashboard.js").read_text(
+        encoding="utf-8"
+    )
+    assert "const maxPollRetries = 4;" in dashboard_script
+    assert "let pollInFlight = false;" in dashboard_script
+    assert "连接暂时中断，正在重试" in dashboard_script
+    assert "连接持续中断，正在确认刷新状态" in dashboard_script
+    assert (
+        "await loadState();\n"
+        "              await finish('failed', '刷新连接中断，请稍后重试');"
+    ) in dashboard_script
+    assert "pollTimer = setInterval(poll, 2000)" not in dashboard_script
+
+
 def test_login_uses_external_script_compatible_with_csp() -> None:
     root = Path(__file__).resolve().parents[1]
     login_template = (root / "src/stock_watcher/server/templates/login.html").read_text(

@@ -396,13 +396,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     refreshButton.classList.add('is-working');
     refreshButton.textContent = '正在获取最新 3 只';
     let pollTimer = null;
+    let pollInFlight = false;
+    let consecutivePollFailures = 0;
+    let refreshFinished = false;
+    const maxPollRetries = 4;
     const stopPolling = () => {
       if (pollTimer) {
-        clearInterval(pollTimer);
+        clearTimeout(pollTimer);
         pollTimer = null;
       }
     };
+    const schedulePoll = () => {
+      if (refreshFinished || pollTimer) return;
+      pollTimer = setTimeout(() => {
+        pollTimer = null;
+        void poll();
+      }, 2000);
+    };
     const finish = async (state, label, shouldLoadState = false) => {
+      if (refreshFinished) return;
+      refreshFinished = true;
       stopPolling();
       finishRefreshProgress(startedAt, state, label);
       resetRefreshButton(refreshButton);
@@ -415,28 +428,59 @@ document.addEventListener('DOMContentLoaded', async () => {
         body: '{}',
       });
       const commandId = result.command_id;
-      const poll = async () => {
-        try {
-          const command = await apiJson(`/api/v1/commands/${commandId}`);
-          if (command.status === 'succeeded') {
-            await finish('done', '实时 Top3 已更新', true);
-          } else if (command.status === 'failed') {
-            const failure = refreshFailureLabels[command.error_code] || '刷新失败：未产生新候选';
-            await finish('failed', failure, true);
-          } else if (command.status === 'cancelled' || command.status === 'expired') {
-            await finish('failed', '刷新已停止：未产生新候选', true);
-          } else if (command.status === 'queued') {
-            updateRefreshProgress(startedAt, 'working', '已排队，等待 Worker 领取');
-          } else if (command.status === 'running') {
-            updateRefreshProgress(startedAt, 'working', 'Worker 正在扫描全市场');
-          } else if (Date.now() - startedAt > refreshCommandWaitMs) {
-            await finish('timeout', 'Worker 仍未完成，请查看状态后再重试', true);
-          }
-        } catch {
-          await finish('failed', '刷新连接中断，请稍后重试');
+      const handleCommand = async (command) => {
+        if (refreshFinished) return;
+        if (command.status === 'succeeded') {
+          await finish('done', '实时 Top3 已更新', true);
+        } else if (command.status === 'failed') {
+          const failure = refreshFailureLabels[command.error_code] || '刷新失败：未产生新候选';
+          await finish('failed', failure, true);
+        } else if (command.status === 'cancelled' || command.status === 'expired') {
+          await finish('failed', '刷新已停止：未产生新候选', true);
+        } else if (command.status === 'queued') {
+          updateRefreshProgress(startedAt, 'working', '已排队，等待 Worker 领取');
+          schedulePoll();
+        } else if (command.status === 'running') {
+          updateRefreshProgress(startedAt, 'working', 'Worker 正在扫描全市场');
+          schedulePoll();
+        } else if (Date.now() - startedAt > refreshCommandWaitMs) {
+          await finish('timeout', 'Worker 仍未完成，请查看状态后再重试', true);
+        } else {
+          schedulePoll();
         }
       };
-      pollTimer = setInterval(poll, 2000);
+      const poll = async () => {
+        if (refreshFinished || pollInFlight) return;
+        pollInFlight = true;
+        try {
+          const command = await apiJson(`/api/v1/commands/${commandId}`);
+          consecutivePollFailures = 0;
+          await handleCommand(command);
+        } catch {
+          consecutivePollFailures += 1;
+          if (consecutivePollFailures <= maxPollRetries) {
+            updateRefreshProgress(
+              startedAt,
+              'working',
+              `连接暂时中断，正在重试（${consecutivePollFailures}/${maxPollRetries}）`,
+            );
+            schedulePoll();
+          } else {
+            updateRefreshProgress(startedAt, 'working', '连接持续中断，正在确认刷新状态');
+            try {
+              const command = await apiJson(`/api/v1/commands/${commandId}`);
+              consecutivePollFailures = 0;
+              await handleCommand(command);
+            } catch {
+              await loadState();
+              await finish('failed', '刷新连接中断，请稍后重试');
+            }
+          }
+        } finally {
+          pollInFlight = false;
+        }
+      };
+      schedulePoll();
       await poll();
     } catch {
       await finishRefreshProgress(startedAt, 'failed', '刷新请求未开始');
