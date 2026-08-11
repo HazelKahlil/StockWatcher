@@ -6,6 +6,10 @@
 
 ### Mainline
 
+- 2026-08-11：在 `0.6.0a1` 增加桌面端“次日同点复盘”：正式 09:45/14:45 三只候选按
+  下一真实交易日同档行情做理论复盘，展示近 5/20 个入选交易日与全部记录的个股胜率、
+  平均/中位收益、分档统计和完整六笔日组合胜率。功能不连接交易账户、不自动下单，且
+  复盘失败不得阻塞原实时扫描、Top3、提醒或弹窗。
 - 2026-08-11：建立 `v0.4.0-alpha.2` Mac / Web / Windows 内部试用源码基准；Shared Core
   应用代码为 `ad04e39`，Web 固定 `bf447ba` 并继续 `BLOCKED / NOT_ACCEPTED`，Windows
   PR #4 已达到 `WINDOWS_SMOKE_PASS`。该版本不代表权威 M0、完整三平台验收或商业稳定。
@@ -25,6 +29,9 @@
 
 ### Changed
 
+- SQLite 从 v6 升到 v7，新增独立保留至少一年的 `candidate_outcomes`；迁移继续使用前置
+  备份、事务回滚、`integrity_check` 与只读降级，复盘记录不随 31 天提醒历史清理删除。
+- Mac/Windows 重建元数据提升为 `0.6.0-alpha.1`；本轮未构建、覆盖或重装现有 App。
 - V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
   `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
   TdxQuant 只留在高级诊断。
@@ -53,6 +60,12 @@
 
 ### Added
 
+- 固定候选复盘旁路：优先复用下一交易日全市场扫描，对缺失项最多三只单次批量实时补查，
+  再以 `stk_mins` 精确 09:45/14:45 一分钟 close 串行回补；零价、错日、过期、停牌、
+  无成交或质量不足均标为 pending/unavailable，不计入胜率分母。日历与补查在独立单线程
+  旁路运行，不延迟固定提醒；补位/非正式候选不会进入新记录或历史回补。
+- 历史窗口新增“提醒记录 / 次日复盘”标签和近 1 周、近 1 月、全部切换；数据库查询继续在
+  Qt 工作线程运行，并提供 empty/pending/settled 确定性截图脚本。
 - 独立 macOS PyInstaller spec：生成本机 arm64 `StockWatcher.app`，包含 Retina 配置与
   macOS 留白图标，排除 Windows/TdxQuant 诊断入口；支持 ad-hoc 签名和内部安装验收。
 - Mac V1 平台层：Application Support/Logs 路径分离、实际 Keychain backend 校验、系统钥匙串

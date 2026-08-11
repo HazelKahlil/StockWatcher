@@ -10,6 +10,20 @@
     "three_platform_acceptance": false,
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
+  "candidate_outcomes": {
+    "python_version": "0.6.0a1",
+    "package_version": "0.6.0-alpha.1",
+    "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
+    "source_branch": "feat/candidate-outcomes",
+    "implementation_commit": null,
+    "status": "local_code_complete_offline_verified",
+    "schema_version": 7,
+    "validation": "379 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check and diff check passed on macOS",
+    "real_trading_time_validation": false,
+    "installed_app_rebuilt": false,
+    "github_synced": false,
+    "note": "Formal scheduled Top3 theoretical next-session same-slot review only; no trading account, no order execution, and no claim of live 09:45/14:45 acceptance."
+  },
   "shared_core": {
     "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
     "status": "internal_trial_baseline",

@@ -10,7 +10,8 @@
 6. `docs/process/index.md`、`docs/process/boundaries.md` 与命中的安全/存储规则
 7. `docs/visions/README.md`
 8. `docs/visions/v0.4.0-alpha.2-internal-baseline/README.md`
-9. 目标轨道的 `docs/tracks/*.md`
+9. 当前后继开发读取 `docs/visions/v0.6-candidate-outcomes/README.md`
+10. 目标轨道的 `docs/tracks/*.md`
 
 ## 权威事实
 

@@ -4,6 +4,7 @@
 
 | 轨道 | 权威代码基线/分支 | 当前证据 | 未完成/阻塞 | 结论 |
 | --- | --- | --- | --- | --- |
+| 次日同点复盘 | `feat/candidate-outcomes`，基于 `main@e8df598c`，开发版本 `0.6.0a1` / SQLite v7 | macOS 离线 `379 passed, 20 skipped, 2 deselected`；Ruff/Mypy/validator/lock/package contract/diff 全绿；三态 UI 截图已检查 | 真实下一交易日 09:45/14:45 同点结算、错过时点回补和目标机重建未现场验收 | `local_code_complete_offline_verified` |
 | Shared Core | `main` 应用代码 `ad04e392158c7050f84e0318fe1d53aaa0370c34` / `0.4.0a2` | `363 passed, 20 skipped, 2 deselected`；Ruff/Mypy/validator/lock/package contract 全绿 | 真实交易时段证据不能由离线门替代 | `internal_trial_source_baseline` |
 | App Mac | 已安装版记录 `SOURCE_COMMIT=88ccf49f...`；重建源码为 `ad04e39` | 既有 arm64/ad-hoc、Keychain、SQLite、PDF、单实例和窗口行为证据保留 | 安装资产未重建为 alpha.2；固定时点、15:30 与真实恢复仍待补验 | `internal_trial` |
 | Web | `web/internal-test-v1@bf447ba` | `434 passed, 25 skipped, 2 deselected`；Ruff/Mypy/validator/JS 全绿；Mac Docker 容器运行且公网 HTTP 200 | 完整交易日、通知/重放、断线与备份恢复；浏览器关闭后的 Web Push 未实现 | **`BLOCKED / NOT_ACCEPTED`** |
@@ -14,3 +15,4 @@
 - Web 的 Mac Docker、CI 和公网可达不证明生产稳定，也不解除 `BLOCKED / NOT_ACCEPTED`。
 - Mac 的实时 Top3、通知和安装证据不证明 Windows；Windows CI 不证明目标机完整交易日。
 - `v0.4.0-alpha.2` 是可重建/回滚版本节点，不是投资建议、自动交易能力或稳定发行批准。
+- `0.6.0a1` 的离线工程门与截图不等于真实次日同点行情验收，也不表示已安装 App 已升级。

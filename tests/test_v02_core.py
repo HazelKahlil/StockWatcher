@@ -312,28 +312,29 @@ def test_corrupt_database_switches_to_read_only_degradation(tmp_path: Path) -> N
     assert store.read_only
 
 
-def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> None:
+def test_sqlite_explicit_v6_to_v7_migration_is_idempotent(tmp_path: Path) -> None:
     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
     empty_store.initialize()
     with empty_store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
 
     path = tmp_path / "watcher.sqlite3"
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
         )
-        connection.execute("INSERT INTO schema_version VALUES (5, '2026-08-06T09:45:00+08:00')")
+        connection.execute("INSERT INTO schema_version VALUES (6, '2026-08-06T09:45:00+08:00')")
         SQLiteStore._apply_v1_schema(connection)
         SQLiteStore._apply_v2_migration(connection)
         SQLiteStore._apply_v3_migration(connection)
         SQLiteStore._apply_v4_migration(connection)
         SQLiteStore._apply_v5_migration(connection)
+        SQLiteStore._apply_v6_migration(connection)
     store = SQLiteStore(path)
     store.initialize()
     store.initialize()
     with store.connect() as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(runtime_sessions)")
@@ -348,8 +349,11 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'runtime_events'"
         ).fetchone() == ("runtime_events",)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'candidate_outcomes'"
+        ).fetchone() == ("candidate_outcomes",)
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-    assert path.with_suffix(".sqlite3.pre-v6.bak").exists()
+    assert path.with_suffix(".sqlite3.pre-v7.bak").exists()
 
 
 def test_runtime_session_and_scan_attempt_lifecycle_is_auditable(tmp_path: Path) -> None:
@@ -1013,7 +1017,7 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     assert recovered.last_recovery is not None
     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
     with closing(recovered.connect()) as connection, connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (6,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (7,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'probe'"
         ).fetchone() == ("kept",)

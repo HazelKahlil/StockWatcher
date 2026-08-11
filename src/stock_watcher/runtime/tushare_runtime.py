@@ -138,6 +138,7 @@ class ScanOutcome:
     stale_excluded_count: int = 0
     unavailable_excluded_count: int = 0
     selection_audit: CandidateSelectionAudit | None = None
+    quotes: tuple[RealtimeQuote, ...] = ()
 
 
 class TushareBootstrapLoader:
@@ -607,7 +608,7 @@ class TushareV1Runtime:
         self.movement_detector = movement_detector or StrongMovementDetector()
         self.candidate_config = candidate_config or CandidateConfig(
             version="v1-real-candidates-20260729",
-            app_version="0.4.0a2",
+            app_version="0.6.0a1",
         )
         self.universe_cache = universe_cache
         self.universe_seed_path = universe_seed_path
@@ -883,6 +884,7 @@ class TushareV1Runtime:
             stale_excluded_count=scan.stale_excluded_count,
             unavailable_excluded_count=scan.unavailable_excluded_count,
             selection_audit=audit,
+            quotes=scan.quotes,
         )
 
 

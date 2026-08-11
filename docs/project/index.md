@@ -36,7 +36,7 @@
 | 语言 | Python 3.11/3.12；Tushare transport、解析、归一化与业务模型保持跨平台 |
 | 桌面 UI | PySide6；数据接口设置支持系统安全存储、先测试后切换和状态展示 |
 | 并发 | 单扫描协调器禁止重叠；provider、engine、UI 和持久化责任隔离 |
-| 数据库 | SQLite WAL v3；候选批次及三只明细原子保存 |
+| 数据库 | SQLite WAL v7；候选批次及三只明细原子保存，次日同点复盘独立保留至少一年 |
 | 配置 | YAML + Pydantic；锁定规则、软参数、用户设置和运行环境分层 |
 | 测试 | pytest + Replay/Synthetic；默认不需要 Token；真实 30 分钟使用独立脱敏脚本 |
 | 打包 | PyInstaller + Inno Setup；正常入口只使用 Tushare 单 Token，TdxQuant 为高级诊断 |
@@ -59,6 +59,9 @@ V1 已实现 `domain`、`providers`、`runtime`、`engine`、`storage` 和跨平
 并提供不冒充盘中证据的真实收盘回顾；Mac真实交易时段全市场与内部arm64 `.app`已有证据，
 Web 与 Windows 也各有独立 smoke/工程证据，但新鲜固定时点、15:30 准点、完整恢复会话和
 权威 Windows M0 仍未完成。
+
+`0.6.0a1` 后继开发在 Shared Core 增加 `candidate_outcomes` 旁路：只消费正式固定三只及
+可靠行情，不进入评分或提醒决策；Mac/Windows 共用，Web 独立测试线本轮不修改。
 
 ## 相关文档
 

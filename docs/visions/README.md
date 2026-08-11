@@ -5,6 +5,9 @@
 
 ## 活跃版本
 
+- **[v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md)** —
+  正式 09:45/14:45 三只候选的下一真实交易日同档理论复盘、SQLite v7、历史回补与桌面 UI
+  （状态：本地实现与离线工程验证；真实同点行情待交易日现场验收，未同步 GitHub）。
 - **[v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md)** —
   Mac / Web / Windows 当前状态的可重建内部试用基准（状态：源码基准；非商业发布、非权威
   M0；Web 继续 `BLOCKED / NOT_ACCEPTED`）。
@@ -41,6 +44,7 @@
 | [v0.4.2-macos-v1-port](v0.4.2-macos-v1-port/README.md) | 用共享 Tushare 核心完成 Mac 真机数据、平台行为与内部 `.app` | Mac V1 内部试用主线；新鲜固定时点与15:30准点仍待验收 | |
 | [v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md) | 固定 Mac / Web / Windows 可重建内部试用基准 | 源码基准；Web 未接受、Windows 非权威 M0 | 2026-08-11 |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
+| [v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md) | 下一真实交易日同档理论复盘、统计、历史回补与桌面 UI | 本地实现；真实同点行情待验收 | |
 
 ## 候选方向（尚未登记为执行版本）
 

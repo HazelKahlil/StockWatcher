@@ -45,9 +45,36 @@ class SQLiteStore:
     path: Path
     read_only: bool = False
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 6
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 7
 
     _SQLITE_MAGIC = b"SQLite format 3\x00"
+    _OUTCOME_COLUMNS: ClassVar[tuple[str, ...]] = (
+        "id",
+        "entry_snapshot_id",
+        "entry_alert_id",
+        "entry_trade_date",
+        "slot",
+        "rank",
+        "code",
+        "name",
+        "entry_price",
+        "entry_source_ts",
+        "target_trade_date",
+        "target_slot",
+        "exit_price",
+        "exit_source_ts",
+        "return_pct",
+        "status",
+        "outcome",
+        "settlement_method",
+        "quality",
+        "provider_version",
+        "config_version",
+        "app_version",
+        "created_at",
+        "updated_at",
+        "safe_reason",
+    )
     last_recovery: dict[str, object] | None = None
 
     def connect(self) -> sqlite3.Connection:
@@ -269,7 +296,7 @@ class SQLiteStore:
             source.close()
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3, 4, 5):
+        if version not in (0, 1, 2, 3, 4, 5, 6):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -285,6 +312,8 @@ class SQLiteStore:
                 self._apply_v5_migration(connection)
             if version <= 5:
                 self._apply_v6_migration(connection)
+            if version <= 6:
+                self._apply_v7_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -467,6 +496,44 @@ class SQLiteStore:
                 "ALTER TABLE alert_events ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"
             )
 
+    @staticmethod
+    def _apply_v7_migration(connection: sqlite3.Connection) -> None:
+        """Add independent, one-year candidate outcome records."""
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS candidate_outcomes ("
+            "id INTEGER PRIMARY KEY, "
+            "entry_snapshot_id INTEGER NOT NULL, entry_alert_id INTEGER NOT NULL, "
+            "entry_trade_date TEXT NOT NULL, "
+            "slot TEXT NOT NULL CHECK(slot IN ('09:45', '14:45')), "
+            "rank INTEGER NOT NULL CHECK(rank BETWEEN 1 AND 3), "
+            "code TEXT NOT NULL, name TEXT NOT NULL, "
+            "entry_price REAL NOT NULL CHECK(entry_price > 0), "
+            "entry_source_ts TEXT NOT NULL, target_trade_date TEXT, "
+            "target_slot TEXT NOT NULL CHECK(target_slot IN ('09:45', '14:45')), "
+            "exit_price REAL, exit_source_ts TEXT, return_pct REAL, "
+            "status TEXT NOT NULL CHECK(status IN ('pending', 'settled', 'unavailable')), "
+            "outcome TEXT CHECK(outcome IS NULL OR outcome IN ('win', 'loss', 'flat')), "
+            "settlement_method TEXT CHECK(settlement_method IS NULL OR settlement_method IN "
+            "('realtime_scan', 'realtime_batch', 'historical_minute')), "
+            "quality TEXT NOT NULL, provider_version TEXT NOT NULL, "
+            "config_version TEXT NOT NULL, app_version TEXT NOT NULL, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, safe_reason TEXT, "
+            "UNIQUE(entry_snapshot_id, slot, rank, code), "
+            "UNIQUE(entry_alert_id, slot, rank, code))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_pending "
+            "ON candidate_outcomes(status, target_trade_date, target_slot, rank)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_entry_date "
+            "ON candidate_outcomes(entry_trade_date DESC, slot, rank)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_code "
+            "ON candidate_outcomes(code, entry_trade_date DESC)"
+        )
+
 
     @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
@@ -489,6 +556,7 @@ class SQLiteStore:
             "runtime_sessions",
             "scan_attempts",
             "runtime_events",
+            "candidate_outcomes",
         }
         tables = {
             str(row[0])
@@ -1007,12 +1075,12 @@ class SQLiteStore:
         channel: str,
         trigger_type: str = "intraday",
         detail: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> int:
         if any(word in channel.lower() for word in ("token", "secret", "password", "account")):
             raise ValueError("alert channel must not contain credentials or account information")
         self.initialize()
         with self.connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 "INSERT INTO alert_events "
                 "(snapshot_id, displayed_at, decision, channel, trigger_type, detail_json) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -1025,6 +1093,9 @@ class SQLiteStore:
                     json.dumps(detail or {}, ensure_ascii=False, sort_keys=True),
                 ),
             )
+        if cursor.lastrowid is None:
+            raise RuntimeError("alert insert did not return an id")
+        return int(cursor.lastrowid)
 
     def record_health_metric(self, metadata: dict[str, str]) -> None:
         self.initialize()
@@ -1320,6 +1391,248 @@ class SQLiteStore:
             "source_ts",
             "overall_weak",
             "payload_json",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def create_candidate_outcomes(self, entries: list[dict[str, Any]]) -> int:
+        """Insert outcome rows idempotently in one short transaction."""
+        if not entries:
+            return 0
+        required = {
+            "entry_snapshot_id",
+            "entry_alert_id",
+            "entry_trade_date",
+            "slot",
+            "rank",
+            "code",
+            "name",
+            "entry_price",
+            "entry_source_ts",
+            "target_slot",
+            "quality",
+            "provider_version",
+            "config_version",
+            "app_version",
+            "created_at",
+            "updated_at",
+        }
+        for entry in entries:
+            if missing := required - entry.keys():
+                raise ValueError(f"candidate outcome missing: {sorted(missing)}")
+            if str(entry["slot"]) not in {"09:45", "14:45"}:
+                raise ValueError("candidate outcome slot is invalid")
+            if int(entry["rank"]) not in {1, 2, 3}:
+                raise ValueError("candidate outcome rank is invalid")
+            if float(entry["entry_price"]) <= 0:
+                raise ValueError("candidate outcome entry price must be positive")
+        self.initialize()
+        inserted = 0
+        with self.connect() as connection:
+            with connection:
+                for entry in entries:
+                    cursor = connection.execute(
+                        "INSERT OR IGNORE INTO candidate_outcomes "
+                        "(entry_snapshot_id, entry_alert_id, entry_trade_date, slot, rank, "
+                        "code, name, entry_price, entry_source_ts, target_trade_date, "
+                        "target_slot, exit_price, exit_source_ts, return_pct, status, outcome, "
+                        "settlement_method, quality, provider_version, config_version, "
+                        "app_version, created_at, updated_at, safe_reason) "
+                        "VALUES (:entry_snapshot_id, :entry_alert_id, :entry_trade_date, "
+                        ":slot, :rank, :code, :name, :entry_price, :entry_source_ts, "
+                        ":target_trade_date, :target_slot, NULL, NULL, NULL, :status, NULL, "
+                        "NULL, :quality, :provider_version, :config_version, :app_version, "
+                        ":created_at, :updated_at, :safe_reason)",
+                        {
+                            **entry,
+                            "target_trade_date": entry.get("target_trade_date"),
+                            "status": entry.get("status", "pending"),
+                            "safe_reason": entry.get("safe_reason"),
+                        },
+                    )
+                    inserted += max(0, cursor.rowcount)
+        return inserted
+
+    def assign_candidate_outcome_target(
+        self,
+        outcome_id: int,
+        *,
+        target_trade_date: str,
+        updated_at: str,
+    ) -> bool:
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE candidate_outcomes SET target_trade_date = ?, updated_at = ?, "
+                "safe_reason = NULL WHERE id = ? AND status = 'pending'",
+                (target_trade_date, updated_at, outcome_id),
+            )
+        return cursor.rowcount == 1
+
+    def list_pending_candidate_outcomes(
+        self,
+        *,
+        target_trade_date: str | None = None,
+        target_slot: str | None = None,
+        entry_snapshot_id: int | None = None,
+        unresolved_only: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("candidate outcome limit must be positive")
+        where = ["status = 'pending'"]
+        values: list[Any] = []
+        if unresolved_only:
+            where.append("target_trade_date IS NULL")
+        elif target_trade_date is not None:
+            where.append("target_trade_date = ?")
+            values.append(target_trade_date)
+        if target_slot is not None:
+            if target_slot not in {"09:45", "14:45"}:
+                raise ValueError("candidate outcome target slot is invalid")
+            where.append("target_slot = ?")
+            values.append(target_slot)
+        if entry_snapshot_id is not None:
+            if entry_snapshot_id < 1:
+                raise ValueError("candidate outcome snapshot id must be positive")
+            where.append("entry_snapshot_id = ?")
+            values.append(entry_snapshot_id)
+        values.append(limit)
+        columns = ", ".join(self._OUTCOME_COLUMNS)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {columns} FROM candidate_outcomes WHERE {' AND '.join(where)} "
+                "ORDER BY entry_trade_date, slot, rank, id LIMIT ?",
+                tuple(values),
+            ).fetchall()
+        return [dict(zip(self._OUTCOME_COLUMNS, row)) for row in rows]
+
+    def settle_candidate_outcome(
+        self,
+        outcome_id: int,
+        *,
+        exit_price: float,
+        exit_source_ts: str,
+        return_pct: float,
+        outcome: str,
+        settlement_method: str,
+        quality: str,
+        updated_at: str,
+    ) -> bool:
+        if exit_price <= 0:
+            raise ValueError("candidate outcome exit price must be positive")
+        if outcome not in {"win", "loss", "flat"}:
+            raise ValueError("candidate outcome result is invalid")
+        if settlement_method not in {
+            "realtime_scan",
+            "realtime_batch",
+            "historical_minute",
+        }:
+            raise ValueError("candidate outcome settlement method is invalid")
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE candidate_outcomes SET exit_price = ?, exit_source_ts = ?, "
+                "return_pct = ?, status = 'settled', outcome = ?, settlement_method = ?, "
+                "quality = ?, updated_at = ?, safe_reason = NULL "
+                "WHERE id = ? AND status = 'pending'",
+                (
+                    exit_price,
+                    exit_source_ts,
+                    return_pct,
+                    outcome,
+                    settlement_method,
+                    quality,
+                    updated_at,
+                    outcome_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def mark_candidate_outcome_unavailable(
+        self,
+        outcome_id: int,
+        *,
+        quality: str,
+        safe_reason: str,
+        updated_at: str,
+    ) -> bool:
+        if not safe_reason.strip():
+            raise ValueError("candidate outcome safe reason must not be empty")
+        self.initialize()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE candidate_outcomes SET status = 'unavailable', outcome = NULL, "
+                "settlement_method = NULL, quality = ?, updated_at = ?, safe_reason = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (quality, updated_at, safe_reason, outcome_id),
+            )
+        return cursor.rowcount == 1
+
+    def list_candidate_outcomes(
+        self,
+        *,
+        trading_days: int | None,
+    ) -> list[dict[str, Any]]:
+        if trading_days is not None and trading_days < 1:
+            raise ValueError("candidate outcome trading days must be positive")
+        where = ""
+        values: tuple[Any, ...] = ()
+        if trading_days is not None:
+            where = (
+                "WHERE entry_trade_date IN ("
+                "SELECT entry_trade_date FROM candidate_outcomes "
+                "GROUP BY entry_trade_date ORDER BY entry_trade_date DESC LIMIT ?)"
+            )
+            values = (trading_days,)
+        columns = ", ".join(self._OUTCOME_COLUMNS)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {columns} FROM candidate_outcomes {where} "
+                "ORDER BY entry_trade_date DESC, slot, rank, id",
+                values,
+            ).fetchall()
+        return [dict(zip(self._OUTCOME_COLUMNS, row)) for row in rows]
+
+    def list_scheduled_candidate_entries(
+        self,
+        *,
+        now: datetime,
+        days: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Read only scheduled alert candidates for safe, idempotent backfill."""
+        if days < 1:
+            raise ValueError("candidate outcome backfill days must be positive")
+        cutoff = (now - timedelta(days=days)).isoformat()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT e.id, e.trigger_type, e.displayed_at, s.id, s.source_ts, "
+                "s.health, s.provider_version, s.config_version, s.app_version, "
+                "i.rank, i.code, i.name, i.price, i.payload_json, "
+                "COUNT(*) OVER (PARTITION BY e.id) "
+                "FROM alert_events e "
+                "JOIN candidate_snapshots s ON s.id = e.snapshot_id "
+                "JOIN candidate_items i ON i.snapshot_id = s.id "
+                "WHERE e.displayed_at >= ? AND e.trigger_type IN "
+                "('scheduled-09:45', 'scheduled-14:45') "
+                "ORDER BY e.displayed_at, e.id, i.rank",
+                (cutoff,),
+            ).fetchall()
+        keys = (
+            "entry_alert_id",
+            "trigger_type",
+            "displayed_at",
+            "entry_snapshot_id",
+            "snapshot_source_ts",
+            "health",
+            "provider_version",
+            "config_version",
+            "app_version",
+            "rank",
+            "code",
+            "name",
+            "entry_price",
+            "candidate_payload_json",
+            "candidate_count",
         )
         return [dict(zip(keys, row)) for row in rows]
 

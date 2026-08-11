@@ -6,18 +6,22 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QLabel,
     QPushButton,
     QScrollArea,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from stock_watcher.domain import SHANGHAI
 from stock_watcher.storage import SQLiteStore
+
+from .outcome_review import OutcomeReviewPanel
 
 
 class HistoryWorker(QThread):
@@ -43,7 +47,7 @@ class HistoryDialog(QDialog):
     def __init__(self, path: Path, parent: Any = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("历史记录")
-        self.resize(760, 520)
+        self.resize(860, 720)
         self._worker = HistoryWorker(path)
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 26, 30, 24)
@@ -51,12 +55,20 @@ class HistoryDialog(QDialog):
         title = QLabel("历史记录")
         title.setObjectName("dialogTitle")
         root.addWidget(title)
+
+        tabs = QTabWidget()
+        self._tabs = tabs
+        tabs.setObjectName("historyTabs")
+        alerts_page = QWidget()
+        alerts_root = QVBoxLayout(alerts_page)
+        alerts_root.setContentsMargins(0, 12, 0, 0)
+        alerts_root.setSpacing(12)
         description = QLabel("最近30天的09:45、14:45和盘中强异动提醒。")
         description.setObjectName("dialogDescription")
-        root.addWidget(description)
+        alerts_root.addWidget(description)
         self._status = QLabel("正在读取历史记录…")
         self._status.setObjectName("historyStatus")
-        root.addWidget(self._status)
+        alerts_root.addWidget(self._status)
         records_host = QWidget()
         self._records = QVBoxLayout(records_host)
         self._records.setContentsMargins(0, 0, 0, 0)
@@ -65,16 +77,26 @@ class HistoryDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(records_host)
-        root.addWidget(scroll, 1)
+        alerts_root.addWidget(scroll, 1)
         note = QLabel("历史仅用于回看，不会影响当前结果。")
         note.setObjectName("historyNote")
-        root.addWidget(note)
+        alerts_root.addWidget(note)
+        self._outcomes = OutcomeReviewPanel(path)
+        tabs.addTab(alerts_page, "提醒记录")
+        tabs.addTab(self._outcomes, "次日复盘")
+        root.addWidget(tabs, 1)
         close = QPushButton("关闭")
         close.setObjectName("secondaryButton")
         close.clicked.connect(self.reject)
         root.addWidget(close)
         self._worker.loaded.connect(self._on_loaded)
         self._worker.start()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        if self._worker.isRunning():
+            self._worker.wait(2000)
+        self._outcomes.wait_for_worker()
+        super().closeEvent(event)
 
     def _on_loaded(self, rows: object, error: str) -> None:
         if error:
