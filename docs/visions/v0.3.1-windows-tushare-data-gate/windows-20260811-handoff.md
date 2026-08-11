@@ -10,7 +10,8 @@
 - 远端基线：`origin/main@6b7936f795fb93e0babebb7bd70b6c767cadd83e`。
 - 基线 parent：`67ba7b73aee4ea8b21a8d8d4badcd1129e2e066c`、
   `30595f9f2d4a462b87cee390f8631e1a97158fca`。
-- 发布分支：`publish/v0.3.1-windows-smoke`。
+- 发布分支：`publish/v0.3.1-windows-smoke`；最终源码审查 head 为
+  `bc8162510c16510e00054b9feb3f419fc619a9ef`，其后的提交仅更新验证文档。
 - 原执行分支：`windows/internal-test-v1`；没有使用旧 `fix/HAZ-418-blockers`。
 - 当前正常数据路线：Tushare Primary Pro + `tushare.realtime_quote(src="sina")`。
 - TdxQuant 只保留可选诊断；本轮没有启动 `TdxW.exe`，也没有把 TQ 作为启动门。
@@ -59,6 +60,9 @@ Windows 初始回传曾在 `PermissionError` 后先复制 `.corrupt`，再直接
 `PermissionError`、坏的最新备份、旧 WAL/SHM、staging 清理和连接上下文显式释放；后者
 避免 Python 的 SQLite 上下文只提交但不关闭，从而在 Windows 留下 WAL 文件句柄。
 
+Windows 一键 Setup 也改为优先执行 `uv sync --all-groups --frozen`。这兼容 `uv` 创建的
+无 pip 锁定环境；只有机器没有 `uv.exe` 时，才保留原 Python venv/pip 兼容路径。
+
 ## 4. 当前验证证据
 
 以下均在上述 Windows 真机、发布分支工作树执行；默认 pytest 不包含 `live_tushare`：
@@ -82,10 +86,9 @@ Windows 初始回传曾在 `PermissionError` 后先复制 `.corrupt`，再直接
 2. `test_single_instance_guard_does_not_silently_exit_without_ack`
 3. `test_single_instance_guard_reports_version_conflict_without_replacing_primary`
 
-它们在 Windows 上执行 macOS 单实例实现并得到第二实例也能 acquire 的结果。本 PR 没有
-删除、跳过或修改这些测试。全量 Mypy 的两项错误同样来自 Windows 环境无法导入 macOS
-`Foundation`。下一位 owner 应决定由测试平台 marker、条件导入或 CI matrix 处理，不能把
-它们伪装成全量工程门通过。
+它们在 Windows 上执行 macOS 单实例实现并得到第二实例也能 acquire 的结果。PR 后续为这
+3 项增加了明确的 Darwin 平台 marker，并保留全部 macOS 断言；全量 Mypy 的两项平台错误
+也通过仅针对 `stock_watcher.ui.macos` 的配置处理。没有删除测试或放宽 macOS 行为合同。
 
 SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前的首个 Windows 失败
 `WinError 32` 已保留在交接说明中，没有通过重复运行掩盖。
@@ -96,14 +99,28 @@ SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前�
 | --- | --- |
 | `uv lock --check` | exit `0` |
 | `uv sync --all-groups --frozen` | exit `0`；Darwin PyObjC 正常解析 |
-| `uv run pytest` | exit `0`；`358 passed, 20 skipped, 2 deselected` |
+| `uv run pytest` | exit `0`；`359 passed, 20 skipped, 2 deselected` |
 | `uv run ruff check .` | exit `0` |
 | `uv run mypy src tests` | exit `0`；109 source files |
 | `uv run python scripts/validate_workspace.py` | exit `0`；29 个必需文件 |
 | `uv run python scripts/check_windows_package.py` | exit `0`；仅离线 contract |
 | `git diff --check` | exit `0` |
 
-以上 macOS 结果关闭源码审查 P1，但不冒充安全修正后的 Windows portable 重建或实机复测。
+最终 GitHub Actions Governance run
+[`31478494946`](https://github.com/HazelKahlil/StockWatcher/actions/runs/31478494946)
+在源码 head `bc81625` 上完成：
+
+| CI 检查 | 结果 |
+| --- | --- |
+| workspace-integrity | exit `0` |
+| Windows Python 3.11 pytest | exit `0`；`373 passed, 6 skipped, 2 deselected` |
+| Windows Python 3.12 pytest | exit `0`；`373 passed, 6 skipped, 2 deselected` |
+| 两个矩阵的 Ruff / Mypy | exit `0`；Mypy 109 source files |
+| PowerShell Setup / fail-closed Preflight / package contract | exit `0` |
+| PyInstaller folder / Inno Setup installer / artifact upload | exit `0` |
+
+以上 macOS 与 CI 结果关闭源码审查 P1，并证明 PR head 可在 Windows runner 重建；它们不冒充
+安全修正后在 Human Owner Windows 机器上的 UI 重装、通知、断网恢复或交易时段 M0 复测。
 
 ## 5. 应用安装与真实启动
 
@@ -114,6 +131,8 @@ SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前�
 - 启动过程没有出现 UAC，没有新增 `TdxW.exe`，关闭后没有 StockWatcher 残留进程。
 - 本机没有 Inno Setup，因此没有生成或验证 Inno Setup 安装器，也没有宣称安装/卸载/回滚
   已通过；当前交付形态是 portable bundle + 普通用户桌面快捷方式。
+- GitHub Windows runner 已从 PR head 编译并上传 Inno/PyInstaller 制品，但没有在 Human Owner
+  机器执行安装、卸载或回滚，因此不改变上一条现场边界。
 - 构建缓存已移出源码工作树保留；`validate_workspace.py` 随后恢复通过。
 
 本机 bundle 与桌面快捷方式只是现场使用资产，不是源码真源。下一位开发者应从 PR commit
@@ -137,9 +156,10 @@ SQLite 损坏恢复测试已进入全量 pytest 的通过项；本轮修复前�
 1. 仓库内没有本轮连续至少 30 分钟、可审计且脱敏的交易时段 M0 报告。
 2. 没有在本轮重新完成一个完整交易日、09:45/14:45、强异动与 15:30 总结的全套证据。
 3. Windows 通知、多屏、冷启动、睡眠/断网恢复仍需目标机专项验收。
-4. Inno Setup 安装、卸载、回滚和签名包未验证。
-5. 全量 pytest/Mypy 仍需把 macOS-only 检查与 Windows matrix 正确隔离。
-6. 安全修正后的 Windows portable 尚未从合并后的最新 `main` 重建；当前安装资产仍对应原始
+4. Inno Setup 编译已在 CI 通过，但目标机安装、卸载、回滚和签名包仍未验证。
+5. GitHub Actions 有 Node.js 20 action 弃用提示；当前 runner 强制 Node.js 24 后通过，后续需
+   在独立维护改动中升级 action 主版本。
+6. 安全修正后的 Windows portable 尚未从合并后的最新 `main` 在目标机重建；当前安装资产仍对应原始
    Windows smoke 源码快照。
 
 这些欠项不阻塞本次 Windows smoke 修复回传，但阻塞将版本表述为商业稳定发布或权威
