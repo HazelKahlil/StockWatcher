@@ -6,6 +6,9 @@
 
 ### Mainline
 
+- 2026-08-11：建立 `v0.4.0-alpha.2` Mac / Web / Windows 内部试用源码基准；Shared Core
+  应用代码为 `ad04e39`，Web 固定 `bf447ba` 并继续 `BLOCKED / NOT_ACCEPTED`，Windows
+  PR #4 已达到 `WINDOWS_SMOKE_PASS`。该版本不代表权威 M0、完整三平台验收或商业稳定。
 - 2026-08-01：将 Mac V1 内部试用成果及其完整 Git 历史整合到唯一主目录的本地 `main`。
   当前主线包含真实全市场扫描、行业/概念板块、稳定 Top3、候选池强异动、09:45/14:45
   调度、30 天历史、15:30 盘后总结和 Mac arm64 App；`fix/macos-v1-internal-acceptance`、
