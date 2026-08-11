@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import gc
 import json
 import sqlite3
 from contextlib import closing
@@ -1001,6 +1002,7 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
     store = SQLiteStore(path)
     store.initialize()  # v5 -> v6, creates .pre-v6.bak
     del store
+    gc.collect()
 
     with path.open("r+b") as handle:
         handle.write(b"lxml._elementpath, lxml.etree, numpy (total: 69)")
