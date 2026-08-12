@@ -11,8 +11,12 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
   `0.4.0a2`，里程碑 tag 为 `v0.4.0-alpha.2`。
 - 该 tag 是 Mac / Web / Windows 的内部试用源码、重建与回滚基准，不是商业稳定发布、
   权威 M0 或完整三平台验收。
+- 当前后继开发版本为 `0.6.0a3`：桌面端“次日同点复盘”已补齐受控 DEGRADED
+  `/trade_cal` wire endpoint、有界持久化分钟重试与 SQLite v8；状态仅为
+  `local_code_complete_offline_verified_after_wire_endpoint_fix`，尚未发布或覆盖现有安装包，
+  真实同点行情仍需后续交易日现场验收。
 - Shared Core 已包含真实全市场扫描、行业与概念板块、板块硬门、稳定 Top3、候选池强异动、
-  09:45/14:45 调度、30 天历史、15:30 盘后总结和 SQLite 安全恢复。
+  09:45/14:45 调度、30 天提醒历史、次日同点理论复盘、15:30 盘后总结和 SQLite 安全恢复。
 - 现有 Mac arm64 App 继续内部使用，但其已记录 `SOURCE_COMMIT=88ccf49f...`，早于 alpha.2；
   本轮没有覆盖、重装或读取 Keychain/运行数据。需要新包时从 tag 重建。
 - Windows PR #4 已合并并达到 `WINDOWS_SMOKE_PASS`；Windows 3.11/3.12 CI、Setup、
@@ -39,7 +43,8 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 2. 阅读 [AGENTS.md](AGENTS.md) 与 [docs/00-START-HERE.md](docs/00-START-HERE.md)。
 3. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
 4. 先读 [v0.4.0-alpha.2 内部基准](docs/visions/v0.4.0-alpha.2-internal-baseline/README.md)，
-   再按需阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
+   再读 [v0.6 次日同点复盘](docs/visions/v0.6-candidate-outcomes/README.md)，
+   并按需阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
    [共享连接门返修](docs/visions/v0.4.1-shared-connection-gate/README.md)；Human Owner 的
    Mac-first 决策高于较早 Windows 排期中的冲突表述。
 5. 需要 Web 时先读 [Web 轨道](docs/tracks/web.md)，需要 Windows 时先读

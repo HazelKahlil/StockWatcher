@@ -1,11 +1,52 @@
 # Changelog
 
+## [0.6.0-alpha.4] - 2026-08-12
+
+### Fixed
+
+- 交易日历只接受受控 `tushare_15000 + /trade_cal + 四字段 + DEGRADED/MISSING`，并严格
+  拒绝 HEALTHY、STALE、字段漂移、空响应、日期越界、矛盾状态和字符串开市标记。
+- 收盘后网络、限流和服务器异常保持 pending 并从 SQLite 有界恢复；实时与 30 天历史回补
+  都不得突破每笔五次尝试上限。
+
+### Evidence boundary
+
+- 本版本的离线门和安装包不替代真实交易日 09:45/14:45 同点结算验收。
+- 源码通过 `publish/v0.6.0-alpha.4` / PR #6 做 GitHub 里程碑同步，Web 独立线同步到
+  `publish/web-v0.6.0-alpha.4`；由于真实交易日尚未验收，不创建 tag 或 Release。
+
+### Packaging
+
+- 从本地 `main@b00221f` 生成仓库外 Mac `.app` ZIP 与 DMG，完成 ad-hoc 签名、挂载、
+  临时 HOME + Replay 启动和优雅退出；没有覆盖已安装 App 或读取 Keychain。
+- 同提交 Windows fresh-build 源包已生成；当前没有 Windows/PowerShell/Inno 环境，故未把
+  macOS 离线 package contract 写成真实 portable、EXE、安装或卸载通过。
+
+### Web track
+
+- 独立 Web 线加入 Schema v9 次日复盘只读 API、近一月摘要与完整复盘页，并以单独执行链
+  隔离回补任务；Morandi 低饱和配色、蓝色通知按钮和支持 Esc/焦点恢复的中央提醒弹窗已部署。
+- Top3 上涨百分比单独恢复旧版鲜明红并放大为 `1.85rem–2rem`；下跌与其他页面仍
+  保持 Morandi 低饱和色系。完整回归在 `-W error` 下零告警，生产与全锁定依赖审计无已知漏洞。
+- `cfc6cd6` 镜像在 Mac Docker 完成部署前后备份校验、Schema v9 完整性和公网 live/ready/CSS 检查；
+  Web 仍为 `BLOCKED / NOT_ACCEPTED`，不得把离线与公网健康结果写成真实交易日验收。
+
 本项目采用 [Semantic Versioning](https://semver.org/)；所有值得用户或维护者关注的变化记录在这里。
 
 ## [Unreleased]
 
 ### Mainline
 
+- 2026-08-12：在 `0.6.0a3` 修正次日同点复盘的生产交易日历 wire endpoint 契约：
+  `Tushare15000Provider` 继续创建逻辑 `endpoint="/"` 请求，`TushareSdkProTransport`
+  改写并实际请求 `/trade_cal`，`CandidateOutcomeTracker` 只接受该精确 provenance endpoint。
+  新增 fake Session + 内存测试凭据的完整离线传输链回归，错误 endpoint/profile/字段、
+  非受控 DEGRADED、STALE、空响应、越界和矛盾日历继续 fail closed。
+- 2026-08-11：在 `0.6.0a2` 完成桌面端“次日同点复盘”契约返修：正式 09:45/14:45
+  三只候选按
+  下一真实交易日同档行情做理论复盘，展示近 5/20 个入选交易日与全部记录的个股胜率、
+  平均/中位收益、分档统计和完整六笔日组合胜率。功能不连接交易账户、不自动下单，且
+  复盘失败不得阻塞原实时扫描、Top3、提醒或弹窗。
 - 2026-08-11：建立 `v0.4.0-alpha.2` Mac / Web / Windows 内部试用源码基准；Shared Core
   应用代码为 `ad04e39`，Web 固定 `bf447ba` 并继续 `BLOCKED / NOT_ACCEPTED`，Windows
   PR #4 已达到 `WINDOWS_SMOKE_PASS`。该版本不代表权威 M0、完整三平台验收或商业稳定。
@@ -25,6 +66,10 @@
 
 ### Changed
 
+- SQLite 从 v7 升到 v8，为 `candidate_outcomes` 增加
+  `settlement_attempts/last_attempt_at/next_retry_at`；迁移继续使用前置备份、事务回滚、
+  `integrity_check` 与只读降级，并覆盖 Windows 文件句柄释放。
+- Mac/Windows 重建元数据提升为 `0.6.0-alpha.3`；本轮未构建、覆盖或重装现有 App。
 - V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
   `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
   TdxQuant 只留在高级诊断。
@@ -53,6 +98,15 @@
 
 ### Added
 
+- 固定候选复盘旁路：优先复用下一交易日全市场扫描，对缺失项最多三只单次批量实时补查，
+  再以 `stk_mins` 精确 09:45/14:45 一分钟 close 串行回补；零价、错日、过期、停牌、
+  无成交或质量不足均标为 pending/unavailable，不计入胜率分母。日历与补查在独立单线程
+  旁路运行，不延迟固定提醒；补位/非正式候选不会进入新记录或历史回补。
+- 分钟回补按目标日期和 09:45/14:45 档位隔离，使用 +1/+3/+8/+20/15:05 最终确认的
+  有界退避；网络、限流、服务器错误和首次空数据保持 pending，App 重启从 SQLite 恢复 due
+  任务，旧积压不会抢占当前三笔。
+- 历史窗口新增“提醒记录 / 次日复盘”标签和近 1 周、近 1 月、全部切换；数据库查询继续在
+  Qt 工作线程运行，并提供 empty/pending/settled 确定性截图脚本。
 - 独立 macOS PyInstaller spec：生成本机 arm64 `StockWatcher.app`，包含 Retina 配置与
   macOS 留白图标，排除 Windows/TdxQuant 诊断入口；支持 ad-hoc 签名和内部安装验收。
 - Mac V1 平台层：Application Support/Logs 路径分离、实际 Keychain backend 校验、系统钥匙串
@@ -97,6 +151,14 @@
 
 ### Fixed
 
+- 真实 Tushare Pro `trade_cal` 缺供应商生成时间时，不再被一概拒绝；仅受控
+  `tushare_15000` 路线的预期 DEGRADED received-fallback 可通过，空响应、STALE/STOPPED、
+  非法/越界日期、矛盾开市状态和 schema 变化继续 fail closed。
+- 历史回补状态不再在缺少持久化证据时默认声称完成；running/completed/partial/failed
+  分开展示，partial 使用真实 settled/unavailable/skipped/pending 数量，内部 reason 映射为
+  简洁中文。
+- 大于 500 笔的旧 pending 积压不再遮蔽当前档位，单线程队列任务也改为使用实际执行时间，
+  避免跨过 15:05 后仍按提交时刻错误延期。
 - 生产全市场缓存默认至少 4500 只并要求行业覆盖 95%；日线必须匹配请求交易日，缺最新日线、
   复权变化和当日复牌统一排除，避免截断证券池或机械跳变污染候选。
 - 实时扫描拒绝混合日期和日期回退；交易日切换清空盘中价格/成交量、稳定 Top3 与强异动

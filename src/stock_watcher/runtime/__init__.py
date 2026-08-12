@@ -8,6 +8,12 @@ from .automation import (
 from .data_health import DataHealthConfig, DataHealthTracker
 from .local_summary_pdf import render_local_fallback_pdf
 from .market_session import MarketSessionSchedule
+from .outcome_tracker import (
+    CandidateOutcomeTracker,
+    OutcomeActionReport,
+    OutcomeProvider,
+    candidate_outcome_rows,
+)
 from .post_close_report_model import (
     LOCAL_FALLBACK_RENDERER_VERSION,
     LOCAL_FALLBACK_SOURCE_VERSION,
@@ -66,6 +72,9 @@ __all__ = [
     "ScanCancelledError",
     "ScanInProgressError",
     "MarketSessionSchedule",
+    "CandidateOutcomeTracker",
+    "OutcomeActionReport",
+    "OutcomeProvider",
     "PostCloseDataProvider",
     "PostCloseReviewCollection",
     "RuntimeUniverse",
@@ -78,6 +87,7 @@ __all__ = [
     "UniverseCacheFailure",
     "alert_timeline_records",
     "application_summary_record",
+    "candidate_outcome_rows",
     "build_local_fallback_report",
     "collect_post_close_review",
     "LOCAL_FALLBACK_RENDERER_VERSION",

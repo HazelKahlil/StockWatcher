@@ -123,6 +123,43 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #historyTime { font-size: 16px; font-weight: 700; }
 #historyOverall { color: #8a6b27; font-size: 14px; }
 #historyCandidates { color: #4e5d70; font-size: 15px; }
+#historyTabs::pane { border: none; background: transparent; }
+QTabBar::tab {
+    background: #edf1f6; color: #607086; border: none; border-radius: 8px;
+    padding: 9px 18px; margin-right: 6px;
+}
+QTabBar::tab:selected { background: #dfeeff; color: #126bd5; font-weight: 700; }
+#outcomeRangeButton {
+    background: #ffffff; color: #596b82; border: 1px solid #d8e0ea; padding: 7px 14px;
+}
+#outcomeRangeButton:checked { background: #e5f1ff; color: #126bd5; border-color: #9bc2ef; }
+#outcomeMetricCard, #outcomeSlotCard, #outcomeRecordCard {
+    background: #ffffff; border: 1px solid #e1e7ef; border-radius: 11px;
+}
+#outcomeMetricLabel { color: #7b8797; font-size: 12px; }
+#outcomeMetricValue { color: #24364c; font-size: 21px; font-weight: 750; }
+#outcomeSlotTitle { color: #24364c; font-size: 16px; font-weight: 750; }
+#outcomeSlotCard QLabel { color: #667487; }
+#outcomeMedian { color: #607086; font-size: 13px; }
+#outcomePortfolioDays {
+    color: #53667e; background: #f4f7fb; border-radius: 8px; padding: 8px 10px;
+    font-size: 12px;
+}
+#outcomeRecordTime { color: #6f7e91; font-size: 13px; font-weight: 650; }
+#outcomeSecurity { color: #25384e; font-size: 17px; font-weight: 750; }
+#outcomePrices { color: #4d5e73; font-size: 16px; }
+#outcomeReturn { color: #7b8797; font-size: 15px; font-weight: 700; }
+#outcomeReturn[direction="up"] { color: #d9363e; }
+#outcomeReturn[direction="down"] { color: #198754; }
+#outcomeMethod { color: #8390a0; font-size: 12px; }
+#outcomeEmpty {
+    color: #718096; background: #f8fafc; border: 1px dashed #ced7e2;
+    border-radius: 10px; padding: 24px;
+}
+#outcomeDisclaimer {
+    color: #6f5b2a; background: #fff9e9; border: 1px solid #f0dfac;
+    border-radius: 8px; padding: 9px 11px; font-size: 12px;
+}
 QPushButton { border-radius: 9px; padding: 9px 14px; }
 """
 

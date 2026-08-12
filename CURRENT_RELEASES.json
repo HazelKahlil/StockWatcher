@@ -1,7 +1,14 @@
 {
-  "generated_at": "2026-08-11",
+  "generated_at": "2026-08-12",
   "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
+  "github_sync": {
+    "milestone_pr": 6,
+    "main_publish_branch": "publish/v0.6.0-alpha.4",
+    "web_publish_branch": "publish/web-v0.6.0-alpha.4",
+    "tag_created": false,
+    "release_created": false
+  },
   "internal_baseline": {
     "python_version": "0.4.0a2",
     "tag": "v0.4.0-alpha.2",
@@ -10,6 +17,21 @@
     "three_platform_acceptance": false,
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
+  "candidate_outcomes": {
+    "python_version": "0.6.0a4",
+    "package_version": "0.6.0-alpha.4",
+    "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
+    "source_branch": "fix/candidate-outcomes-p1-reliability",
+    "implementation_commit": "ed63106c467637c3518df7821b2c32ae3c683ab7",
+    "status": "local_code_complete_offline_verified_after_alpha4_reliability_fix",
+    "schema_version": 8,
+    "validation": "417 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation, secret scan and diff check passed on macOS",
+    "real_trading_time_validation": false,
+    "installed_app_rebuilt": false,
+    "local_main_integrated": true,
+    "github_synced": true,
+    "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED/MISSING Pro calendar, strict numeric-or-boolean open flags, and at most five persisted minute attempts; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
+  },
   "shared_core": {
     "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
     "status": "internal_trial_baseline",
@@ -17,18 +39,24 @@
     "validation": "363 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract and lock check passed"
   },
   "app_mac": {
-    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "source_baseline_commit": "b00221f2604f5410ffac383bccaa6a21f108c1e8",
     "installed_path": "~/Applications/StockWatcher.app",
     "installed_source_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
     "status": "internal_trial",
     "installed_matches_source_baseline": false,
-    "provenance_note": "The installed app was not overwritten or rebuilt during source baselining; rebuild from the tag before distributing alpha.2.",
+    "provenance_note": "A separate alpha.4 app ZIP and DMG were built from b00221f, ad-hoc signed, mounted and Replay-smoked with a temporary HOME; the existing installed app was not overwritten.",
+    "alpha4_package_built": true,
+    "alpha4_package_installed": false,
     "architecture": "arm64",
     "signature": "ad-hoc"
   },
   "web": {
-    "branch": "web/internal-test-v1",
-    "commit": "bf447ba62957e3d12a766df26c980b96ad4c74b2",
+    "branch": "fix/web-top3-gain-emphasis",
+    "github_branch": "publish/web-v0.6.0-alpha.4",
+    "commit": "9411cd8c65b6e99dddb58b07e5406514c5f0799b",
+    "deployed_source_commit": "cfc6cd66be3edcf5468840c29b509eae643896b5",
+    "deployed_image": "stockwatcher-web:web-alpha4-cfc6cd6",
+    "schema_version": 9,
     "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
     "status": "blocked",
     "release_status": "not_accepted",
@@ -38,26 +66,32 @@
     "containers_observed_healthy": true,
     "pytest_full": {
       "status": "pass_on_current_macos_worktree",
-      "passed": 434,
+      "passed": 499,
       "skipped": 25,
-      "deselected": 2
+      "deselected": 2,
+      "warnings": 0,
+      "warning_policy": "error"
     },
     "ruff": "pass",
-    "mypy": "pass; 136 source files",
+    "mypy": "pass; 141 source files",
     "workspace_validator": "pass; 29 required files",
     "javascript_syntax": "pass",
+    "dependency_audit": "production and all locked groups: no known vulnerabilities found",
     "can_merge_main": false,
-    "reason": "Independent deployed Web line remains BLOCKED / NOT_ACCEPTED pending its full trading-day and operational acceptance; it is not folded into main."
+    "reason": "Independent deployed Web line has P0=0, P1=0 and P2=0 in the current offline review, but remains BLOCKED / NOT_ACCEPTED pending real trading-day 09:45/14:45 alerts, outcome settlement/retry and full-day operational acceptance; it is not folded into main."
   },
   "windows": {
     "pr": 4,
     "integration_merge_commit": "a5da2705ed8c6b8d9670d0b6dbc751018f78828c",
-    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "source_baseline_commit": "b00221f2604f5410ffac383bccaa6a21f108c1e8",
     "status": "windows_smoke_pass",
     "authoritative_m0": false,
     "governance_runs": [31478494946, 31479040103],
     "ci": "Windows Python 3.11 and 3.12 tests, Ruff, Mypy, Setup, fail-closed Preflight, PyInstaller, Inno Setup and artifact upload passed",
     "installed_asset_matches_source_baseline": false,
-    "note": "The existing target-machine portable predates the final safe-recovery and alpha.2 packaging baseline; rebuild from the tag when a new Windows package is needed."
+    "alpha4_build_source_prepared": true,
+    "alpha4_portable_built": false,
+    "alpha4_installer_built": false,
+    "note": "The exact b00221f Windows fresh-build source ZIP is prepared, but no Windows host, PowerShell or Inno Setup is available in this session; portable/installer and target-machine smoke remain blocked and are not simulated on macOS."
   }
 }

@@ -18,7 +18,7 @@ from PySide6.QtCore import QTimer
 
 from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
-from stock_watcher.domain import SHANGHAI, HealthState
+from stock_watcher.domain import SHANGHAI, HealthState, OutcomeSlot
 from stock_watcher.engine import (
     AlertPolicy,
     AlertTrigger,
@@ -54,10 +54,12 @@ from stock_watcher.runtime import (
     AutomationTaskSpec,
     AutomationTaskState,
     AutomationTaskType,
+    CandidateOutcomeTracker,
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
     MarketSessionSchedule,
+    OutcomeActionReport,
     RuntimeUniverse,
     RuntimeUniverseCache,
     ScanOutcome,
@@ -156,6 +158,16 @@ class TushareV1Session:
         self._universe_future_runtime: TushareV1Runtime | None = None
         self._universe_retry_at: datetime | None = None
         self._universe_refresh_issue: str | None = None
+        self._outcome_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="stockwatcher-outcomes",
+        )
+        self._outcome_tracker: CandidateOutcomeTracker | None = None
+        self._outcome_futures: set[Future[OutcomeActionReport]] = set()
+        self._outcome_future_lock = Lock()
+        self._outcome_issue: str | None = None
+        self._outcome_initial_backfill_submitted = False
+        self._outcome_fallback_submitted: set[str] = set()
         self._manual_started_monotonic: float | None = None
         self._manual_scan_round = 0
         self._capability_checks_required = runtime_factory is None
@@ -243,6 +255,9 @@ class TushareV1Session:
         self._universe_refresh_issue = None
         self._runtime = None
         self._provider = None
+        self._outcome_tracker = None
+        self._outcome_initial_backfill_submitted = False
+        self._outcome_fallback_submitted.clear()
         self._prepared_date = None
         self.pending_alert = None
         self._failure_active = False
@@ -517,6 +532,7 @@ class TushareV1Session:
         manual_request: bool,
     ) -> ScanOutcome | None:
         now = _shanghai(self._clock())
+        self._submit_due_outcome_fallbacks(now)
         self._prune_history_if_due(now)
         self._detect_scan_stall(now)
         self.phase_label = _visible_phase(now)
@@ -610,6 +626,15 @@ class TushareV1Session:
                 self.settings,
                 self.credential_store,
             )
+            if _supports_outcome_provider(self._provider):
+                self._outcome_tracker = CandidateOutcomeTracker(
+                    self.store,
+                    self._provider,
+                    max_realtime_age_seconds=max(
+                        120.0,
+                        float(self.settings.source_fresh_seconds),
+                    ),
+                )
             if (
                 self._runtime.universe is not None
                 and now.date() in self._runtime.universe.open_dates
@@ -675,6 +700,8 @@ class TushareV1Session:
                     )
                 )
             )
+        if _initial_outcome_backfill_window(now):
+            self._schedule_initial_outcome_backfill(now)
         open_dates = self._runtime.universe.open_dates if self._runtime.universe is not None else ()
         if (
             fixed_task is None
@@ -807,10 +834,17 @@ class TushareV1Session:
             if fixed_task is not None
             else self._schedule.crossed_fixed_trigger(now, completed_at)
         )
+        effective_fixed = forced_fixed or crossed
+        if effective_fixed is not None and outcome.health is HealthState.HEALTHY:
+            self._settle_candidate_outcomes_safely(
+                effective_fixed,
+                outcome,
+                completed_at,
+            )
         snapshot_id = self._evaluate_alerts(
             completed_at,
             outcome.strong_event,
-            forced_fixed=forced_fixed or crossed,
+            forced_fixed=effective_fixed,
             selection_audit=outcome.selection_audit,
             scan_run_id=scan_run_id,
         )
@@ -1081,6 +1115,8 @@ class TushareV1Session:
             detail=detail,
             increment_attempt=increment_attempt,
         )
+        if self._outcome_tracker is not None:
+            self._submit_due_outcome_fallbacks(now)
 
     def check_automation_tasks(self, *, now: datetime | None = None) -> None:
         """Independent 15:30 scheduling entry, decoupled from the scan loop.
@@ -1205,7 +1241,7 @@ class TushareV1Session:
     ) -> int:
         assert self.batch is not None
         snapshot_id = self.store.record_batch(self.batch)
-        self.store.record_alert_event(
+        alert_id = self.store.record_alert_event(
             snapshot_id,
             now.isoformat(),
             decision,
@@ -1218,7 +1254,158 @@ class TushareV1Session:
             subtitle=subtitle,
             trigger_type=trigger.value,
         )
+        if self.state is HealthState.HEALTHY and trigger in {
+            AlertTrigger.SCHEDULED_0945,
+            AlertTrigger.SCHEDULED_1445,
+        }:
+            self._record_scheduled_outcomes_safely(
+                snapshot_id=snapshot_id,
+                alert_id=alert_id,
+                trigger=trigger,
+                now=now,
+            )
         return snapshot_id
+
+    def _record_scheduled_outcomes_safely(
+        self,
+        *,
+        snapshot_id: int,
+        alert_id: int,
+        trigger: AlertTrigger,
+        now: datetime,
+    ) -> None:
+        tracker = self._outcome_tracker
+        batch = self.batch
+        if tracker is None or batch is None:
+            return
+        try:
+            tracker.record_scheduled_batch(
+                batch,
+                snapshot_id=snapshot_id,
+                alert_id=alert_id,
+                trigger_type=trigger.value,
+                recorded_at=now,
+                resolve_calendar=False,
+            )
+        except Exception as error:  # noqa: BLE001 - alert is already durable
+            self._outcome_issue = f"outcome-create:{type(error).__name__}"
+            return
+        self._submit_outcome_task(
+            lambda: tracker.resolve_pending_targets(
+                now=now,
+                limit=3,
+                entry_snapshot_id=snapshot_id,
+            )
+        )
+
+    def _settle_candidate_outcomes_safely(
+        self,
+        trigger: AlertTrigger,
+        outcome: ScanOutcome,
+        now: datetime,
+    ) -> None:
+        tracker = self._outcome_tracker
+        if tracker is None:
+            return
+        slot = (
+            OutcomeSlot.MORNING if trigger is AlertTrigger.SCHEDULED_0945 else OutcomeSlot.AFTERNOON
+        )
+
+        def settle_old_outcomes() -> OutcomeActionReport:
+            tracker.resolve_pending_targets(now=now, limit=3)
+            return tracker.settle_fixed_slot(
+                target_trade_date=now.date(),
+                slot=slot,
+                scan_quotes=outcome.quotes,
+                now=now,
+            )
+
+        self._submit_outcome_task(settle_old_outcomes)
+        self._submit_due_outcome_fallbacks(now)
+
+    def _submit_due_outcome_fallbacks(self, now: datetime) -> None:
+        tracker = self._outcome_tracker
+        if tracker is None:
+            return
+        current = _shanghai(now)
+        try:
+            groups = tracker.due_backfill_groups(now=current, limit=4)
+        except Exception as error:  # noqa: BLE001 - sidecar discovery stays isolated
+            self._outcome_issue = f"outcome-discovery:{type(error).__name__}"
+            return
+        for target_date, target_slot in groups:
+            task_key = f"{target_date.isoformat()}:outcome-{target_slot.value}"
+            with self._outcome_future_lock:
+                already_submitted = task_key in self._outcome_fallback_submitted
+            if already_submitted:
+                continue
+
+            def backfill_due(
+                selected_tracker: CandidateOutcomeTracker = tracker,
+                selected_date: date = target_date,
+                selected_slot: OutcomeSlot = target_slot,
+            ) -> OutcomeActionReport:
+                return selected_tracker.backfill_due(
+                    now=_shanghai(self._clock()),
+                    target_trade_date=selected_date,
+                    target_slot=selected_slot,
+                    limit=3,
+                )
+
+            self._submit_outcome_task(backfill_due, fallback_key=task_key)
+
+    def _schedule_initial_outcome_backfill(self, now: datetime) -> None:
+        tracker = self._outcome_tracker
+        if tracker is None or self._outcome_initial_backfill_submitted:
+            return
+        self._outcome_initial_backfill_submitted = True
+        self._submit_outcome_task(
+            lambda: tracker.backfill_recent_scheduled(
+                now=now,
+                days=30,
+                settlement_limit=180,
+            )
+        )
+
+    def _submit_outcome_task(
+        self,
+        task: Callable[[], OutcomeActionReport],
+        *,
+        fallback_key: str | None = None,
+    ) -> bool:
+        try:
+            future = self._outcome_executor.submit(task)
+        except RuntimeError as error:
+            self._outcome_issue = f"outcome-submit:{type(error).__name__}"
+            return False
+        with self._outcome_future_lock:
+            self._outcome_futures.add(future)
+            if fallback_key is not None:
+                self._outcome_fallback_submitted.add(fallback_key)
+
+        def task_done(completed: Future[OutcomeActionReport]) -> None:
+            self._outcome_task_done(completed, fallback_key=fallback_key)
+
+        future.add_done_callback(task_done)
+        return True
+
+    def _outcome_task_done(
+        self,
+        future: Future[OutcomeActionReport],
+        *,
+        fallback_key: str | None = None,
+    ) -> None:
+        try:
+            report = future.result()
+            if fallback_key is not None and report.pending:
+                self._outcome_issue = "outcome-retry-scheduled"
+        except Exception as error:  # noqa: BLE001 - background sidecar stays isolated
+            self._outcome_issue = f"outcome-background:{type(error).__name__}"
+        finally:
+            with self._outcome_future_lock:
+                self._outcome_futures.discard(future)
+                if fallback_key is not None:
+                    self._outcome_fallback_submitted.discard(fallback_key)
 
     def _generate_summary(self, now: datetime, *, catch_up: bool = False) -> bool:
         """Generate the 15:30 summary with a local-first fallback.
@@ -1616,9 +1803,7 @@ class TushareV1Session:
         self.data_gate_label = "钥匙串不可用"
         self.candidate_gate_label = "等待钥匙串恢复"
         self.health_detail = self.connection_detail
-        self.status_issues = (
-            "请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",
-        )
+        self.status_issues = ("请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",)
 
     def _publish_credential_state(
         self,
@@ -1799,8 +1984,7 @@ class TushareV1Session:
             self._universe_retry_at = now + timedelta(minutes=5)
             self._universe_refresh_issue = (
                 "概念刷新失败，当前进程继续使用上次成功概念缓存；"
-                "行业筛选与概念筛选均保持可用，5分钟后重试"
-                + (f"（{reason}）" if reason else "。")
+                "行业筛选与概念筛选均保持可用，5分钟后重试" + (f"（{reason}）" if reason else "。")
             )
         else:
             self._universe_retry_at = now + timedelta(minutes=5)
@@ -2187,6 +2371,10 @@ class TushareV1Session:
         if self.capability_checks is not None:
             self.capability_checks.shutdown()
         self._universe_executor.shutdown(wait=False, cancel_futures=True)
+        with self._outcome_future_lock:
+            for future in self._outcome_futures:
+                future.cancel()
+        self._outcome_executor.shutdown(wait=False, cancel_futures=True)
 
     def _set_missing_credential(self) -> None:
         legacy_present = self._legacy_credential_present
@@ -2329,6 +2517,18 @@ def _runtime_factory(
 def _is_preopen(now: datetime) -> bool:
     current = now.timetz().replace(tzinfo=None)
     return time(9, 15) <= current < time(9, 30)
+
+
+def _supports_outcome_provider(provider: object) -> bool:
+    return all(
+        callable(getattr(provider, method, None))
+        for method in ("trading_dates", "realtime_quotes", "historical_minutes")
+    )
+
+
+def _initial_outcome_backfill_window(now: datetime) -> bool:
+    current = now.timetz().replace(tzinfo=None)
+    return now.weekday() >= 5 or current < time(9, 0) or current >= time(15, 31)
 
 
 def _phase(now: datetime) -> str:
