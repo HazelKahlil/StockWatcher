@@ -14,12 +14,12 @@
     "python_version": "0.6.0a4",
     "package_version": "0.6.0-alpha.4",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
-    "source_branch": "fix/candidate-outcomes-p1-reliability + feat/web-outcomes-morandi-alerts",
+    "source_branch": "fix/candidate-outcomes-p1-reliability + feat/web-outcomes-morandi-alerts + fix/web-top3-gain-emphasis",
     "implementation_commit": "d09652731ee0c4872dfa68dd638642c0037f4bb0",
     "status": "local_code_complete_offline_verified_after_alpha4_reliability_fix",
     "desktop_schema_version": 8,
     "web_schema_version": 9,
-    "validation": "Web: 499 passed, 25 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, JavaScript syntax, migration, secret scan, JSON and diff checks passed on macOS",
+    "validation": "Web: 499 passed, 25 skipped, 2 deselected with -W error and zero warnings; Ruff, Mypy, workspace validator, Windows package contract, JavaScript syntax, migration, secret scan, production/all-locked dependency audits, JSON and diff checks passed on macOS",
     "real_trading_time_validation": false,
     "installed_app_rebuilt": false,
     "local_main_integrated": true,
@@ -43,8 +43,8 @@
     "signature": "ad-hoc"
   },
   "web": {
-    "branch": "feat/web-outcomes-morandi-alerts",
-    "commit": "d2dfc90cd773643e6f23cb98606b7da0c606e90b",
+    "branch": "fix/web-top3-gain-emphasis",
+    "commit": "cfc6cd66be3edcf5468840c29b509eae643896b5",
     "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
     "status": "blocked",
     "release_status": "not_accepted",
@@ -56,16 +56,19 @@
       "status": "pass_on_current_macos_worktree",
       "passed": 499,
       "skipped": 25,
-      "deselected": 2
+      "deselected": 2,
+      "warnings": 0,
+      "warning_policy": "error"
     },
     "ruff": "pass",
     "mypy": "pass; 141 source files",
     "workspace_validator": "pass; 29 required files",
     "javascript_syntax": "pass",
     "schema_version": 9,
-    "deployed_image": "stockwatcher-web:web-alpha4-d2dfc90",
+    "dependency_audit": "production and all locked groups: no known vulnerabilities found",
+    "deployed_image": "stockwatcher-web:web-alpha4-cfc6cd6",
     "can_merge_main": false,
-    "reason": "Independent deployed Web line remains BLOCKED / NOT_ACCEPTED pending its full trading-day and operational acceptance; it is not folded into main."
+    "reason": "Independent deployed Web line has P0=0, P1=0 and P2=0 in the current offline review, but remains BLOCKED / NOT_ACCEPTED pending real trading-day 09:45/14:45 alerts, outcome settlement/retry and full-day operational acceptance; it is not folded into main."
   },
   "windows": {
     "pr": 4,

@@ -108,18 +108,20 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 
 | 命令 | 结果 |
 | --- | --- |
-| `uv sync --all-groups --frozen` | exit 0；83 packages audited |
-| `uv lock --check` | exit 0；92 packages resolved |
-| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；499 passed，25 skipped，2 deselected |
+| `uv sync --all-groups --frozen` | exit 0；84 packages audited |
+| `uv lock --check` | exit 0；94 packages resolved |
+| `uv run pytest -m 'not live_tushare' -ra -W error -o addopts=''` | exit 0；499 passed，25 skipped，2 deselected，零告警 |
 | `uv run ruff check .` | exit 0 |
 | `uv run mypy src tests` | exit 0；141 source files |
 | `python3 scripts/validate_workspace.py` | exit 0；29 required files |
 | `uv run python scripts/check_windows_package.py` | exit 0；仅离线跨平台契约，不冒充 Windows 真机 |
+| 生产依赖审计 | exit 0；no known vulnerabilities found |
+| 全锁定依赖审计 | exit 0；no known vulnerabilities found |
 | `git diff --check` | exit 0 |
 | `python3 -m json.tool CURRENT_RELEASES.json` | exit 0 |
 
 确定性 Web UI 已覆盖桌面首页、完整复盘、WebSocket 中央提醒与 390px 移动端；实拍同时验证
-Esc 关闭和焦点恢复。未覆盖现有已安装 Mac/Windows App。
+Esc 关闭、焦点恢复、Top3 上涨旧版红与放大字号。未覆盖现有已安装 Mac/Windows App。
 
 ## 本地提交与同步
 
@@ -128,7 +130,7 @@ Esc 关闭和焦点恢复。未覆盖现有已安装 Mac/Windows App。
 - wire endpoint 返修分支：`fix/candidate-outcomes-trade-cal-wire-endpoint`；实现提交：
   `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
 - alpha.4 Shared Core 已合入本地 `main@b00221f`；Web 部署实现为
-  `feat/web-outcomes-morandi-alerts@d2dfc90`。
+  `fix/web-top3-gain-emphasis@cfc6cd6`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

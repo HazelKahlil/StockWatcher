@@ -156,3 +156,16 @@
 - 部署前 `bf447ba` Schema v8 备份已完成 checksum 与 integrity 校验；`d2dfc90` 单次迁移到
   Schema v9 后，账号、会话、命令、事件数量保持，Web/Worker/Tunnel 与公网健康通过。公网
   登录后的手动抓取和提醒仍留给 Human Owner 现场复核，不以匿名健康检查代替。
+
+## 2026-08-12 Top3 涨幅强调与零告警收口
+
+- Top3 候选卡内的上涨百分比单独恢复旧版鲜明红，字号响应式放大为
+  `1.85rem–2rem`；下跌保持莫兰迪绿，其他上涨语义保持低饱和红，布局未改。
+- 完整离线回归在 `-W error` 下为 `499 passed / 25 skipped / 2 deselected`、零告警；
+  Ruff、Mypy、workspace validator、Windows package contract、JavaScript 语法全绿，生产与全锁定
+  依赖审计均为无已知漏洞。
+- 部署实现提交为 `cfc6cd66be3edcf5468840c29b509eae643896b5`，镜像为
+  `stockwatcher-web:web-alpha4-cfc6cd6`。部署前后备份的 checksum、`integrity_check=ok`、Schema v9、
+  Web/Worker/Tunnel 健康与公网 `app.css?v=13` 均已校验。
+- 当前结构化 Review 为 `P0=0 / P1=0 / P2=0`；本轮 Web 仅剩真实交易日固定提醒、
+  同点结算/重试与全日运行现场验收，在此之前继续 `BLOCKED / NOT_ACCEPTED`。

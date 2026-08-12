@@ -17,11 +17,15 @@
   普通响应只展示中文原因，不暴露内部 `safe_reason`。
 - 采用莫兰迪典藏编辑部配色；通知按钮改为雾霾蓝。强异动及 09:45/14:45 自动提醒改为
   居中 `alertdialog`，手动关闭、Esc、焦点恢复、减少动画，并保持 WebSocket 水位去重。
+- Top3 候选卡的上涨百分比单独恢复旧版鲜明红，并放大为响应式
+  `1.85rem–2rem`；下跌仍用莫兰迪绿，其他页面和状态仍保持低饱和色系。
+- 消除 Starlette 已弃用 HTTP 测试客户端及测试资源未关闭告警，完整回归在
+  `-W error` 下零告警通过；同时升级安全依赖并对生产与全锁定依赖执行漏洞审计。
 
 ### Evidence boundary
 
-- 离线代码门、Mac Web 部署和安装包不能替代真实交易日 09:45/14:45 验收；Web 继续
-  `BLOCKED / NOT_ACCEPTED`。
+- 离线代码门、Mac Web 部署和安装包不能替代真实交易日 09:45/14:45 验收；Web 当前
+  代码 Review 为 `P0=0 / P1=0 / P2=0`，但在现场验收前继续 `BLOCKED / NOT_ACCEPTED`。
 
 ## [web-internal-test-v1-favicon] - 2026-08-09
 

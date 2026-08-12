@@ -2,8 +2,8 @@
 
 ## 唯一事实源
 
-- 当前返修分支：`feat/web-outcomes-morandi-alerts`。
-- 部署实现提交：`d2dfc90cd773643e6f23cb98606b7da0c606e90b`。
+- 当前返修分支：`fix/web-top3-gain-emphasis`。
+- 部署实现提交：`cfc6cd66be3edcf5468840c29b509eae643896b5`。
 - Web 基线：`502a447d7e593d638ea45518f2a5e4d4827f683f`（Mac RC3 tag 基线）。
 - Web 与 main 的共同基线是 `502a447...`；Web 有独有实现提交，不能把它当作 main 的祖先。
 - 当前 worktree：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e`。
@@ -16,13 +16,15 @@
 
 原因：
 
-1. 当前 macOS worktree 的完整 pytest 为 `499 passed, 25 skipped, 2 deselected`；Ruff、
-   Mypy（141 source files）、workspace validator（29 个必需文件）和 JavaScript syntax check
-   全部通过。
+1. 当前 macOS worktree 的完整 pytest 为 `499 passed, 25 skipped, 2 deselected`，
+   并在 `-W error` 下零告警；Ruff、Mypy（141 source files）、workspace validator
+   （29 个必需文件）、JavaScript syntax check 全部通过，生产与全锁定依赖
+   审计无已知漏洞。
 2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；镜像
-   `stockwatcher-web:web-alpha4-d2dfc90`、Schema v9、迁移保留和公网入口均已验证。
-3. 以上仍是 Mac 主机与当前公网入口证据，不等于完整交易日、持续运行、提醒重放、备份恢复
-   和浏览器完全关闭后的通知验收。
+   `stockwatcher-web:web-alpha4-cfc6cd6`、Schema v9、公网 `app.css?v=13`、部署前后备份与
+   公网入口均已验证。
+3. 当前结构化代码 Review 为 `P0=0 / P1=0 / P2=0`。以上仍是 Mac 主机与当前
+   公网入口证据，不等于真实交易日的固定提醒、同点结算/重试和全日运行验收。
 4. 当前部署依赖 Mac 开机、联网及 Docker Desktop；VPS 已由 Human Owner 明确后置，本基准
    不把 Mac 托管写成独立服务器部署。
 
@@ -33,19 +35,21 @@
 - REST/API、Admin/Tester、Argon2id session、CSRF、RBAC、AES-256-GCM Token 存储边界和全局 redaction。
 - SQLite WAL v9、备份/恢复 CLI、Compose/Caddy 及运维脚本。
 - 认证只读 outcomes API、近一月摘要/完整页、莫兰迪视觉与中央自动提醒。
+- Top3 上涨百分比使用旧版鲜明红并响应式放大；下跌与其他界面继续莫兰迪色系。
 
 ## 部署资产边界
 
 - Web branch 的实际部署源码位于其独立 worktree 的 `deploy/`。
 - main 不复制 Web server、worker 或部署实现；main 的 `deploy/web/README.md` 仅是边界索引，不是第二套资产。
-- 当前 `stock.hazelkahlil.com` 由 Mac Docker + Cloudflare Tunnel 提供；本次基准只做只读
-  复核，没有修改域名、Tunnel、账号或部署配置。
+- 当前 `stock.hazelkahlil.com` 由 Mac Docker + Cloudflare Tunnel 提供；本次仅替换精确
+  Web/Worker 镜像，没有修改域名、Tunnel、账号或部署配置。
 - 真实 `.env`、Token 和 master key 不进入 main、基准文档、日志或打包制品。
 
 ## 下一步
 
-1. 继续补完整交易日、强异动通知、断线恢复、事件重放和备份恢复验收。
-2. 浏览器完全关闭后的 Web Push 如仍需要，应作为独立功能实现；当前只有页面内提醒与浏览器
-   Notification。
-3. 全部门通过后，由 Human Owner 决定是否建立受控集成提交；在此之前保持
+1. 在下一真实交易日验收 09:45/14:45 中央提醒、次日同点结算/有界重试、
+   强异动与全日持续运行。
+2. 浏览器完全关闭后的 Web Push 如仍需要，作为非阻断的独立后续功能；当前页面内
+   提醒与浏览器 Notification 不因此降级。
+3. 现场门通过后，由 Human Owner 决定是否建立受控集成提交；在此之前保持
    branch/worktree/Bundle 完整并继续 `BLOCKED / NOT_ACCEPTED`。
