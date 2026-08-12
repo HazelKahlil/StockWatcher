@@ -18,10 +18,25 @@ from .models import (
     SourceTimestampKind,
     TradingDate,
 )
+from .outcomes import (
+    CandidateOutcome,
+    DailyPortfolioOutcome,
+    OutcomeResult,
+    OutcomeReview,
+    OutcomeSlot,
+    OutcomeStats,
+    OutcomeStatus,
+    SettlementMethod,
+    build_outcome_review,
+    classify_return,
+    return_pct,
+)
 
 __all__ = [
     "CandidateInput",
+    "CandidateOutcome",
     "DataQuality",
+    "DailyPortfolioOutcome",
     "FundPriceSyncState",
     "FundSignalState",
     "FundStatus",
@@ -30,6 +45,11 @@ __all__ = [
     "HistoricalBar",
     "MarketEvent",
     "ProviderHealth",
+    "OutcomeResult",
+    "OutcomeReview",
+    "OutcomeSlot",
+    "OutcomeStats",
+    "OutcomeStatus",
     "RealtimeQuote",
     "RollingFeatures",
     "Security",
@@ -38,4 +58,8 @@ __all__ = [
     "SourceTimestampKind",
     "TradingDate",
     "Snapshot",
+    "SettlementMethod",
+    "build_outcome_review",
+    "classify_return",
+    "return_pct",
 ]

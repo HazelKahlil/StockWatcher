@@ -150,6 +150,15 @@ class _ForbiddenLoader:
         raise AssertionError("ordinary Pro must not run inside scan_once")
 
 
+class _StaticLoader:
+    def __init__(self, universe: RuntimeUniverse, *, concept_failure: str | None = None) -> None:
+        self.universe = universe
+        self.last_concept_failure = concept_failure
+
+    def load(self) -> RuntimeUniverse:
+        return self.universe
+
+
 class _RecordingRealtime:
     def __init__(self, result: TransportResult) -> None:
         self.result = result
@@ -719,3 +728,88 @@ def test_concept_cache_keeps_last_known_good_after_failed_refresh(
     cold = cache.save_preserving_last_known_good(industry_only, None)
     assert cold is False
     assert cache.load(now=NOW).concept_loaded is False
+
+
+def test_runtime_prepare_keeps_last_known_good_concepts_in_current_process(
+    tmp_path: Path,
+) -> None:
+    """A failed concept refresh keeps concepts live without waiting for restart."""
+    cache = RuntimeUniverseCache(
+        tmp_path / "runtime-universe-v1.json",
+        minimum_profile_count=100,
+    )
+    base = _universe()
+    concept_memberships = tuple(
+        SectorMembership(
+            security=_security(index),
+            sector_code="C1",
+            sector_name="概念1",
+            sector_type="concept",
+            member_count=5,
+            effective_date=NOW.date(),
+            source_ts=NOW,
+            received_ts=NOW,
+            provider_version="pro-cache-test",
+            config_version="runtime-universe-v1",
+            quality=DataQuality.DEGRADED,
+            source_timestamp_kind=SourceTimestampKind.RECEIVED_FALLBACK,
+        )
+        for index in range(1, 6)
+    )
+    previous = replace(
+        base,
+        concept_loaded=True,
+        memberships=(*base.memberships, *concept_memberships),
+    )
+    cache.save(previous)
+
+    refreshed_security = Security("000001.SZ", "刷新后的名称", "SZ")
+    refreshed_profiles = tuple(
+        replace(profile, security=refreshed_security)
+        if profile.security.code == refreshed_security.code
+        else profile
+        for profile in base.profiles
+    )
+    refreshed_memberships = tuple(
+        replace(membership, security=refreshed_security)
+        if membership.security.code == refreshed_security.code
+        else membership
+        for membership in base.memberships
+    )
+    fresh = replace(
+        base,
+        profiles=refreshed_profiles,
+        memberships=refreshed_memberships,
+        concept_loaded=False,
+        generated_at=NOW + timedelta(minutes=5),
+    )
+    runtime = TushareV1Runtime(
+        cast(TushareBootstrapLoader, _StaticLoader(fresh, concept_failure="rate_limited")),
+        FullMarketScanCoordinator(
+            _RecordingRealtime(_realtime_result(fresh)),
+            clock=lambda: NOW,
+        ),
+        universe_cache=cache,
+        clock=lambda: NOW,
+    )
+
+    prepared = runtime.prepare()
+
+    assert runtime.concept_cache_preserved is True
+    assert prepared is runtime.universe
+    assert prepared.concept_loaded is True
+    assert prepared.generated_at == fresh.generated_at
+    prepared_concepts = [
+        membership
+        for membership in prepared.memberships
+        if membership.sector_type == "concept"
+    ]
+    assert len(prepared_concepts) == len(concept_memberships)
+    assert next(
+        membership
+        for membership in prepared_concepts
+        if membership.security.code == refreshed_security.code
+    ).security.name == refreshed_security.name
+    persisted = cache.load(now=NOW)
+    assert persisted.concept_loaded is True
+    assert persisted.generated_at == fresh.generated_at

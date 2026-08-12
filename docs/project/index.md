@@ -1,13 +1,14 @@
 # 项目长期事实索引
 
-> 最后更新：2026-07-30
+> 最后更新：2026-08-11
 > 这里只放长期为真的事实。单次改动进版本文档，规则和踩坑进 `docs/process/`。
 
 ## 项目是什么
 
 - 一句话定位：为内部资深 A 股交易员持续扫描市场，用确定性规则把全市场缩小为三只候选并提供低打扰异动提醒。
-- 当前用户 / 场景：Human Owner 先在 macOS 本机内部验证 V1；Windows 后续只同步共享修复并
-  单独完成真实验收。Mac 结果不能替代 Windows 证据。
+- 当前用户 / 场景：Human Owner 以 macOS 本机为开发和桌面试用基准；Web 独立线供少量
+  内部测试者通过 Mac Docker 使用；Windows 已达到 smoke，但仍需独立完成权威 M0。各轨
+  证据不能互相替代。
 - 核心问题：减少人工逐行业、概念和个股持续盯盘的时间，同时保留交易员自行看盘与决策。
 - 明确不做：自动买卖、账户/持仓读取、交易密码、下单接口、收益承诺、面向公众发布候选、首版 SaaS/多租户、新闻 AI 和盘中 LLM 选股。
 - 产品名：仓库与工程名为 `StockWatcher`；V2.0 原始规格中的业务名为“A股候选观察与异动提醒工具”。
@@ -20,6 +21,7 @@
 | 张新玲 2026-07-22 需求确认与补充 | 固定三只、板块共振、紫黄线、09:45/14:50、少打扰、内部使用 | `requirements.lock.json` 为锁定业务项，变更需新版本确认 |
 | Hazel Kahlil 2026-07-22 环境确认 | 当前只有 Mac，日常迭代改为本地优先 | 先做跨平台 Mock/Replay 基础；Windows/通达信证据延后到独立版本 |
 | Human Owner 2026-07-30 Mac-first 决策 | 先在 Mac 验证共享 Tushare 主路线、真实 Top3 与系统适配；共享修复后同步回 Windows | Windows `rate_limited` 失败和 0 轮扫描继续保留为 `FAIL`，不得由 Mac 结果覆盖 |
+| Human Owner 2026-08-11 内部基准决策 | 当前 Mac / Web / Windows 状态先固定为 `v0.4.0-alpha.2`，后续再继续修改和打包 | 只形成可重建内部试用基准；Web 继续未接受，Windows smoke 不升级为权威 M0 |
 | v0.3.1 数据路线决策 | 普通/历史/板块固定使用 `fastapic` Pro 代理，实时固定使用 SDK `realtime_quote(src="sina")` | Mac 与 Windows 共用 Provider、模型、归一化、算法、SQLite 和核心 UI；平台差异隔离 |
 | 通达信 TdxQuant 官方能力 | Windows 已验证部分实时、列表、日线、板块和交易日历能力，但分钟历史与可信秒级源时间仍未通过 | 保留为可选诊断和未来资金字段探索，不再阻塞正常启动 |
 | Windows App Notifications | 桌面端可做非抢焦点提醒，但多屏、停留和安装后的实际行为需 Windows 验证 | UI 验收不能只靠单元测试 |
@@ -34,12 +36,12 @@
 | 语言 | Python 3.11/3.12；Tushare transport、解析、归一化与业务模型保持跨平台 |
 | 桌面 UI | PySide6；数据接口设置支持系统安全存储、先测试后切换和状态展示 |
 | 并发 | 单扫描协调器禁止重叠；provider、engine、UI 和持久化责任隔离 |
-| 数据库 | SQLite WAL v3；候选批次及三只明细原子保存 |
+| 数据库 | SQLite WAL v8；候选批次及三只明细原子保存，次日同点复盘独立保留至少一年并持久化有界重试 |
 | 配置 | YAML + Pydantic；锁定规则、软参数、用户设置和运行环境分层 |
 | 测试 | pytest + Replay/Synthetic；默认不需要 Token；真实 30 分钟使用独立脱敏脚本 |
 | 打包 | PyInstaller + Inno Setup；正常入口只使用 Tushare 单 Token，TdxQuant 为高级诊断 |
-| 部署 | 仅本机内部使用；不接交易账户，不自动下单，不执行发布或远端同步 |
-| 当前验证 | Mac原生实时全市场七批、连续双次手动Top3、14:45固定触发与延迟兜底、算法/UI/SQLite/离线门及最终arm64 `.app`安装已建立；新鲜固定时点Top3、15:30准点报告、真实恢复会话与Windows验收仍是严格门 |
+| 部署 | Desktop App 本机使用；Web 独立线由 Mac Docker + Cloudflare Tunnel 提供并继续 `BLOCKED / NOT_ACCEPTED`；不接交易账户、不自动下单 |
+| 当前验证 | Shared Core 完整工程门通过；Web `bf447ba` 完整工程门与当前 Mac Docker 公网可达通过；Windows PR #4 CI/build 与原始真机 smoke 通过。固定时点、完整交易日、恢复和各平台安装证据仍按轨道独立验收 |
 
 ## 计划模块表
 
@@ -55,7 +57,12 @@
 
 V1 已实现 `domain`、`providers`、`runtime`、`engine`、`storage` 和跨平台 PySide6 UI 主链路，
 并提供不冒充盘中证据的真实收盘回顾；Mac真实交易时段全市场与内部arm64 `.app`已有证据，
-但新鲜固定时点Top3、15:30准点报告和真实恢复会话仍未完成，Windows真实验收仍未通过。
+Web 与 Windows 也各有独立 smoke/工程证据，但新鲜固定时点、15:30 准点、完整恢复会话和
+权威 Windows M0 仍未完成。
+
+`0.6.0a4` 后继开发在 Shared Core 与 Web 增加并返修 `candidate_outcomes` 旁路：只消费正式
+固定三只及可靠行情，严格验证受控 Pro `/trade_cal` wire provenance 并持久化有界分钟重试；
+不进入评分或提醒决策；Mac/Windows 共用桌面实现，Web 以 Schema v9 和只读 API 消费。
 
 ## 相关文档
 

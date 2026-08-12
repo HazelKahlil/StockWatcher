@@ -14,7 +14,8 @@ from typing import Any, cast
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
-from stock_watcher.domain import SHANGHAI
+from stock_watcher.domain import SHANGHAI, OutcomeStatus, build_outcome_review
+from stock_watcher.runtime import candidate_outcome_rows
 from stock_watcher.services import CommandService, CommandType, EventOutbox
 from stock_watcher.services.public_state import PublicStateBuilder
 from stock_watcher.services.secret_service import SecretService
@@ -40,6 +41,78 @@ def _parse_date(value: str | None) -> str | None:
         return date.fromisoformat(value).isoformat()
     except ValueError:
         raise ApiError("invalid date", 400, "invalid_date")
+
+
+def _outcome_stats_payload(value: Any) -> dict[str, Any]:
+    return {
+        "total_count": value.total_count,
+        "settled_count": value.settled_count,
+        "win_count": value.win_count,
+        "loss_count": value.loss_count,
+        "flat_count": value.flat_count,
+        "win_rate": value.win_rate,
+        "average_return_pct": value.average_return_pct,
+        "median_return_pct": value.median_return_pct,
+    }
+
+
+def _outcome_reason(status: OutcomeStatus, reason: str | None) -> str:
+    if status is OutcomeStatus.SETTLED:
+        return "已按可验证行情完成复盘"
+    if status is OutcomeStatus.PENDING:
+        return "等待可验证行情"
+    if reason == "historical_minute_suspended_or_no_trade":
+        return "目标分钟无成交，未纳入统计"
+    if reason == "historical_minute_missing_or_ambiguous":
+        return "精确分钟行情不可验证，未纳入统计"
+    if reason and reason.startswith("calendar:"):
+        return "交易日历暂不可验证，未纳入统计"
+    return "缺少可验证行情，未纳入统计"
+
+
+def _nonnegative_count(value: object) -> int:
+    try:
+        return max(0, int(str(value or 0)))
+    except ValueError:
+        return 0
+
+
+def _backfill_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {
+            "status": "pending",
+            "message": "历史回补状态待确认；从新固定提醒开始记录不受影响。",
+            "settled": 0,
+            "unavailable": 0,
+            "skipped": 0,
+            "pending": 0,
+        }
+    status = str(value.get("status") or "pending")
+    allowed = {"running", "completed", "partial", "failed"}
+    if status not in allowed:
+        status = "pending"
+    counts = {
+        "settled": _nonnegative_count(value.get("settled")),
+        "unavailable": _nonnegative_count(value.get("unavailable")),
+        "skipped": _nonnegative_count(value.get("skipped")),
+        "pending": _nonnegative_count(value.get("pending")),
+    }
+    messages = {
+        "running": "正在检查可验证的固定提醒历史……",
+        "completed": "可验证历史已回补；无法验证的数据不计入统计。",
+        "partial": (
+            f"已回补{counts['settled']}笔，"
+            f"{counts['unavailable'] + counts['skipped']}笔因缺少可验证行情未纳入统计。"
+            + (f"另有{counts['pending']}笔等待重试。" if counts["pending"] else "")
+        ),
+        "failed": "历史回补检查失败；从新固定提醒开始记录不受影响。",
+        "pending": "历史回补状态待确认；从新固定提醒开始记录不受影响。",
+    }
+    return {
+        "status": status,
+        "message": messages[status],
+        **counts,
+    }
 
 
 class ApiError(RuntimeError):
@@ -352,6 +425,67 @@ def state_router() -> APIRouter:
                 }
             )
         return {"items": items, "next_cursor": items[-1]["snapshot_id"] if items else None}
+
+    @router.get("/outcomes")
+    async def outcomes(
+        request: Request,
+        range_name: str = Query("month", alias="range"),
+        session: dict[str, Any] = Depends(current_session),
+        store: SQLiteStore = Depends(get_read_store),
+    ) -> dict[str, Any]:
+        ranges: dict[str, int | None] = {"week": 5, "month": 20, "all": None}
+        if range_name not in ranges:
+            raise ApiError("复盘范围无效", 400, "invalid_outcome_range")
+        records = candidate_outcome_rows(store, trading_days=ranges[range_name])
+        review = build_outcome_review(records)
+        return {
+            "range": range_name,
+            "summary": _outcome_stats_payload(review.overall),
+            "morning": _outcome_stats_payload(review.morning),
+            "afternoon": _outcome_stats_payload(review.afternoon),
+            "portfolio": {
+                "win_rate": review.portfolio_win_rate,
+                "complete_days": review.complete_portfolio_days,
+                "win_days": review.portfolio_win_days,
+                "days": [
+                    {
+                        "entry_trade_date": row.entry_trade_date.isoformat(),
+                        "total_count": row.total_count,
+                        "settled_count": row.settled_count,
+                        "complete": row.complete,
+                        "average_return_pct": row.average_return_pct,
+                        "won": row.won,
+                    }
+                    for row in review.portfolios
+                ],
+            },
+            "records": [
+                {
+                    "id": row.id,
+                    "entry_trade_date": row.entry_trade_date.isoformat(),
+                    "slot": row.slot.value,
+                    "rank": row.rank,
+                    "code": row.code,
+                    "name": row.name,
+                    "entry_price": row.entry_price,
+                    "target_trade_date": (
+                        row.target_trade_date.isoformat() if row.target_trade_date else None
+                    ),
+                    "exit_price": row.exit_price,
+                    "return_pct": row.return_pct,
+                    "status": row.status.value,
+                    "outcome": row.outcome.value if row.outcome else None,
+                    "settlement_method": (
+                        row.settlement_method.value if row.settlement_method else None
+                    ),
+                    "display_reason": _outcome_reason(row.status, row.safe_reason),
+                }
+                for row in review.records
+            ],
+            "backfill": _backfill_payload(
+                store.get_app_setting("candidate_outcome_backfill_status")
+            ),
+        }
 
     @router.get("/alerts")
     async def alerts(

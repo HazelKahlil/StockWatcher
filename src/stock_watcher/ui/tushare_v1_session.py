@@ -9,14 +9,16 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from threading import Lock, current_thread
+from threading import Lock, Thread, current_thread
 from time import monotonic as monotonic_time
 from time import sleep as sleep_seconds
 from typing import cast
 
+from PySide6.QtCore import QTimer
+
 from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
-from stock_watcher.domain import SHANGHAI, HealthState
+from stock_watcher.domain import SHANGHAI, HealthState, OutcomeSlot
 from stock_watcher.engine import (
     AlertPolicy,
     AlertTrigger,
@@ -52,10 +54,12 @@ from stock_watcher.runtime import (
     AutomationTaskSpec,
     AutomationTaskState,
     AutomationTaskType,
+    CandidateOutcomeTracker,
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
     MarketSessionSchedule,
+    OutcomeActionReport,
     RuntimeUniverse,
     RuntimeUniverseCache,
     ScanOutcome,
@@ -68,6 +72,10 @@ from stock_watcher.runtime import (
     write_local_fallback_artifacts,
     write_pdf_manifest,
     write_post_close_report,
+)
+from stock_watcher.runtime.continuity import (
+    analyze_scan_gaps,
+    continuity_gap_summary_parts,
 )
 from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
 from stock_watcher.runtime.post_close_report_model import LocalFallbackReport
@@ -129,6 +137,16 @@ class TushareV1Session:
         self.store.initialize()
         self.credential_store = credential_store or KeyringCredentialStore()
         self.settings = settings or DataSourceSettings()
+        self._credential_state = "unknown"
+        self._credential_error: str | None = None
+        self._primary_secret_snapshot: str | None = None
+        self._legacy_credential_present = False
+        self._credential_refresh_lock = Lock()
+        self._credential_refresh_in_flight = False
+        self._credential_refresh_generation = 0
+        self._credential_state_result: tuple[int, str, bool, bool, str | None] | None = None
+        self._credential_poll_timer: QTimer | None = None
+        self._credential_callback: Callable[[], None] | None = None
         self._request_budget = ApplicationRequestBudget(
             self.settings.request_budget_interval_seconds
         )
@@ -140,6 +158,16 @@ class TushareV1Session:
         self._universe_future_runtime: TushareV1Runtime | None = None
         self._universe_retry_at: datetime | None = None
         self._universe_refresh_issue: str | None = None
+        self._outcome_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="stockwatcher-outcomes",
+        )
+        self._outcome_tracker: CandidateOutcomeTracker | None = None
+        self._outcome_futures: set[Future[OutcomeActionReport]] = set()
+        self._outcome_future_lock = Lock()
+        self._outcome_issue: str | None = None
+        self._outcome_initial_backfill_submitted = False
+        self._outcome_fallback_submitted: set[str] = set()
         self._manual_started_monotonic: float | None = None
         self._manual_scan_round = 0
         self._capability_checks_required = runtime_factory is None
@@ -211,7 +239,11 @@ class TushareV1Session:
             "macos-desktop" if sys.platform == "darwin" else "windows-desktop"
         )
         self._start_runtime_session()
-        self._refresh_credential_state()
+        if not isinstance(self.credential_store, KeyringCredentialStore):
+            # In-memory stores are deterministic test/local stores; keep their
+            # existing synchronous behavior while native Keychain reads stay
+            # off the GUI startup path.
+            self._refresh_credential_state()
 
     def provider_changed(self, mode: DataSourceMode) -> None:
         self.settings = self.settings.model_copy(update={"mode": mode})
@@ -223,6 +255,9 @@ class TushareV1Session:
         self._universe_refresh_issue = None
         self._runtime = None
         self._provider = None
+        self._outcome_tracker = None
+        self._outcome_initial_backfill_submitted = False
+        self._outcome_fallback_submitted.clear()
         self._prepared_date = None
         self.pending_alert = None
         self._failure_active = False
@@ -235,8 +270,103 @@ class TushareV1Session:
 
     @property
     def requires_data_source_setup(self) -> bool:
-        """Open the simple Token page on first macOS launch without a Token."""
-        return self.settings.mode is DataSourceMode.TUSHARE_15000 and not self._primary_present()
+        """Open setup only after the asynchronous native credential read finishes."""
+        if self.settings.mode is not DataSourceMode.TUSHARE_15000:
+            return False
+        if isinstance(self.credential_store, KeyringCredentialStore):
+            return self._credential_state == "missing"
+        # MemoryCredentialStore is synchronous and is used by deterministic
+        # local/replay tests; preserve its historical live presence semantics.
+        return not self._primary_present()
+
+    @property
+    def credential_state_ready(self) -> bool:
+        """Whether startup credential I/O has completed."""
+        return self._credential_state in {"present", "missing", "error"}
+
+    @property
+    def credential_state(self) -> str:
+        """Return the credential status without entering the native backend."""
+        return self._credential_state
+
+    @property
+    def credential_error(self) -> str | None:
+        """Return only a safe exception class name for diagnostics."""
+        return self._credential_error
+
+    def refresh_credential_state_async(self, callback: Callable[[], None] | None = None) -> None:
+        """Read native Keychain off the GUI thread and publish a memory snapshot."""
+        if not isinstance(self.credential_store, KeyringCredentialStore):
+            self._refresh_credential_state()
+            if callback is not None:
+                callback()
+            return
+
+        with self._credential_refresh_lock:
+            if self._credential_refresh_in_flight:
+                if callback is not None:
+                    self._credential_callback = callback
+                return
+            self._credential_refresh_in_flight = True
+            self._credential_refresh_generation += 1
+            generation = self._credential_refresh_generation
+            self._credential_state_result = None
+            self._credential_callback = callback
+            poll_timer = self._credential_poll_timer
+            if poll_timer is None:
+                poll_timer = QTimer()
+                poll_timer.setInterval(10)
+                poll_timer.timeout.connect(self._poll_credential_state)
+                self._credential_poll_timer = poll_timer
+            poll_timer.start()
+
+        def read() -> None:
+            primary_present = False
+            legacy_present = False
+            state = "missing"
+            error_name: str | None = None
+            try:
+                primary = self.credential_store.get(PRIMARY_CREDENTIAL)
+                legacy = None if primary else self.credential_store.get(FAST_CREDENTIAL)
+            except Exception as error:
+                state = "error"
+                error_name = type(error).__name__
+            else:
+                primary_present = bool(primary)
+                legacy_present = bool(legacy)
+                # A legacy value still requires explicit migration; it cannot
+                # silently become the production primary credential.
+                state = "present" if primary_present else "missing"
+            with self._credential_refresh_lock:
+                if generation != self._credential_refresh_generation:
+                    return
+                self._credential_state_result = (
+                    generation,
+                    state,
+                    primary_present,
+                    legacy_present,
+                    error_name,
+                )
+
+        Thread(target=read, name="stockwatcher-keychain", daemon=True).start()
+
+    def _poll_credential_state(self) -> None:
+        with self._credential_refresh_lock:
+            result = self._credential_state_result
+            if result is None:
+                return
+            self._credential_state_result = None
+            poll_timer = self._credential_poll_timer
+            if poll_timer is not None:
+                poll_timer.stop()
+        generation, state, primary_present, legacy_present, error_name = result
+        self._publish_credential_state(
+            generation,
+            state,
+            primary_present=primary_present,
+            legacy_present=legacy_present,
+            error_name=error_name,
+        )
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
@@ -402,6 +532,7 @@ class TushareV1Session:
         manual_request: bool,
     ) -> ScanOutcome | None:
         now = _shanghai(self._clock())
+        self._submit_due_outcome_fallbacks(now)
         self._prune_history_if_due(now)
         self._detect_scan_stall(now)
         self.phase_label = _visible_phase(now)
@@ -454,6 +585,27 @@ class TushareV1Session:
                 task_key=fixed_task.task_key if fixed_task else None,
             )
             return None
+        if not self.credential_state_ready:
+            self._set_credential_pending()
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail=self.connection_detail,
+                health=HealthState.WARMING,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
+            return None
+        if self._credential_state == "error":
+            self._set_credential_error()
+            self._fail_fixed_task(fixed_task, now, self.connection_detail)
+            self._record_scan_skip(
+                now,
+                trigger_type=requested_trigger,
+                detail=self.connection_detail,
+                health=HealthState.WARMING,
+                task_key=fixed_task.task_key if fixed_task else None,
+            )
+            return None
         secret_present = self._primary_present()
         if not secret_present:
             if summary_task is not None:
@@ -474,6 +626,15 @@ class TushareV1Session:
                 self.settings,
                 self.credential_store,
             )
+            if _supports_outcome_provider(self._provider):
+                self._outcome_tracker = CandidateOutcomeTracker(
+                    self.store,
+                    self._provider,
+                    max_realtime_age_seconds=max(
+                        120.0,
+                        float(self.settings.source_fresh_seconds),
+                    ),
+                )
             if (
                 self._runtime.universe is not None
                 and now.date() in self._runtime.universe.open_dates
@@ -539,6 +700,8 @@ class TushareV1Session:
                     )
                 )
             )
+        if _initial_outcome_backfill_window(now):
+            self._schedule_initial_outcome_backfill(now)
         open_dates = self._runtime.universe.open_dates if self._runtime.universe is not None else ()
         if (
             fixed_task is None
@@ -671,10 +834,17 @@ class TushareV1Session:
             if fixed_task is not None
             else self._schedule.crossed_fixed_trigger(now, completed_at)
         )
+        effective_fixed = forced_fixed or crossed
+        if effective_fixed is not None and outcome.health is HealthState.HEALTHY:
+            self._settle_candidate_outcomes_safely(
+                effective_fixed,
+                outcome,
+                completed_at,
+            )
         snapshot_id = self._evaluate_alerts(
             completed_at,
             outcome.strong_event,
-            forced_fixed=forced_fixed or crossed,
+            forced_fixed=effective_fixed,
             selection_audit=outcome.selection_audit,
             scan_run_id=scan_run_id,
         )
@@ -773,11 +943,6 @@ class TushareV1Session:
             event_strength=strong_event.strength,
         )
         if decision.should_alert:
-            subtitle = (
-                "个股与板块同步增强｜资金未确认"
-                if strong_event.funds_unconfirmed
-                else "个股、板块与资金同步增强"
-            )
             detail = self._build_strong_alert_detail(
                 now,
                 strong_event,
@@ -785,6 +950,21 @@ class TushareV1Session:
                 decision.reason,
                 readiness,
                 scan_run_id,
+            )
+            trigger_name = str(
+                detail.get("trigger_name") or detail.get("trigger_symbol") or ""
+            ).strip()
+            trigger_prefix = ""
+            if trigger_name:
+                trigger_prefix = (
+                    f"{trigger_name}等{len(strong_event.triggering_codes)}只触发｜"
+                    if len(strong_event.triggering_codes) > 1
+                    else f"{trigger_name}触发｜"
+                )
+            subtitle = trigger_prefix + (
+                "个股与板块同步增强｜资金未确认"
+                if strong_event.funds_unconfirmed
+                else "个股、板块与资金同步增强"
             )
             return self._record_alert(
                 now,
@@ -935,6 +1115,8 @@ class TushareV1Session:
             detail=detail,
             increment_attempt=increment_attempt,
         )
+        if self._outcome_tracker is not None:
+            self._submit_due_outcome_fallbacks(now)
 
     def check_automation_tasks(self, *, now: datetime | None = None) -> None:
         """Independent 15:30 scheduling entry, decoupled from the scan loop.
@@ -1059,7 +1241,7 @@ class TushareV1Session:
     ) -> int:
         assert self.batch is not None
         snapshot_id = self.store.record_batch(self.batch)
-        self.store.record_alert_event(
+        alert_id = self.store.record_alert_event(
             snapshot_id,
             now.isoformat(),
             decision,
@@ -1072,7 +1254,158 @@ class TushareV1Session:
             subtitle=subtitle,
             trigger_type=trigger.value,
         )
+        if self.state is HealthState.HEALTHY and trigger in {
+            AlertTrigger.SCHEDULED_0945,
+            AlertTrigger.SCHEDULED_1445,
+        }:
+            self._record_scheduled_outcomes_safely(
+                snapshot_id=snapshot_id,
+                alert_id=alert_id,
+                trigger=trigger,
+                now=now,
+            )
         return snapshot_id
+
+    def _record_scheduled_outcomes_safely(
+        self,
+        *,
+        snapshot_id: int,
+        alert_id: int,
+        trigger: AlertTrigger,
+        now: datetime,
+    ) -> None:
+        tracker = self._outcome_tracker
+        batch = self.batch
+        if tracker is None or batch is None:
+            return
+        try:
+            tracker.record_scheduled_batch(
+                batch,
+                snapshot_id=snapshot_id,
+                alert_id=alert_id,
+                trigger_type=trigger.value,
+                recorded_at=now,
+                resolve_calendar=False,
+            )
+        except Exception as error:  # noqa: BLE001 - alert is already durable
+            self._outcome_issue = f"outcome-create:{type(error).__name__}"
+            return
+        self._submit_outcome_task(
+            lambda: tracker.resolve_pending_targets(
+                now=now,
+                limit=3,
+                entry_snapshot_id=snapshot_id,
+            )
+        )
+
+    def _settle_candidate_outcomes_safely(
+        self,
+        trigger: AlertTrigger,
+        outcome: ScanOutcome,
+        now: datetime,
+    ) -> None:
+        tracker = self._outcome_tracker
+        if tracker is None:
+            return
+        slot = (
+            OutcomeSlot.MORNING if trigger is AlertTrigger.SCHEDULED_0945 else OutcomeSlot.AFTERNOON
+        )
+
+        def settle_old_outcomes() -> OutcomeActionReport:
+            tracker.resolve_pending_targets(now=now, limit=3)
+            return tracker.settle_fixed_slot(
+                target_trade_date=now.date(),
+                slot=slot,
+                scan_quotes=outcome.quotes,
+                now=now,
+            )
+
+        self._submit_outcome_task(settle_old_outcomes)
+        self._submit_due_outcome_fallbacks(now)
+
+    def _submit_due_outcome_fallbacks(self, now: datetime) -> None:
+        tracker = self._outcome_tracker
+        if tracker is None:
+            return
+        current = _shanghai(now)
+        try:
+            groups = tracker.due_backfill_groups(now=current, limit=4)
+        except Exception as error:  # noqa: BLE001 - sidecar discovery stays isolated
+            self._outcome_issue = f"outcome-discovery:{type(error).__name__}"
+            return
+        for target_date, target_slot in groups:
+            task_key = f"{target_date.isoformat()}:outcome-{target_slot.value}"
+            with self._outcome_future_lock:
+                already_submitted = task_key in self._outcome_fallback_submitted
+            if already_submitted:
+                continue
+
+            def backfill_due(
+                selected_tracker: CandidateOutcomeTracker = tracker,
+                selected_date: date = target_date,
+                selected_slot: OutcomeSlot = target_slot,
+            ) -> OutcomeActionReport:
+                return selected_tracker.backfill_due(
+                    now=_shanghai(self._clock()),
+                    target_trade_date=selected_date,
+                    target_slot=selected_slot,
+                    limit=3,
+                )
+
+            self._submit_outcome_task(backfill_due, fallback_key=task_key)
+
+    def _schedule_initial_outcome_backfill(self, now: datetime) -> None:
+        tracker = self._outcome_tracker
+        if tracker is None or self._outcome_initial_backfill_submitted:
+            return
+        self._outcome_initial_backfill_submitted = True
+        self._submit_outcome_task(
+            lambda: tracker.backfill_recent_scheduled(
+                now=now,
+                days=30,
+                settlement_limit=180,
+            )
+        )
+
+    def _submit_outcome_task(
+        self,
+        task: Callable[[], OutcomeActionReport],
+        *,
+        fallback_key: str | None = None,
+    ) -> bool:
+        try:
+            future = self._outcome_executor.submit(task)
+        except RuntimeError as error:
+            self._outcome_issue = f"outcome-submit:{type(error).__name__}"
+            return False
+        with self._outcome_future_lock:
+            self._outcome_futures.add(future)
+            if fallback_key is not None:
+                self._outcome_fallback_submitted.add(fallback_key)
+
+        def task_done(completed: Future[OutcomeActionReport]) -> None:
+            self._outcome_task_done(completed, fallback_key=fallback_key)
+
+        future.add_done_callback(task_done)
+        return True
+
+    def _outcome_task_done(
+        self,
+        future: Future[OutcomeActionReport],
+        *,
+        fallback_key: str | None = None,
+    ) -> None:
+        try:
+            report = future.result()
+            if fallback_key is not None and report.pending:
+                self._outcome_issue = "outcome-retry-scheduled"
+        except Exception as error:  # noqa: BLE001 - background sidecar stays isolated
+            self._outcome_issue = f"outcome-background:{type(error).__name__}"
+        finally:
+            with self._outcome_future_lock:
+                self._outcome_futures.discard(future)
+                if fallback_key is not None:
+                    self._outcome_fallback_submitted.discard(fallback_key)
 
     def _generate_summary(self, now: datetime, *, catch_up: bool = False) -> bool:
         """Generate the 15:30 summary with a local-first fallback.
@@ -1247,42 +1580,37 @@ class TushareV1Session:
         return True
 
     def _collect_continuity_evidence(self, trade_date: str) -> str:
-        """Report real continuity facts; never assume an uneventful day."""
+        """Report real continuity facts; never let lunch hide a trading gap."""
         runs = [
             row
             for row in self.store.list_scan_runs(trade_date)
             if row.get("completed_at") and row.get("health") == HealthState.HEALTHY.value
         ]
-        timestamps: list[datetime] = []
-        for row in runs:
-            parsed = _parsed_datetime(str(row["completed_at"]))
-            if parsed is not None:
-                timestamps.append(parsed)
-        timestamps.sort()
-        gaps: list[tuple[float, datetime, datetime]] = []
-        for previous, current in zip(timestamps, timestamps[1:]):
-            delta = (current - previous).total_seconds()
-            if delta > 0:
-                gaps.append((delta, previous, current))
-        parts: list[str] = []
-        if gaps:
-            longest, gap_start, gap_end = max(gaps)
-            trading = _trading_block(gap_start) == _trading_block(gap_end) > 0
-            parts.append(
-                f"最长无扫描间隔{_format_duration(longest)}（{gap_start:%H:%M}→{gap_end:%H:%M}"
-                f"{'，位于交易时段内' if trading else '，位于非交易时段'}）"
-            )
+        timestamps = [
+            parsed
+            for row in runs
+            if (parsed := _parsed_datetime(str(row["completed_at"]))) is not None
+        ]
         sessions = self.store.list_runtime_sessions(trade_date)
-        if len(sessions) > 1:
-            parts.append(f"进程重启{len(sessions) - 1}次")
+        runtime_events: list[dict[str, object]] = []
         event_counts: dict[str, int] = {}
         for session in sessions:
             for event in self.store.list_runtime_events(str(session["session_id"])):
                 occurred = str(event.get("occurred_at", ""))
                 if not occurred.startswith(trade_date):
                     continue
+                runtime_events.append(event)
                 event_type = str(event.get("event_type", ""))
                 event_counts[event_type] = event_counts.get(event_type, 0) + 1
+
+        gaps = analyze_scan_gaps(
+            timestamps,
+            runtime_sessions=sessions,
+            runtime_events=runtime_events,
+        )
+        parts = list(continuity_gap_summary_parts(gaps))
+        if len(sessions) > 1:
+            parts.append(f"进程重启{len(sessions) - 1}次")
         if event_counts.get("sleep_detected"):
             parts.append(f"睡眠{event_counts['sleep_detected']}次")
         if event_counts.get("scan_stalled"):
@@ -1426,7 +1754,22 @@ class TushareV1Session:
         )
 
     def _refresh_credential_state(self) -> None:
-        if self._primary_present():
+        if isinstance(self.credential_store, KeyringCredentialStore):
+            cached, secret = self.credential_store.get_cached(PRIMARY_CREDENTIAL)
+            if not cached:
+                self._credential_state = "unknown"
+                self._credential_error = None
+                self._primary_secret_snapshot = None
+                self._set_credential_pending()
+                return
+            self._primary_secret_snapshot = secret
+            self._credential_state = "present" if secret else "missing"
+        elif self._primary_present():
+            self._credential_state = "present"
+        else:
+            self._credential_state = "missing"
+        self._credential_error = None
+        if self._credential_state == "present":
             self.connection_state = TqConnectionState.CHECKING
             self.connection_detail = "Token已配置，等待实时检测。"
             self.status_issues = ()
@@ -1434,6 +1777,8 @@ class TushareV1Session:
             self._set_missing_credential()
 
     def _primary_secret(self) -> str | None:
+        if isinstance(self.credential_store, KeyringCredentialStore):
+            return self._primary_secret_snapshot
         try:
             return self.credential_store.get(PRIMARY_CREDENTIAL)
         except Exception:
@@ -1441,6 +1786,63 @@ class TushareV1Session:
 
     def _primary_present(self) -> bool:
         return bool(self._primary_secret())
+
+    def _set_credential_pending(self) -> None:
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.CHECKING
+        self.connection_detail = "正在读取系统钥匙串；读取完成前不会发起实时请求。"
+        self.data_gate_label = "正在读取凭据"
+        self.candidate_gate_label = "等待凭据检测"
+        self.health_detail = self.connection_detail
+        self.status_issues = ("Keychain 检查在后台执行，窗口保持可用。",)
+
+    def _set_credential_error(self) -> None:
+        self.state = HealthState.WARMING
+        self.connection_state = TqConnectionState.DISCONNECTED
+        self.connection_detail = "系统钥匙串暂时不可用；未发起实时请求。"
+        self.data_gate_label = "钥匙串不可用"
+        self.candidate_gate_label = "等待钥匙串恢复"
+        self.health_detail = self.connection_detail
+        self.status_issues = ("请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",)
+
+    def _publish_credential_state(
+        self,
+        generation: int,
+        state: str,
+        *,
+        primary_present: bool,
+        legacy_present: bool,
+        error_name: str | None,
+    ) -> None:
+        with self._credential_refresh_lock:
+            if generation != self._credential_refresh_generation:
+                return
+            self._credential_refresh_in_flight = False
+            callback = self._credential_callback
+            self._credential_callback = None
+        self._credential_state = state
+        self._credential_error = error_name
+        self._legacy_credential_present = legacy_present
+        if primary_present:
+            cached, secret = cast(KeyringCredentialStore, self.credential_store).get_cached(
+                PRIMARY_CREDENTIAL
+            )
+            self._primary_secret_snapshot = secret if cached else None
+        else:
+            self._primary_secret_snapshot = None
+        if state == "present":
+            self.connection_state = TqConnectionState.CHECKING
+            self.connection_detail = "Token已配置，等待实时检测。"
+            self.data_gate_label = "等待检测"
+            self.candidate_gate_label = "等待实时扫描"
+            self.health_detail = "凭据读取完成，正在等待实时检测。"
+            self.status_issues = ()
+        elif state == "missing":
+            self._set_missing_credential()
+        else:
+            self._set_credential_error()
+        if callback is not None:
+            callback()
 
     def _apply_pending_platform_recovery(self) -> bool:
         with self._platform_recovery_lock:
@@ -1573,13 +1975,19 @@ class TushareV1Session:
         if runtime is not self._runtime:
             return
         self._prepared_date = now.date() if now.date() in prepared.open_dates else None
-        if prepared.concept_loaded:
+        reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
+        preserved = bool(getattr(runtime, "concept_cache_preserved", False))
+        if prepared.concept_loaded and not preserved:
             self._universe_retry_at = None
             self._universe_refresh_issue = None
+        elif prepared.concept_loaded and preserved:
+            self._universe_retry_at = now + timedelta(minutes=5)
+            self._universe_refresh_issue = (
+                "概念刷新失败，当前进程继续使用上次成功概念缓存；"
+                "行业筛选与概念筛选均保持可用，5分钟后重试" + (f"（{reason}）" if reason else "。")
+            )
         else:
             self._universe_retry_at = now + timedelta(minutes=5)
-            reason = getattr(getattr(runtime, "loader", None), "last_concept_failure", None)
-            preserved = bool(getattr(runtime, "concept_cache_preserved", False))
             self._universe_refresh_issue = (
                 "概念刷新失败，已保留上次成功概念缓存；行业筛选继续运行，5分钟后重试"
                 + (f"（{reason}）" if reason else "。")
@@ -1942,6 +2350,13 @@ class TushareV1Session:
                 self._active_scan_attempt_id = None
 
     def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+        with self._credential_refresh_lock:
+            self._credential_refresh_generation += 1
+            self._credential_refresh_in_flight = False
+            self._credential_state_result = None
+            self._credential_callback = None
+        if self._credential_poll_timer is not None:
+            self._credential_poll_timer.stop()
         if self._runtime_session_active:
             try:
                 self.store.end_runtime_session(
@@ -1956,12 +2371,18 @@ class TushareV1Session:
         if self.capability_checks is not None:
             self.capability_checks.shutdown()
         self._universe_executor.shutdown(wait=False, cancel_futures=True)
+        with self._outcome_future_lock:
+            for future in self._outcome_futures:
+                future.cancel()
+        self._outcome_executor.shutdown(wait=False, cancel_futures=True)
 
     def _set_missing_credential(self) -> None:
-        try:
-            legacy_present = bool(self.credential_store.get(FAST_CREDENTIAL))
-        except Exception:
-            legacy_present = False
+        legacy_present = self._legacy_credential_present
+        if not isinstance(self.credential_store, KeyringCredentialStore):
+            try:
+                legacy_present = bool(self.credential_store.get(FAST_CREDENTIAL))
+            except Exception:
+                legacy_present = False
         self.state = HealthState.WARMING
         self.connection_state = TqConnectionState.DISCONNECTED
         self.connection_detail = "尚未设置统一 Tushare Token。"
@@ -2043,18 +2464,24 @@ def _runtime_factory(
     request_budget: ApplicationRequestBudget | None = None,
     universe_cache_path: Path | None = None,
 ) -> tuple[TushareV1Runtime, Tushare15000Provider]:
-    def secret_getter() -> str | None:
-        return credential_store.get(PRIMARY_CREDENTIAL)
+    def read_primary_secret() -> str | None:
+        if isinstance(credential_store, KeyringCredentialStore):
+            cached, secret = credential_store.get_cached(PRIMARY_CREDENTIAL)
+            return secret if cached else None
+        try:
+            return credential_store.get(PRIMARY_CREDENTIAL)
+        except Exception:
+            return None
 
     budget = request_budget or ApplicationRequestBudget(settings.request_budget_interval_seconds)
     pro = TushareSdkProTransport(
         settings.primary_profile,
-        secret_getter,
+        read_primary_secret,
         request_budget=budget,
     )
     realtime = NativeRealtimeTransport(
         settings.native_realtime_profile,
-        secret_getter,
+        read_primary_secret,
         request_budget=budget,
     )
     provider = Tushare15000Provider(pro, realtime)
@@ -2090,6 +2517,18 @@ def _runtime_factory(
 def _is_preopen(now: datetime) -> bool:
     current = now.timetz().replace(tzinfo=None)
     return time(9, 15) <= current < time(9, 30)
+
+
+def _supports_outcome_provider(provider: object) -> bool:
+    return all(
+        callable(getattr(provider, method, None))
+        for method in ("trading_dates", "realtime_quotes", "historical_minutes")
+    )
+
+
+def _initial_outcome_backfill_window(now: datetime) -> bool:
+    current = now.timetz().replace(tzinfo=None)
+    return now.weekday() >= 5 or current < time(9, 0) or current >= time(15, 31)
 
 
 def _phase(now: datetime) -> str:
@@ -2265,9 +2704,3 @@ def _trading_block(ts: datetime) -> int:
     if time(13, 0) <= current <= time(15, 0):
         return 2
     return 0
-
-
-def _format_duration(seconds: float) -> str:
-    if seconds >= 60:
-        return f"{int(seconds // 60)}分{int(seconds % 60)}秒"
-    return f"{int(seconds)}秒"

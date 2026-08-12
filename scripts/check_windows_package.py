@@ -92,8 +92,14 @@ def main() -> int:
         errors.append("PowerShell entry must declare the project-supported Python versions")
     if re.search(r"(?i)(token|password)\s*=", powershell):
         errors.append("PowerShell entry must not define credentials")
-    if "StockWatcher-0.4.0-alpha" not in powershell or "0.3.1-alpha" in powershell:
-        errors.append("PowerShell build must publish only the current 0.4.0-alpha artifacts")
+    if (
+        "StockWatcher-0.6.0-alpha.4" not in powershell
+        or "StockWatcher-0.6.0-alpha-" in powershell
+        or "0.3.1-alpha" in powershell
+    ):
+        errors.append(
+            "PowerShell build must publish only the current 0.6.0-alpha.4 artifacts"
+        )
     portable_entry = _read_ascii(required[4], errors)
     portable_runtime = required[5].read_text(encoding="utf-8")
     if "pythonw.exe" not in portable_entry or "Get-Command pyw.exe" not in portable_entry:
@@ -166,14 +172,21 @@ def main() -> int:
         or "stock_watcher.providers.tushare.pro_proxy_transport" not in spec
         or "stock_watcher.providers.tushare.unified_provider" not in spec
         or "stock_watcher.runtime.tushare_runtime" not in spec
+        or "stock_watcher.runtime.outcome_tracker" not in spec
+        or "stock_watcher.ui.outcome_review" not in spec
         or "stock_watcher.ui.tushare_v1_session" not in spec
         or 'collect_submodules("tushare")' in spec
     ):
         errors.append(
             "PyInstaller bundle must collect the approved V1 Pro and native realtime routes"
         )
-    if "0.4.0-alpha" not in installer:
-        errors.append("installer must identify the V1 real-candidate build as 0.4.0-alpha")
+    if (
+        '#define MyAppVersion "0.6.0-alpha.4"' not in installer
+        or "StockWatcher-0.6.0-alpha.4-setup" not in installer
+    ):
+        errors.append(
+            "installer must identify the candidate outcome build as 0.6.0-alpha.4"
+        )
     if "SetupIconFile={#MyAppIcon}" not in installer:
         errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:

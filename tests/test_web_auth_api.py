@@ -111,6 +111,7 @@ def test_rbac_matrix(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
     assert tester_client.get("/api/v1/candidates/current").status_code == 200
     assert tester_client.get("/api/v1/history").status_code == 200
     assert tester_client.get("/api/v1/alerts").status_code == 200
+    assert tester_client.get("/api/v1/outcomes").status_code == 200
     assert tester_client.get("/api/v1/summaries").status_code == 200
     # Tester denied on admin endpoints (default deny).
     assert tester_client.get("/api/v1/admin/diagnostics").status_code == 403
@@ -121,6 +122,7 @@ def test_rbac_matrix(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
     assert anon.get("/api/v1/state").status_code == 401
     assert anon.get("/api/v1/me").status_code == 401
     assert anon.get("/api/v1/history").status_code == 401
+    assert anon.get("/api/v1/outcomes").status_code == 401
 
 
 def test_csrf_protection(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
@@ -305,14 +307,102 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
         encoding="utf-8"
     )
     assert 'id="strong-alerts"' in dashboard_template
-    assert "showStrongAlert" in dashboard_script
-    assert "trigger_type === 'intraday'" in dashboard_script
+    assert 'role="alertdialog"' in dashboard_script
+    assert "showAutomaticAlert" in dashboard_script
+    assert "'scheduled-09:45', 'scheduled-14:45'" in dashboard_script
+    assert "setTimeout(() => toast.remove(), 220)" not in dashboard_script
+    assert "15000" not in dashboard_script
+    assert "alertRestoreTarget.focus()" in dashboard_script
+    assert "keepAlertFocus(event)" in dashboard_script
     for relative in (
         "src/stock_watcher/server/templates/dashboard.html",
         "src/stock_watcher/server/static/dashboard.js",
     ):
         content = (root / relative).read_text(encoding="utf-8")
         assert 'style="' not in content
+
+
+def test_morandi_theme_outcome_page_and_blue_notification_contract() -> None:
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/stock_watcher/server/static/app.css").read_text(encoding="utf-8")
+    base = (root / "src/stock_watcher/server/templates/base.html").read_text(
+        encoding="utf-8"
+    )
+    outcomes = (root / "src/stock_watcher/server/templates/outcomes.html").read_text(
+        encoding="utf-8"
+    )
+    script = (root / "src/stock_watcher/server/static/outcomes.js").read_text(
+        encoding="utf-8"
+    )
+    for token in (
+        "--bg: #EDE8DF",
+        "--card: #F7F3EC",
+        "--fg: #32383A",
+        "--line: #C9C2B7",
+        "--mist-blue: #627F92",
+        "--ashare-red: #A75F5A",
+        "--ashare-green: #66806B",
+        "--ashare-gold: #A68A58",
+    ):
+        assert token in css
+    assert ".hero-action-button.btn-notify" in css
+    assert "background: var(--mist-blue)" in css
+    assert 'href="/outcomes"' in base
+    assert 'data-outcome-range="week"' in outcomes
+    assert 'data-outcome-range="month"' in outcomes
+    assert 'data-outcome-range="all"' in outcomes
+    assert "/api/v1/outcomes?range=" in script
+
+
+def test_outcomes_api_is_authenticated_sanitized_and_range_limited(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, store, _, _, _ = app_env
+    at = datetime(2026, 8, 11, 9, 45, tzinfo=SHANGHAI).isoformat()
+    store.create_candidate_outcomes(
+        [
+            {
+                "entry_snapshot_id": 1,
+                "entry_alert_id": 1,
+                "entry_trade_date": "2026-08-11",
+                "slot": "09:45",
+                "rank": 1,
+                "code": "600001.SH",
+                "name": "测试一号",
+                "entry_price": 10.0,
+                "entry_source_ts": at,
+                "target_trade_date": "2026-08-12",
+                "target_slot": "09:45",
+                "quality": "UNAVAILABLE",
+                "provider_version": "tushare-15000",
+                "config_version": "test",
+                "app_version": "0.6.0-alpha.4",
+                "created_at": at,
+                "updated_at": at,
+                "status": "unavailable",
+                "safe_reason": "historical_minute_missing_or_ambiguous",
+                "next_retry_at": None,
+            }
+        ]
+    )
+    store.set_app_setting(
+        "candidate_outcome_backfill_status",
+        {"status": "partial", "settled": 18, "unavailable": 6, "pending": 3},
+    )
+    client = TestClient(app)
+    login(client, "tester1", "tester-pass-123")
+
+    response = client.get("/api/v1/outcomes?range=month")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["range"] == "month"
+    assert payload["summary"]["total_count"] == 1
+    assert payload["records"][0]["display_reason"] == "精确分钟行情不可验证，未纳入统计"
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "historical_minute_missing_or_ambiguous" not in serialized
+    assert "已回补18笔" in payload["backfill"]["message"]
+    assert client.get("/api/v1/outcomes?range=year").status_code == 400
+    assert client.get("/outcomes").status_code == 200
 
 
 def test_dashboard_refresh_retries_transient_command_poll_failures() -> None:

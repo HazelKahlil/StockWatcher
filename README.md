@@ -7,14 +7,22 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 ## 当前状态
 
 - 唯一权威工作目录为 `/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher`，
-  当前日常开发分支为本地 `main`；当前产品状态是 Mac V1 内部试用主线，不是商业稳定发布版。
-- 当前主线已包含真实全市场扫描、行业与概念板块、板块硬门、稳定 Top3、候选池强异动、
-  09:45/14:45 调度、30 天历史、15:30 盘后总结和 Mac arm64 App。
-- 项目治理与 V2.0 交接基线已建立。
-- 当前活跃目标是 `v0.4.2-macos-v1-port`：在 macOS 上用共享的 Tushare 主路线持续选出
-  稳定三只真实 A 股，并完成固定时点与强异动提醒、详情、30 天历史和收盘总结的真实验证。
-- Windows 真实验收仍为 `FAIL`：冻结基线在统一 Token 连接校验阶段收到 `rate_limited`，
-  因而完整实时扫描轮次和真实 Top3 均为 0；Mac 结果不能替代 Windows 验收。
+  当前日常开发分支为本地 `main`。当前应用代码基线为 `ad04e392...`，Python 版本
+  `0.4.0a2`，里程碑 tag 为 `v0.4.0-alpha.2`。
+- 该 tag 是 Mac / Web / Windows 的内部试用源码、重建与回滚基准，不是商业稳定发布、
+  权威 M0 或完整三平台验收。
+- 当前后继开发版本为 `0.6.0a4`：次日同点复盘严格限定受控 DEGRADED
+  `/trade_cal` wire endpoint、五次持久化分钟重试；Web 使用独立 Schema v9 并提供只读复盘
+  API/页面。离线结果不代表真实 09:45/14:45 同点行情通过。
+- Shared Core 已包含真实全市场扫描、行业与概念板块、板块硬门、稳定 Top3、候选池强异动、
+  09:45/14:45 调度、30 天提醒历史、次日同点理论复盘、15:30 盘后总结和 SQLite 安全恢复。
+- 现有 Mac arm64 App 继续内部使用，但其已记录 `SOURCE_COMMIT=88ccf49f...`，早于 alpha.2；
+  本轮没有覆盖、重装或读取 Keychain/运行数据。需要新包时从 tag 重建。
+- Windows PR #4 已合并并达到 `WINDOWS_SMOKE_PASS`；Windows 3.11/3.12 CI、Setup、
+  PyInstaller/Inno 和制品上传通过，但连续 M0、完整交易日和目标机安装验收仍未完成。
+- Web 独立内部测试线由 Mac Docker + Cloudflare Tunnel 提供；部署提交和验证结果以
+  `CURRENT_RELEASES.json` 为准，但状态必须继续为
+  **`BLOCKED / NOT_ACCEPTED`**，不得合入 main 或称为生产稳定。
 - 普通/历史数据使用内置 Tushare Pro 代理；主实时入口使用
   `tushare.realtime_quote(..., src="sina")`。两者共用系统安全存储中的一个 Token；Mac
   使用系统钥匙串，Windows 使用 Credential Manager。
@@ -30,12 +38,17 @@ StockWatcher 是供 2—3 名内部用户使用的 A 股候选观察与异动提
 
 ## 从这里开始
 
-1. 阅读 [AGENTS.md](AGENTS.md)。
-2. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
-3. 阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
-   [共享连接门返修](docs/visions/v0.4.1-shared-connection-gate/README.md)；2026-07-30
-   Human Owner 的 Mac-first 交接包高于较早 Windows 排期中的冲突表述。
-4. 阅读 [数据规则](docs/process/rules/data.md) 和安全边界。
+1. 先阅读 [PROJECT_INDEX.md](PROJECT_INDEX.md) 和 [CURRENT_RELEASES.json](CURRENT_RELEASES.json)。
+2. 阅读 [AGENTS.md](AGENTS.md) 与 [docs/00-START-HERE.md](docs/00-START-HERE.md)。
+3. 按 [docs/README.md](docs/README.md) 的文档地图恢复项目状态。
+4. 先读 [v0.4.0-alpha.2 内部基准](docs/visions/v0.4.0-alpha.2-internal-baseline/README.md)，
+   再读 [v0.6 次日同点复盘](docs/visions/v0.6-candidate-outcomes/README.md)，
+   并按需阅读 [Mac V1 当前执行版本](docs/visions/v0.4.2-macos-v1-port/README.md) 与
+   [共享连接门返修](docs/visions/v0.4.1-shared-connection-gate/README.md)；Human Owner 的
+   Mac-first 决策高于较早 Windows 排期中的冲突表述。
+5. 需要 Web 时先读 [Web 轨道](docs/tracks/web.md)，需要 Windows 时先读
+   [Windows 轨道](docs/tracks/windows.md)。
+6. 开始真实数据工作前，读取 [数据规则](docs/process/rules/data.md) 和安全边界。
 
 ## 项目基线
 
@@ -141,6 +154,5 @@ powershell -NoProfile -File .\scripts\windows\stockwatcher.ps1
 
 ## 版本路线
 
-当前先完成 Mac V1 的真实交易时段、固定提醒、系统行为与内部 `.app` 验收；Windows
-继续保持未通过，后续只同步共享修复并在 Windows 单独复验。详见
-[版本索引](docs/visions/README.md)。
+当前以 `v0.4.0-alpha.2` 固定内部试用基准；后续继续补 Mac、Web 和 Windows 各自未完成的
+真实环境门，不互相替代证据。详见 [版本索引](docs/visions/README.md)。

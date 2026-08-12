@@ -30,6 +30,8 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -76,7 +78,7 @@ jobs:
         with:
           name: stockwatcher-windows-py${{ matrix.python-version }}
           path: |
-            dist/StockWatcher-0.3.0-alpha-portable.zip
+            dist/StockWatcher-0.6.0-alpha.4-portable.zip
             dist/installer/*.exe
           if-no-files-found: error
           retention-days: 7

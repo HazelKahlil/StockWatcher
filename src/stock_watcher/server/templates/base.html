@@ -7,7 +7,7 @@
 <link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
-<link rel="stylesheet" href="/static/app.css?v=11">
+<link rel="stylesheet" href="/static/app.css?v=12">
 <meta name="color-scheme" content="light dark">
 {% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
 </head>
@@ -19,6 +19,7 @@
     <a href="/">当前观察</a>
     <a href="/alerts">提醒中心</a>
     <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
     <a href="/summary">盘后总结</a>
     {% if user.role == 'admin' %}<a href="/admin">管理</a>{% endif %}
   </nav>

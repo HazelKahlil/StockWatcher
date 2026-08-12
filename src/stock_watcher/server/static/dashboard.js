@@ -20,6 +20,9 @@ let refreshProgressTimer = null;
 let refreshProgressHideTimer = null;
 const handledAlertIds = new Set();
 let connectionWatermark = null;
+const automaticAlertQueue = [];
+let activeAutomaticAlert = null;
+let alertRestoreTarget = null;
 
 function clearRefreshProgressTimers() {
   if (refreshProgressTimer) {
@@ -127,6 +130,7 @@ function cardFor(candidate, state) {
   const price = Number(candidate.price).toFixed(2);
   const changePct = Number(candidate.change_pct);
   const pctStr = (changePct > 0 ? '+' : '') + changePct.toFixed(2) + '%';
+  const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
   const rankStr = String(candidate.rank).padStart(2, '0');
 
   return `
@@ -152,7 +156,7 @@ function cardFor(candidate, state) {
     <div class="price-fund-block">
       <div class="price-main">
         <span class="ashare-price">¥${price}</span>
-        <span class="ashare-pct">${pctStr}</span>
+        <span class="ashare-pct" data-direction="${direction}">${pctStr}</span>
       </div>
     </div>
 
@@ -182,6 +186,8 @@ function compactAlertCard(candidate, triggeringCodes) {
   const level = levelMeta(candidate);
   const isTrigger = triggeringCodes.has(String(candidate.code));
   const rankStr = String(rank).padStart(2, '0');
+  const changePct = Number(candidate.change_pct);
+  const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
   return `
     <article class="strong-alert-mini-card ${isTrigger ? 'is-trigger' : ''}">
       <div class="strong-alert-mini-top">
@@ -192,52 +198,135 @@ function compactAlertCard(candidate, triggeringCodes) {
       <span class="strong-alert-mini-code">${esc(candidate.code || '—')}</span>
       <div class="strong-alert-mini-market">
         <span class="strong-alert-mini-price">${compactPrice(candidate.price)}</span>
-        <span class="strong-alert-mini-pct">${compactPct(candidate.change_pct)}</span>
+        <span class="strong-alert-mini-pct" data-direction="${direction}">${compactPct(candidate.change_pct)}</span>
       </div>
     </article>`;
 }
 
-function showStrongAlert(payload, state) {
-  const stack = document.getElementById('strong-alerts');
-  if (!stack || payload.trigger_type !== 'intraday') return;
+function alertMeta(triggerType) {
+  if (triggerType === 'scheduled-09:45') {
+    return { kicker: '上午固定提醒 · 09:45', title: '上午候选已到达固定观察时点' };
+  }
+  if (triggerType === 'scheduled-14:45') {
+    return { kicker: '下午固定提醒 · 14:45', title: '下午候选已到达固定观察时点' };
+  }
+  return { kicker: '盘中强异动', title: '发现强异动信号' };
+}
+
+function closeAutomaticAlert() {
+  const overlay = document.getElementById('strong-alerts');
+  if (!overlay || !activeAutomaticAlert) return;
+  overlay.classList.add('is-leaving');
+  const closing = activeAutomaticAlert;
+  activeAutomaticAlert = null;
+  setTimeout(() => {
+    if (activeAutomaticAlert) return;
+    overlay.replaceChildren();
+    overlay.hidden = true;
+    overlay.classList.remove('is-leaving');
+    document.body.classList.remove('alert-open');
+    if (automaticAlertQueue.length) {
+      renderNextAutomaticAlert();
+      return;
+    }
+    if (alertRestoreTarget?.isConnected) alertRestoreTarget.focus();
+    alertRestoreTarget = null;
+  }, closing ? 180 : 0);
+}
+
+function renderNextAutomaticAlert() {
+  const overlay = document.getElementById('strong-alerts');
+  if (!overlay || activeAutomaticAlert || !automaticAlertQueue.length) return;
+  activeAutomaticAlert = automaticAlertQueue.shift();
+  const { payload, state } = activeAutomaticAlert;
   const triggeringCodes = new Set((payload.triggering_codes || []).map(String));
   const candidates = Array.isArray(state?.candidates) ? state.candidates.slice(0, 3) : [];
   const triggerCandidate = candidates.find((candidate) => triggeringCodes.has(String(candidate.code)));
   const triggerName = triggerCandidate?.name || [...triggeringCodes][0] || '候选股票';
   const sectorName = triggerCandidate?.sector_name || '';
   const alertId = esc(payload.alert_id || Date.now());
+  const meta = alertMeta(payload.trigger_type);
   const cards = candidates.length
     ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes)).join('')
     : `<div class="strong-alert-syncing">${esc([...triggeringCodes].join('、') || '触发股票')} · 实时卡片同步中</div>`;
-  const toast = document.createElement('article');
-  toast.className = 'strong-alert-toast';
-  toast.dataset.alertId = alertId;
-  toast.setAttribute('role', 'alert');
-  toast.innerHTML = `
+  if (!alertRestoreTarget) alertRestoreTarget = document.activeElement;
+  overlay.hidden = false;
+  overlay.classList.remove('is-leaving');
+  document.body.classList.add('alert-open');
+  overlay.innerHTML = `
+  <section class="strong-alert-dialog" data-alert-id="${alertId}" role="alertdialog" aria-modal="true" aria-labelledby="automatic-alert-title" aria-describedby="automatic-alert-summary">
     <div class="strong-alert-header">
       <div>
-        <span class="strong-alert-kicker">盘中强异动</span>
+        <span class="strong-alert-kicker">${esc(meta.kicker)}</span>
         <time datetime="${esc(payload.displayed_at || '')}">${fmtTime(payload.displayed_at)}</time>
       </div>
-      <button type="button" class="strong-alert-dismiss" data-dismiss-alert>关闭</button>
+      <button type="button" class="strong-alert-dismiss" data-dismiss-alert aria-label="关闭自动提醒">关闭</button>
     </div>
-    <h2 class="strong-alert-title">发现强异动信号</h2>
-    <p class="strong-alert-summary">${esc(triggerName)}${sectorName ? ` · ${esc(sectorName)}` : ''} · 请及时查看</p>
+    <h2 id="automatic-alert-title" class="strong-alert-title">${esc(meta.title)}</h2>
+    <p id="automatic-alert-summary" class="strong-alert-summary">${esc(triggerName)}${sectorName ? ` · ${esc(sectorName)}` : ''} · 请及时查看</p>
     <div class="strong-alert-mini-grid">${cards}</div>
     <div class="strong-alert-footer">
       <a href="/alerts">查看提醒中心</a>
-      <span>浏览器通知已同步</span>
-    </div>`;
-  stack.prepend(toast);
-  toast.querySelector('[data-dismiss-alert]')?.addEventListener('click', () => {
-    toast.classList.add('is-leaving');
-    setTimeout(() => toast.remove(), 220);
-  });
-  setTimeout(() => {
-    if (!toast.isConnected) return;
-    toast.classList.add('is-leaving');
-    setTimeout(() => toast.remove(), 220);
-  }, 15000);
+      <span>此提醒需要手动关闭</span>
+    </div>
+  </section>`;
+  overlay.querySelector('[data-dismiss-alert]')?.addEventListener('click', closeAutomaticAlert);
+  overlay.querySelector('[data-dismiss-alert]')?.focus();
+}
+
+function showAutomaticAlert(payload, state) {
+  if (!['intraday', 'scheduled-09:45', 'scheduled-14:45'].includes(payload.trigger_type)) return;
+  automaticAlertQueue.push({ payload, state });
+  renderNextAutomaticAlert();
+}
+
+function keepAlertFocus(event) {
+  if (event.key !== 'Tab' || !activeAutomaticAlert) return;
+  const dialog = document.querySelector('.strong-alert-dialog');
+  if (!dialog) return;
+  const focusable = [...dialog.querySelectorAll('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function formatRate(value) {
+  return value == null ? '—' : `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function formatReturn(value) {
+  if (value == null) return '—';
+  const number = Number(value);
+  return `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
+}
+
+async function loadOutcomeSummary() {
+  try {
+    const payload = await apiJson('/api/v1/outcomes?range=month');
+    const summary = payload.summary;
+    const values = [
+      ['个人胜率', formatRate(summary.win_rate)],
+      ['日组合胜率', formatRate(payload.portfolio.win_rate)],
+      ['平均收益', formatReturn(summary.average_return_pct)],
+      ['已结算 / 总数', `${summary.settled_count} / ${summary.total_count}`],
+    ];
+    const target = document.getElementById('outcome-summary');
+    if (target) {
+      target.innerHTML = values.map(([label, value]) => `<article class="outcome-summary-card"><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`).join('');
+    }
+    const backfill = document.getElementById('outcome-backfill');
+    if (backfill) backfill.textContent = payload.backfill.message;
+  } catch {
+    const backfill = document.getElementById('outcome-backfill');
+    if (backfill) backfill.textContent = '复盘暂时无法读取；当前候选观察不受影响。';
+  }
 }
 
 function liveDateTimeLabel() {
@@ -364,6 +453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
   await loadState();
+  await loadOutcomeSummary();
   onEvent(async (event) => {
     if (event.event_type === 'server.hello') {
       connectionWatermark = Number(event.payload?.latest_event_id || 0);
@@ -379,14 +469,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (alertId && handledAlertIds.has(alertId)) return;
       if (alertId) handledAlertIds.add(alertId);
       const state = await loadState();
+      showAutomaticAlert(event.payload, state);
       if (event.payload.trigger_type === 'intraday') {
-        showStrongAlert(event.payload, state);
         const code = event.payload.triggering_codes?.[0] || '候选股票';
         notify('盘中强异动', `${code} 触发强异动提醒，请及时查看`);
       } else {
         notify('StockWatcher 提醒', `触发：${event.payload.trigger_type}`);
       }
     }
+    if (event.event_type === 'outcomes.updated') loadOutcomeSummary();
   });
   connectEvents();
   const refreshButton = document.getElementById('manual-refresh');
@@ -492,6 +583,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   notifyButton.addEventListener('click', async () => {
     const result = await requestNotificationPermission();
     notifyButton.textContent = result === 'granted' ? '浏览器通知已开启' : '通知被拒绝';
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && activeAutomaticAlert) closeAutomaticAlert();
+    keepAlertFocus(event);
   });
   document.getElementById('cards').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-detail]');

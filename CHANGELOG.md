@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0-alpha.4] - 2026-08-12
+
+### Fixed
+
+- 交易日历仅接受 `tushare_15000 + /trade_cal + 四字段 + DEGRADED/MISSING`，明确拒绝
+  HEALTHY、STALE、字段漂移、空响应、日期越界和矛盾状态。
+- 收盘后网络、限流和服务器异常保持 pending，并按 SQLite 中的有界时间恢复；实时与历史
+  回补统一最多五次，历史 30 天回补不再绕过尝试上限。
+
+### Web
+
+- Web Schema v8→v9 增加独立 `candidate_outcomes` 及重试字段；迁移前备份、事务回滚、
+  `integrity_check` 与账号、会话、命令、事件保留均有回归测试。
+- 新增认证只读 `GET /api/v1/outcomes?range=week|month|all`、首页近一月摘要和完整次日复盘页；
+  普通响应只展示中文原因，不暴露内部 `safe_reason`。
+- 采用莫兰迪典藏编辑部配色；通知按钮改为雾霾蓝。强异动及 09:45/14:45 自动提醒改为
+  居中 `alertdialog`，手动关闭、Esc、焦点恢复、减少动画，并保持 WebSocket 水位去重。
+
+### Evidence boundary
+
+- 离线代码门、Mac Web 部署和安装包不能替代真实交易日 09:45/14:45 验收；Web 继续
+  `BLOCKED / NOT_ACCEPTED`。
+
 ## [web-internal-test-v1-favicon] - 2026-08-09
 
 ### Added
@@ -61,6 +84,19 @@
 
 ### Mainline
 
+- 2026-08-12：在 `0.6.0a3` 修正次日同点复盘的生产交易日历 wire endpoint 契约：
+  `Tushare15000Provider` 继续创建逻辑 `endpoint="/"` 请求，`TushareSdkProTransport`
+  改写并实际请求 `/trade_cal`，`CandidateOutcomeTracker` 只接受该精确 provenance endpoint。
+  新增 fake Session + 内存测试凭据的完整离线传输链回归，错误 endpoint/profile/字段、
+  非受控 DEGRADED、STALE、空响应、越界和矛盾日历继续 fail closed。
+- 2026-08-11：在 `0.6.0a2` 完成桌面端“次日同点复盘”契约返修：正式 09:45/14:45
+  三只候选按
+  下一真实交易日同档行情做理论复盘，展示近 5/20 个入选交易日与全部记录的个股胜率、
+  平均/中位收益、分档统计和完整六笔日组合胜率。功能不连接交易账户、不自动下单，且
+  复盘失败不得阻塞原实时扫描、Top3、提醒或弹窗。
+- 2026-08-11：建立 `v0.4.0-alpha.2` Mac / Web / Windows 内部试用源码基准；Shared Core
+  应用代码为 `ad04e39`，Web 固定 `bf447ba` 并继续 `BLOCKED / NOT_ACCEPTED`，Windows
+  PR #4 已达到 `WINDOWS_SMOKE_PASS`。该版本不代表权威 M0、完整三平台验收或商业稳定。
 - 2026-08-01：将 Mac V1 内部试用成果及其完整 Git 历史整合到唯一主目录的本地 `main`。
   当前主线包含真实全市场扫描、行业/概念板块、稳定 Top3、候选池强异动、09:45/14:45
   调度、30 天历史、15:30 盘后总结和 Mac arm64 App；`fix/macos-v1-internal-acceptance`、
@@ -77,6 +113,10 @@
 
 ### Changed
 
+- SQLite 从 v7 升到 v8，为 `candidate_outcomes` 增加
+  `settlement_attempts/last_attempt_at/next_retry_at`；迁移继续使用前置备份、事务回滚、
+  `integrity_check` 与只读降级，并覆盖 Windows 文件句柄释放。
+- Mac/Windows 重建元数据提升为 `0.6.0-alpha.3`；本轮未构建、覆盖或重装现有 App。
 - V1 主链路固定为 `fastapic.stockai888.top` 的普通/历史 Pro 请求与
   `tushare.realtime_quote(src="sina")` 的原生实时快照；旧 Super、Fast 命名路线和
   TdxQuant 只留在高级诊断。
@@ -105,6 +145,15 @@
 
 ### Added
 
+- 固定候选复盘旁路：优先复用下一交易日全市场扫描，对缺失项最多三只单次批量实时补查，
+  再以 `stk_mins` 精确 09:45/14:45 一分钟 close 串行回补；零价、错日、过期、停牌、
+  无成交或质量不足均标为 pending/unavailable，不计入胜率分母。日历与补查在独立单线程
+  旁路运行，不延迟固定提醒；补位/非正式候选不会进入新记录或历史回补。
+- 分钟回补按目标日期和 09:45/14:45 档位隔离，使用 +1/+3/+8/+20/15:05 最终确认的
+  有界退避；网络、限流、服务器错误和首次空数据保持 pending，App 重启从 SQLite 恢复 due
+  任务，旧积压不会抢占当前三笔。
+- 历史窗口新增“提醒记录 / 次日复盘”标签和近 1 周、近 1 月、全部切换；数据库查询继续在
+  Qt 工作线程运行，并提供 empty/pending/settled 确定性截图脚本。
 - 独立 macOS PyInstaller spec：生成本机 arm64 `StockWatcher.app`，包含 Retina 配置与
   macOS 留白图标，排除 Windows/TdxQuant 诊断入口；支持 ad-hoc 签名和内部安装验收。
 - Mac V1 平台层：Application Support/Logs 路径分离、实际 Keychain backend 校验、系统钥匙串
@@ -124,7 +173,7 @@
   硬门形成市场广度、强势行业与回溯 Top3；不把收盘回放伪装成盘中提醒，也不虚构
   1/3/5 分钟涨速或资金增强。2026-07-29 回放统计 5,516 只有效证券、4,248 只上涨，
   回溯观察为欢乐家、东百集团、国芳集团。
-- Windows 0.4.0-alpha 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
+- Windows 0.4.0-alpha.2 的 PyInstaller portable 与 Inno Setup 安装器构建契约；构建产物
   保持仓库外发布，未签名包在受管设备上仍需可信代码签名或管理员允许规则。
 - 经 Human Owner 明确授权的 Tushare SDK 原生实时 Provider：固定供应商验证入口、
   800 只批次上限、0.5 秒最小请求间隔、供应商日期/时间来源校验、脱敏全市场 M0
@@ -148,6 +197,26 @@
 - Windows Codex 直接交接文档：固定 HAZ-526 唯一线性后继、冻结 ZIP/manifest/payload 证据、HAZ-527 的 runner 阻断边界，以及 Human Owner 脱离 Multica 后可复制执行的 Windows 实机提示词。
 
 ### Fixed
+
+- 真实 Tushare Pro `trade_cal` 缺供应商生成时间时，不再被一概拒绝；仅受控
+  `tushare_15000` 路线的预期 DEGRADED received-fallback 可通过，空响应、STALE/STOPPED、
+  非法/越界日期、矛盾开市状态和 schema 变化继续 fail closed。
+- 历史回补状态不再在缺少持久化证据时默认声称完成；running/completed/partial/failed
+  分开展示，partial 使用真实 settled/unavailable/skipped/pending 数量，内部 reason 映射为
+  简洁中文。
+- 大于 500 笔的旧 pending 积压不再遮蔽当前档位，单线程队列任务也改为使用实际执行时间，
+  避免跨过 15:05 后仍按提交时刻错误延期。
+- 生产全市场缓存默认至少 4500 只并要求行业覆盖 95%；日线必须匹配请求交易日，缺最新日线、
+  复权变化和当日复牌统一排除，避免截断证券池或机械跳变污染候选。
+- 实时扫描拒绝混合日期和日期回退；交易日切换清空盘中价格/成交量、稳定 Top3 与强异动
+  基线，强制基础刷新重新读取证券和日线。
+- Windows `uv sync` no longer attempts to build the macOS-only PyObjC dependency; the dependency and lockfile now restrict it to Darwin.
+- Windows SQLite damage recovery now integrity-checks a same-directory staging copy, preserves `.corrupt` plus old WAL/SHM evidence, and atomically restores only when the live path is replaceable; an external handle now defers recovery without overwriting active bytes.
+- Windows Governance artifact upload now follows the actual `0.4.0-alpha.2` portable ZIP name instead of a stale `0.3.0-alpha` path, so a green upload step cannot silently omit the portable package.
+- RC4 reliability closure: continuity summaries now report both the longest wall-clock gap and every trading-session gap over 90 seconds, so the normal lunch break cannot hide an afternoon outage.
+- A failed concept refresh now keeps the last verified concept memberships in the running process as well as on disk; refreshed industry/trend context is merged with the last-known-good concept map.
+- Selection-audit exports now produce real score-order Top20 and fully populated stable Top3 CSV/JSON rows (name, board, score, level, readiness and stability decision), and cache status reads the nested runtime-universe contract correctly.
+- Intraday strong-movement popups now name the triggering stock (or trigger count) while preserving the existing readiness, cooldown and daily-limit rules.
 
 - 稳定替换现在只保留席位，不再保留上一轮候选对象；被保留股票的价格、涨幅、评分、等级、
   原因和源时间全部从本轮新鲜合规扫描刷新，本轮缺失、过期或被排除的股票立即退出。

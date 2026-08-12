@@ -14,6 +14,7 @@ tags:
 - name: auth
 - name: state
 - name: history
+- name: outcomes
 - name: commands
 - name: admin
 paths:
@@ -259,6 +260,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PagedAlerts'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/outcomes:
+    get:
+      tags:
+      - outcomes
+      security:
+      - SessionCookie: []
+      summary: Read-only next-trading-day candidate outcome review
+      parameters:
+      - name: range
+        in: query
+        schema:
+          type: string
+          enum:
+          - week
+          - month
+          - all
+          default: month
+      responses:
+        '200':
+          description: Sanitized outcome statistics and records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutcomeResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -731,6 +762,44 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    OutcomeResponse:
+      type: object
+      required:
+      - range
+      - summary
+      - morning
+      - afternoon
+      - portfolio
+      - records
+      - backfill
+      properties:
+        range:
+          type: string
+          enum:
+          - week
+          - month
+          - all
+        summary:
+          type: object
+          additionalProperties: true
+        morning:
+          type: object
+          additionalProperties: true
+        afternoon:
+          type: object
+          additionalProperties: true
+        portfolio:
+          type: object
+          additionalProperties: true
+        records:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        backfill:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
     ErrorResponse:
       type: object
       required:

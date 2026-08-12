@@ -1,0 +1,78 @@
+{
+  "generated_at": "2026-08-12",
+  "environment": "multi-track internal trial; authoritative development host is macOS arm64",
+  "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
+  "internal_baseline": {
+    "python_version": "0.4.0a2",
+    "tag": "v0.4.0-alpha.2",
+    "status": "internal_trial_source_baseline",
+    "commercial_release": false,
+    "three_platform_acceptance": false,
+    "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
+  },
+  "candidate_outcomes": {
+    "python_version": "0.6.0a3",
+    "package_version": "0.6.0-alpha.3",
+    "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
+    "source_branch": "fix/candidate-outcomes-trade-cal-wire-endpoint",
+    "implementation_commit": "e85faf2d83b2a8877a6320dfd4b60ae9e780486d",
+    "status": "local_code_complete_offline_verified_after_wire_endpoint_fix",
+    "schema_version": 8,
+    "validation": "409 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation and diff check passed on macOS",
+    "real_trading_time_validation": false,
+    "installed_app_rebuilt": false,
+    "local_main_integrated": true,
+    "github_synced": false,
+    "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED Pro calendar, and bounded persisted minute retry; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
+  },
+  "shared_core": {
+    "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "status": "internal_trial_baseline",
+    "scope": "shared provider, runtime, deterministic candidate engine, alerts, storage, recovery and packaging metadata",
+    "validation": "363 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract and lock check passed"
+  },
+  "app_mac": {
+    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "installed_path": "~/Applications/StockWatcher.app",
+    "installed_source_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
+    "status": "internal_trial",
+    "installed_matches_source_baseline": false,
+    "provenance_note": "The installed app was not overwritten or rebuilt during source baselining; rebuild from the tag before distributing alpha.2.",
+    "architecture": "arm64",
+    "signature": "ad-hoc"
+  },
+  "web": {
+    "branch": "web/internal-test-v1",
+    "commit": "bf447ba62957e3d12a766df26c980b96ad4c74b2",
+    "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
+    "status": "blocked",
+    "release_status": "not_accepted",
+    "deployment": "Mac Docker Desktop plus Cloudflare Tunnel",
+    "public_url": "https://stock.hazelkahlil.com/",
+    "observed_http_status": 200,
+    "containers_observed_healthy": true,
+    "pytest_full": {
+      "status": "pass_on_current_macos_worktree",
+      "passed": 434,
+      "skipped": 25,
+      "deselected": 2
+    },
+    "ruff": "pass",
+    "mypy": "pass; 136 source files",
+    "workspace_validator": "pass; 29 required files",
+    "javascript_syntax": "pass",
+    "can_merge_main": false,
+    "reason": "Independent deployed Web line remains BLOCKED / NOT_ACCEPTED pending its full trading-day and operational acceptance; it is not folded into main."
+  },
+  "windows": {
+    "pr": 4,
+    "integration_merge_commit": "a5da2705ed8c6b8d9670d0b6dbc751018f78828c",
+    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "status": "windows_smoke_pass",
+    "authoritative_m0": false,
+    "governance_runs": [31478494946, 31479040103],
+    "ci": "Windows Python 3.11 and 3.12 tests, Ruff, Mypy, Setup, fail-closed Preflight, PyInstaller, Inno Setup and artifact upload passed",
+    "installed_asset_matches_source_baseline": false,
+    "note": "The existing target-machine portable predates the final safe-recovery and alpha.2 packaging baseline; rebuild from the tag when a new Windows package is needed."
+  }
+}

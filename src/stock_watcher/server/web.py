@@ -223,6 +223,10 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     async def history_page(request: Request) -> HTMLResponse:
         return await _page(request, "history.html", auth, templates)
 
+    @app.get("/outcomes", response_class=HTMLResponse)
+    async def outcomes_page(request: Request) -> HTMLResponse:
+        return await _page(request, "outcomes.html", auth, templates)
+
     @app.get("/summary", response_class=HTMLResponse)
     async def summary_page(request: Request) -> HTMLResponse:
         return await _page(request, "summary.html", auth, templates)

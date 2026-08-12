@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from stock_watcher.domain import SHANGHAI
+from stock_watcher.domain import SHANGHAI, OutcomeSlot
+from stock_watcher.runtime import OutcomeActionReport
 from stock_watcher.services import (
     CommandService,
     CommandStatus,
@@ -314,6 +316,107 @@ def test_web_service_can_build_missing_runtime_universe_on_cold_start(
     assert runtime.prepared
 
 
+def test_web_outcome_sidecar_is_non_blocking_and_restart_discoverable(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[tuple[date, OutcomeSlot, int]] = []
+
+    class PersistedDueTracker:
+        discovered = False
+
+        def due_backfill_groups(self, *, now: datetime) -> tuple[tuple[date, OutcomeSlot], ...]:
+            del now
+            if self.discovered:
+                return ()
+            self.discovered = True
+            return ((date(2026, 8, 11), OutcomeSlot.MORNING),)
+
+        def backfill_due(
+            self,
+            *,
+            now: datetime,
+            target_trade_date: date,
+            target_slot: OutcomeSlot,
+            limit: int,
+        ) -> OutcomeActionReport:
+            del now
+            calls.append((target_trade_date, target_slot, limit))
+            started.set()
+            assert release.wait(2)
+            return OutcomeActionReport(pending=3, safe_reasons=("internal-only",))
+
+    first = StockWatcherService(store, auto_start_session=False)
+    first.stop()
+    restarted = StockWatcherService(store, auto_start_session=False)
+    cast(Any, restarted)._outcome_tracker = PersistedDueTracker()
+    try:
+        restarted._submit_due_outcome_backfills(  # noqa: SLF001
+            datetime(2026, 8, 11, 9, 48, tzinfo=SHANGHAI)
+        )
+        assert started.wait(1)
+        release.set()
+        with restarted._outcome_lock:  # noqa: SLF001
+            futures = tuple(restarted._outcome_futures)  # noqa: SLF001
+        for future in futures:
+            future.result(timeout=2)
+        assert calls == [(date(2026, 8, 11), OutcomeSlot.MORNING, 3)]
+        events: list[dict[str, Any]] = []
+        for _ in range(100):
+            events = EventOutbox(store, source_commit="a" * 40).read_since(0)
+            if any(item["event_type"] == "outcomes.updated" for item in events):
+                break
+            threading.Event().wait(0.01)
+        event = next(item for item in events if item["event_type"] == "outcomes.updated")
+        assert event["payload"] == {
+            "created": 0,
+            "settled": 0,
+            "pending": 3,
+            "unavailable": 0,
+        }
+        assert "internal-only" not in json.dumps(event, ensure_ascii=False)
+    finally:
+        release.set()
+        restarted.stop()
+
+
+def test_web_outcome_sidecar_discovery_failure_cannot_escape_to_scan(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+
+    class BrokenDueTracker:
+        def due_backfill_groups(self, *, now: datetime) -> tuple[tuple[date, OutcomeSlot], ...]:
+            del now
+            raise sqlite3.OperationalError("controlled test failure")
+
+    service = StockWatcherService(store, auto_start_session=False)
+    cast(Any, service)._outcome_tracker = BrokenDueTracker()
+    try:
+        service._submit_due_outcome_backfills(  # noqa: SLF001
+            datetime(2026, 8, 11, 9, 48, tzinfo=SHANGHAI)
+        )
+        assert not service._outcome_futures  # noqa: SLF001
+    finally:
+        service.stop()
+
+
+def test_web_outcome_sidecar_rejects_submission_after_shutdown(tmp_path: Path) -> None:
+    service = StockWatcherService(make_store(tmp_path), auto_start_session=False)
+    ran = threading.Event()
+    service.stop()
+
+    service._submit_outcome_task(  # noqa: SLF001
+        "after-stop",
+        lambda: (ran.set() or OutcomeActionReport()),
+    )
+
+    assert not ran.is_set()
+    assert not service._outcome_task_keys  # noqa: SLF001
+
+
 def test_command_crash_recovery_requeues_then_fails(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     seed_user(store)
@@ -486,7 +589,7 @@ def test_master_key_file_loading(tmp_path: Path) -> None:
         load_master_key(bad)
 
 
-def test_migration_v6_to_v8_preserves_data(tmp_path: Path) -> None:
+def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
     import stock_watcher.storage.sqlite as sqlite_module
 
     path = tmp_path / "v6.sqlite3"
@@ -507,7 +610,7 @@ def test_migration_v6_to_v8_preserves_data(tmp_path: Path) -> None:
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (8,)
+        ).fetchone() == (9,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'sentinel'"
         ).fetchone() == ("kept",)
@@ -530,6 +633,7 @@ def test_migration_v6_to_v8_preserves_data(tmp_path: Path) -> None:
             "web_events",
             "web_public_state",
             "web_audit_log",
+            "candidate_outcomes",
         ):
             assert table in tables
     assert path.with_suffix(".sqlite3.pre-v7.bak").is_file()
@@ -542,10 +646,10 @@ def test_migration_idempotent(tmp_path: Path) -> None:
     with store.connect() as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (8,)
+        ).fetchone() == (9,)
 
 
-def test_migration_v7_to_v8_relaxes_only_command_event_dedupe(tmp_path: Path) -> None:
+def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -> None:
     import stock_watcher.storage.sqlite as sqlite_module
 
     path = tmp_path / "v7.sqlite3"
@@ -559,7 +663,7 @@ def test_migration_v7_to_v8_relaxes_only_command_event_dedupe(tmp_path: Path) ->
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (8,)
+        ).fetchone() == (9,)
         index_sql = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'index' "
             "AND name = 'idx_web_events_source_dedupe'"

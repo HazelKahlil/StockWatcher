@@ -12,6 +12,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -21,7 +22,7 @@ from typing import Any
 
 from stock_watcher.build_info import source_commit as default_source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
-from stock_watcher.domain import SHANGHAI, HealthState
+from stock_watcher.domain import SHANGHAI, HealthState, OutcomeSlot, RealtimeQuote
 from stock_watcher.engine import (
     AlertPolicy,
     AlertTrigger,
@@ -45,10 +46,12 @@ from stock_watcher.runtime import (
     AutomationTaskSpec,
     AutomationTaskState,
     AutomationTaskType,
+    CandidateOutcomeTracker,
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
     MarketSessionSchedule,
+    OutcomeActionReport,
     RuntimeUniverseCache,
     ScanOutcome,
     TushareBootstrapLoader,
@@ -179,7 +182,7 @@ def default_runtime_factory(
 class ServiceConfig:
     settings: DataSourceSettings = field(default_factory=DataSourceSettings)
     source_commit: str = field(default_factory=default_source_commit)
-    app_version: str = "0.4.0a1"
+    app_version: str = "0.6.0a4"
     report_dir: Path | None = None
     universe_cache_path: Path | None = None
     request_budget: ApplicationRequestBudget | None = None
@@ -276,6 +279,17 @@ class StockWatcherService:
         self._snapshot_id: int | None = None
         self._published_state: dict[str, Any] | None = None
         self._scan_lock = threading.Lock()
+        self._outcome_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="stockwatcher-web-outcomes",
+        )
+        self._outcome_tracker: CandidateOutcomeTracker | None = None
+        self._outcome_futures: set[Future[OutcomeActionReport]] = set()
+        self._outcome_task_keys: set[str] = set()
+        self._outcome_lock = threading.Lock()
+        self._outcome_initial_backfill_done = False
+        self._outcome_initial_backfill_retry_at: datetime | None = None
+        self._outcome_executor_closed = False
         self._command_context = threading.local()
         self._holder_id = ""
         self._fencing_token = 0
@@ -329,6 +343,12 @@ class StockWatcherService:
 
     def stop(self, *, exit_reason: str = "worker_shutdown", graceful: bool = True) -> None:
         self.state = HealthState.STOPPED
+        with self._outcome_lock:
+            self._outcome_executor_closed = True
+            futures = tuple(self._outcome_futures)
+        for future in futures:
+            future.cancel()
+        self._outcome_executor.shutdown(wait=False, cancel_futures=True)
         if not self._runtime_session_active:
             return
         try:
@@ -441,7 +461,173 @@ class StockWatcherService:
                 and now.date() in self._runtime.universe.open_dates
             ):
                 self._prepared_date = now.date()
+            self._ensure_outcome_tracker()
         return self._runtime is not None
+
+    def _ensure_outcome_tracker(self) -> CandidateOutcomeTracker | None:
+        provider = self._provider
+        if self._outcome_tracker is not None:
+            return self._outcome_tracker
+        if provider is None or not all(
+            callable(getattr(provider, method, None))
+            for method in ("trading_dates", "realtime_quotes", "historical_minutes")
+        ):
+            return None
+        self._outcome_tracker = CandidateOutcomeTracker(self.store, provider)
+        return self._outcome_tracker
+
+    def _submit_outcome_task(
+        self,
+        key: str,
+        task: Callable[[], OutcomeActionReport],
+    ) -> None:
+        with self._outcome_lock:
+            if self._outcome_executor_closed or key in self._outcome_task_keys:
+                return
+            self._outcome_task_keys.add(key)
+            try:
+                future = self._outcome_executor.submit(task)
+            except RuntimeError:
+                self._outcome_task_keys.discard(key)
+                return
+            self._outcome_futures.add(future)
+
+        def completed(done: Future[OutcomeActionReport]) -> None:
+            with self._outcome_lock:
+                self._outcome_futures.discard(done)
+                self._outcome_task_keys.discard(key)
+            try:
+                report = done.result()
+            except Exception as error:  # noqa: BLE001 - sidecar remains isolated
+                logger.warning("candidate outcome task failed: %s", type(error).__name__)
+                if key == "history:30":
+                    self._outcome_initial_backfill_done = False
+                    self._outcome_initial_backfill_retry_at = _shanghai(
+                        self._clock()
+                    ) + timedelta(minutes=30)
+                return
+            if key == "history:30":
+                self._outcome_initial_backfill_done = True
+                self._outcome_initial_backfill_retry_at = None
+            if report.pending and not self._outcome_executor_closed:
+                # Read the persisted retry timestamps after each task. If one is
+                # already due, enqueue it again; future retries remain owned by
+                # SQLite and are rediscovered by later ticks or after restart.
+                self._submit_due_outcome_backfills(_shanghai(self._clock()))
+            if any((report.created, report.settled, report.pending, report.unavailable)):
+                try:
+                    self._outbox.append_own(
+                        event_type="outcomes.updated",
+                        payload={
+                            "created": report.created,
+                            "settled": report.settled,
+                            "pending": report.pending,
+                            "unavailable": report.unavailable,
+                        },
+                        source_kind="outcomes",
+                        source_id=f"{key}:{uuid.uuid4().hex}",
+                    )
+                except Exception:
+                    pass
+
+        future.add_done_callback(completed)
+
+    def _submit_initial_outcome_backfill(self, now: datetime) -> None:
+        tracker = self._ensure_outcome_tracker()
+        if tracker is None or self._outcome_initial_backfill_done:
+            return
+        if (
+            self._outcome_initial_backfill_retry_at is not None
+            and now < self._outcome_initial_backfill_retry_at
+        ):
+            return
+        current = now.timetz().replace(tzinfo=None)
+        if now.weekday() < 5 and time(9, 0) <= current < time(15, 31):
+            return
+        self._submit_outcome_task(
+            "history:30",
+            lambda: tracker.backfill_recent_scheduled(now=now, days=30),
+        )
+
+    def _submit_due_outcome_backfills(self, now: datetime) -> None:
+        tracker = self._ensure_outcome_tracker()
+        if tracker is None:
+            return
+        try:
+            groups = tracker.due_backfill_groups(now=now)
+        except Exception as error:  # noqa: BLE001 - outcome sidecar cannot fail the scan
+            logger.warning("candidate outcome due discovery failed: %s", type(error).__name__)
+            return
+        for target_date, slot in groups:
+            key = f"fallback:{target_date.isoformat()}:{slot.value}"
+
+            def run_backfill(
+                date_value: date = target_date,
+                slot_value: OutcomeSlot = slot,
+            ) -> OutcomeActionReport:
+                return tracker.backfill_due(
+                    now=_shanghai(self._clock()),
+                    target_trade_date=date_value,
+                    target_slot=slot_value,
+                    limit=3,
+                )
+
+            self._submit_outcome_task(
+                key,
+                run_backfill,
+            )
+
+    def _submit_fixed_outcome_settlement(
+        self,
+        now: datetime,
+        trigger: AlertTrigger | None,
+        scan_quotes: tuple[RealtimeQuote, ...],
+    ) -> None:
+        tracker = self._ensure_outcome_tracker()
+        if trigger is None:
+            return
+        slot = {
+            AlertTrigger.SCHEDULED_0945: OutcomeSlot.MORNING,
+            AlertTrigger.SCHEDULED_1445: OutcomeSlot.AFTERNOON,
+        }.get(trigger)
+        if tracker is None or slot is None:
+            return
+        key = f"settle:{now.date().isoformat()}:{slot.value}"
+        self._submit_outcome_task(
+            key,
+            lambda: tracker.settle_fixed_slot(
+                target_trade_date=now.date(),
+                slot=slot,
+                scan_quotes=scan_quotes,
+                now=now,
+            ),
+        )
+
+    def _submit_scheduled_outcome_record(
+        self,
+        *,
+        batch: CandidateBatch,
+        snapshot_id: int,
+        alert_id: int,
+        trigger: AlertTrigger,
+        recorded_at: datetime,
+    ) -> None:
+        tracker = self._ensure_outcome_tracker()
+        if tracker is None or trigger not in {
+            AlertTrigger.SCHEDULED_0945,
+            AlertTrigger.SCHEDULED_1445,
+        }:
+            return
+        self._submit_outcome_task(
+            f"record:{alert_id}",
+            lambda: tracker.record_scheduled_batch(
+                batch,
+                snapshot_id=snapshot_id,
+                alert_id=alert_id,
+                trigger_type=trigger.value,
+                recorded_at=recorded_at,
+            ),
+        )
 
     def _secret_getter(self) -> str | None:
         if self._secrets is None:
@@ -594,6 +780,7 @@ class StockWatcherService:
             )
             self._refresh_public_state(now)
             return TickResult(skipped_reason="credential-missing")
+        self._submit_initial_outcome_backfill(now)
         runtime = self._runtime
         assert runtime is not None
         universe_current = self._universe_is_current(now)
@@ -614,6 +801,7 @@ class StockWatcherService:
                 self._refresh_public_state(now)
                 return TickResult(skipped_reason="universe-warming")
         if fixed_task is None and not self._session_is_trading(now):
+            self._submit_due_outcome_backfills(now)
             self.state = HealthState.WARMING
             self.health_detail = "非交易时段不发起全市场实时扫描。"
             self._refresh_public_state(now)
@@ -673,14 +861,20 @@ class StockWatcherService:
             if outcome.health is HealthState.HEALTHY and outcome.batch is not None
             else None
         )
+        fixed_trigger = (
+            AlertTrigger(fixed_task.task_type.value)
+            if fixed_task is not None
+            else crossed
+        )
+        self._submit_fixed_outcome_settlement(
+            completed_at,
+            fixed_trigger,
+            outcome.quotes,
+        )
         alert_snapshot_id = self._evaluate_alerts(
             completed_at,
             outcome.strong_event,
-            forced_fixed=(
-                AlertTrigger(fixed_task.task_type.value)
-                if fixed_task is not None
-                else crossed
-            ),
+            forced_fixed=fixed_trigger,
             selection_audit=outcome.selection_audit,
             scan_run_id=scan_run_id,
             snapshot_id=snapshot_id,
@@ -702,6 +896,8 @@ class StockWatcherService:
                     now=completed_at,
                     detail=outcome.detail,
                 )
+        if fixed_trigger is None:
+            self._submit_due_outcome_backfills(completed_at)
         self._refresh_public_state(now)
         return TickResult(
             scanned=True,
@@ -950,6 +1146,13 @@ class StockWatcherService:
                 source_kind="snapshot",
                 source_id=str(snapshot_id),
             )
+        self._submit_scheduled_outcome_record(
+            batch=self.batch,
+            snapshot_id=snapshot_id,
+            alert_id=alert_id,
+            trigger=trigger,
+            recorded_at=now,
+        )
         return snapshot_id
 
     def _persist_scan_snapshot(self, now: datetime) -> int | None:
@@ -1737,6 +1940,9 @@ class StockWatcherService:
         """Rebuild provider/runtime after activation; recovery gates reapply."""
         self._runtime = None
         self._provider = None
+        self._outcome_tracker = None
+        self._outcome_initial_backfill_done = False
+        self._outcome_initial_backfill_retry_at = None
         self._prepared_date = None
         self.state = HealthState.WARMING
         self._recovery_round = 0

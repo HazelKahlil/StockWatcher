@@ -393,6 +393,14 @@ function Invoke-PreflightProcess([string[]]$Arguments) {
 
 function Invoke-Setup {
     Write-Title "安装或更新 StockWatcher"
+    $uv = Get-Command uv.exe -ErrorAction SilentlyContinue
+    if ($uv) {
+        Invoke-CheckedNative -Command $uv.Source -Arguments @(
+            "sync", "--all-groups", "--frozen", "--project", $ProjectRoot
+        ) -FailureMessage "同步锁定的 StockWatcher 环境失败"
+        Write-Host "StockWatcher 环境已就绪。" -ForegroundColor Green
+        return
+    }
     if (-not (Test-Path $PythonPath)) {
         $launcher = Resolve-PythonLauncher
         $arguments = @($launcher.Arguments) + @("-m", "venv", $VenvPath)
@@ -525,20 +533,20 @@ function Invoke-Build {
             "/DStockWatcherOutputDir=$stageInstaller",
             $installerScript
         ) -FailureMessage "Inno Setup 安装器编译失败"
-        $installer = Join-Path $stageInstaller "StockWatcher-0.4.0-alpha-setup.exe"
+        $installer = Join-Path $stageInstaller "StockWatcher-0.6.0-alpha.4-setup.exe"
         if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
             throw "Inno Setup 未生成安装器。"
         }
-        $portable = Join-Path $stageRoot "StockWatcher-0.4.0-alpha-portable.zip"
+        $portable = Join-Path $stageRoot "StockWatcher-0.6.0-alpha.4-portable.zip"
         Compress-Archive -Path (Join-Path $bundleRoot "*") -DestinationPath $portable -CompressionLevel Optimal
         $publishArtifacts = @(
             [PSCustomObject]@{
                 Source = $installer
-                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.4.0-alpha-setup.exe"
+                Destination = Join-Path $mappedRoot "dist\installer\StockWatcher-0.6.0-alpha.4-setup.exe"
             },
             [PSCustomObject]@{
                 Source = $portable
-                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.4.0-alpha-portable.zip"
+                Destination = Join-Path $mappedRoot "dist\StockWatcher-0.6.0-alpha.4-portable.zip"
             }
         )
         Publish-BuildArtifactsTransaction -Artifacts $publishArtifacts -TransactionParent $stageParent -RunId $runId

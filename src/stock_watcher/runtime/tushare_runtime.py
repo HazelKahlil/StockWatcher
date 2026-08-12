@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import RLock
@@ -138,6 +138,7 @@ class ScanOutcome:
     stale_excluded_count: int = 0
     unavailable_excluded_count: int = 0
     selection_audit: CandidateSelectionAudit | None = None
+    quotes: tuple[RealtimeQuote, ...] = ()
 
 
 class TushareBootstrapLoader:
@@ -607,7 +608,7 @@ class TushareV1Runtime:
         self.movement_detector = movement_detector or StrongMovementDetector()
         self.candidate_config = candidate_config or CandidateConfig(
             version="v1-real-candidates-20260729",
-            app_version="0.4.0a1",
+            app_version="0.6.0a4",
         )
         self.universe_cache = universe_cache
         self.universe_seed_path = universe_seed_path
@@ -645,17 +646,21 @@ class TushareV1Runtime:
         The provider work happens before the state swap. A failed refresh therefore
         preserves the previous verified universe and its on-disk cache.
         """
-        cold_start = self.universe is None
+        previous = self.universe
+        cold_start = previous is None
         if force_refresh:
             self.loader.invalidate_cached_static()
         fresh = self.loader.load()
+        effective = _merge_last_known_good_concepts(fresh, previous)
+        self.concept_cache_preserved = effective is not fresh
         if self.universe_cache is not None:
-            self.concept_cache_preserved = (
+            if self.concept_cache_preserved:
+                self.universe_cache.save(effective)
+            else:
                 self.universe_cache.save_preserving_last_known_good(
                     fresh,
-                    self.universe,
+                    previous,
                 )
-            )
         with self._state_lock:
             if cold_start:
                 self.buffer.clear()
@@ -672,9 +677,9 @@ class TushareV1Runtime:
                 # applies the new industry/concept/trend context to the retained
                 # realtime series.
                 self.pipeline.reset()
-            self.universe = fresh
+            self.universe = effective
             self.universe_cache_failure = None
-        return fresh
+        return effective
 
     def universe_is_current(self, now: datetime) -> bool:
         with self._state_lock:
@@ -876,6 +881,7 @@ class TushareV1Runtime:
             stale_excluded_count=scan.stale_excluded_count,
             unavailable_excluded_count=scan.unavailable_excluded_count,
             selection_audit=audit,
+            quotes=scan.quotes,
         )
 
 
@@ -961,6 +967,37 @@ def _stock_basic_industry_memberships(
                 )
             )
     return tuple(output)
+
+
+def _merge_last_known_good_concepts(
+    fresh: RuntimeUniverse,
+    previous: RuntimeUniverse | None,
+) -> RuntimeUniverse:
+    """Keep verified concepts live when a refresh temporarily loses them."""
+    if fresh.concept_loaded or previous is None or not previous.concept_loaded:
+        return fresh
+    refreshed_securities = {
+        profile.security.code: profile.security for profile in fresh.profiles
+    }
+    previous_concepts = tuple(
+        replace(
+            membership,
+            security=refreshed_securities[membership.security.code],
+        )
+        for membership in previous.memberships
+        if membership.sector_type == "concept"
+        and membership.security.code in refreshed_securities
+    )
+    if not previous_concepts:
+        return fresh
+    non_concepts = tuple(
+        membership for membership in fresh.memberships if membership.sector_type != "concept"
+    )
+    return replace(
+        fresh,
+        memberships=(*non_concepts, *previous_concepts),
+        concept_loaded=True,
+    )
 
 
 def _safe_scan_failure(error: Exception) -> str:

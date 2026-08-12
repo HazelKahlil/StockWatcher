@@ -14,7 +14,7 @@
 
 <section aria-label="今日自动任务" class="tasks" id="tasks"></section>
 
-<section id="strong-alerts" class="strong-alert-stack" aria-label="强异动提醒" aria-live="assertive"></section>
+<div id="strong-alerts" class="alert-overlay" aria-live="assertive" hidden></div>
 
 <section class="hero-top3-section">
   <div class="hero-header">
@@ -72,6 +72,23 @@
   </div>
 </section>
 
+<section class="outcome-editorial" aria-labelledby="outcome-summary-title">
+  <div class="outcome-editorial-header">
+    <div>
+      <span class="editorial-kicker">NEXT-DAY REVIEW</span>
+      <h2 id="outcome-summary-title">近一月复盘</h2>
+    </div>
+    <a class="outcome-detail-link" href="/outcomes">查看完整复盘</a>
+  </div>
+  <div id="outcome-summary" class="outcome-summary-grid" aria-live="polite">
+    <article class="outcome-summary-card"><span>个人胜率</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>日组合胜率</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>平均收益</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>已结算 / 总数</span><strong>—</strong></article>
+  </div>
+  <p id="outcome-backfill" class="outcome-backfill muted">历史回补状态待确认；从新固定提醒开始记录不受影响。</p>
+</section>
+
 <!-- Slide-out Candidate Inspection Drawer Overlay -->
 <div id="drawer-overlay" class="drawer-overlay" hidden>
   <div class="drawer-content">
@@ -84,5 +101,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/dashboard.js?v=9"></script>
+<script type="module" src="/static/dashboard.js?v=10"></script>
 {% endblock %}

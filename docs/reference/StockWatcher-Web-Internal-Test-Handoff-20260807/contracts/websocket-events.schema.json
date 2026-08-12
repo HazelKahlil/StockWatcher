@@ -164,6 +164,23 @@
         {
           "properties": {
             "event_type": {
+              "const": "outcomes.updated"
+            },
+            "payload": {
+              "$ref": "#/$defs/outcomeUpdatePayload"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "event_type": {
               "const": "command.updated"
             },
             "payload": {
@@ -618,6 +635,34 @@
         }
       },
       "additionalProperties": true
+    },
+    "outcomeUpdatePayload": {
+      "type": "object",
+      "required": [
+        "created",
+        "settled",
+        "pending",
+        "unavailable"
+      ],
+      "properties": {
+        "created": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "settled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unavailable": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "commandPayload": {
       "type": "object",

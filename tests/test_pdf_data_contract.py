@@ -4,7 +4,7 @@ import json
 import shutil
 import sqlite3
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,6 +12,7 @@ import pytest
 from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
 from stock_watcher.runtime.post_close_report_model import (
     LocalFallbackReport,
+    build_local_fallback_report,
     manifest_is_current,
     write_local_fallback_artifacts,
 )
@@ -84,6 +85,8 @@ def test_local_fallback_real_fixture_uses_1445_top3_and_successful_timeline(
     pdf = tmp_path / "reports/2026-08-06-A股盘后回顾.pdf"
     source = tmp_path / "reports/2026-08-06-local-summary.json"
     source_record = json.loads(source.read_text(encoding="utf-8"))
+    assert source_record["summary_text"] == report.summary_text
+    assert source_record["health_summary"] == report.continuity
     assert "15:30总结running" not in source_record["summary_text"]
     assert "15:30总结running" not in source_record["health_summary"]
     assert pdf.read_bytes().count(b"/Type /Page\n") == 2
@@ -220,3 +223,50 @@ def test_local_model_round_trip_preserves_explicit_mode() -> None:
     )
     assert report.report_mode == "local_fallback"
     assert report.top3 == ()
+
+
+def test_local_fallback_reports_trading_gap_even_when_lunch_is_longer(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "continuity.sqlite3")
+    lunch_end = datetime.fromisoformat("2026-08-06T13:00:05+08:00")
+    timestamps = [datetime.fromisoformat("2026-08-06T11:30:17+08:00")]
+    timestamps.extend(lunch_end + timedelta(seconds=30 * index) for index in range(112))
+    timestamps.extend(
+        [
+            datetime.fromisoformat("2026-08-06T13:55:58+08:00"),
+            datetime.fromisoformat("2026-08-06T14:38:11+08:00"),
+        ]
+    )
+    for completed_at in timestamps:
+        store.record_scan_run(
+            {
+                "started_at": completed_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
+                "trigger_type": "automatic",
+                "health": "HEALTHY",
+                "detail": "正常",
+                "audit_json": "{}",
+            }
+        )
+
+    summary = {
+        "trade_date": "2026-08-06",
+        "generated_at": "2026-08-06T15:30:03+08:00",
+        "health_summary": "最长无扫描间隔90分8秒（午休）",
+        "summary_text": "本地总结",
+    }
+    report = build_local_fallback_report(
+        store,
+        summary,
+        now=datetime.fromisoformat("2026-08-06T15:30:03+08:00"),
+        source_commit_value="rc4-test",
+    )
+
+    assert "最长无扫描间隔1小时29分48秒" in report.continuity
+    assert "最长交易时段无扫描间隔42分13秒" in report.continuity
+    assert "13:55:58→14:38:11" in report.continuity
+    assert "交易时段超90秒空窗1段" in report.continuity
+    assert "90分8秒" not in report.continuity
+    assert "最长交易时段无扫描间隔42分13秒" in report.summary_text
+    assert "90分8秒" not in report.summary_text

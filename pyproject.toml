@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stock-watcher"
-version = "0.4.0a1"
+version = "0.6.0a4"
 description = "A-share market scanner with stable real-time Top3 candidates (headless service + Web internal test)"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -71,6 +71,10 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 module = ["reportlab.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["stock_watcher.ui.macos"]
+warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
 module = [

@@ -142,3 +142,14 @@
 - 代码验证：`433 passed / 25 skipped / 2 deselected`，Ruff、Mypy、原生 JS 语法、workspace
   validator 与 `git diff --check` 全绿。新部署与交易日真实 Top3 验收仍待完成，状态继续保持
   `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-12 次日复盘与提醒视觉返修
+
+- 从 Shared Core 接入严格 `/trade_cal` 质量契约和最多五次的持久化分钟重试；历史 30 天
+  回补不绕过上限，旁路线程不参与候选、StableTop3、固定提醒或强异动决策。
+- Web Schema v8→v9 纯新增 `candidate_outcomes`，迁移保留账号、会话、命令和事件；新增认证
+  只读 outcomes API、首页近一月摘要与近 5/20 个入选交易日/全部的完整复盘页。
+- Web 使用莫兰迪典藏编辑部配色；强异动及固定 09:45/14:45 自动提醒改为中央手动关闭
+  `alertdialog`，保留原生通知、提醒中心及 WebSocket 新事件水位去重。
+- 当前仍由 Mac Docker + Cloudflare Tunnel 承载；离线门与部署成功均不能替代完整交易日
+  现场验收，状态继续 `BLOCKED / NOT_ACCEPTED`。
