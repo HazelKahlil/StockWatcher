@@ -13,6 +13,13 @@
 
 - 本版本的离线门和安装包不替代真实交易日 09:45/14:45 同点结算验收。
 
+### Packaging
+
+- 从本地 `main@b00221f` 生成仓库外 Mac `.app` ZIP 与 DMG，完成 ad-hoc 签名、挂载、
+  临时 HOME + Replay 启动和优雅退出；没有覆盖已安装 App 或读取 Keychain。
+- 同提交 Windows fresh-build 源包已生成；当前没有 Windows/PowerShell/Inno 环境，故未把
+  macOS 离线 package contract 写成真实 portable、EXE、安装或卸载通过。
+
 本项目采用 [Semantic Versioning](https://semver.org/)；所有值得用户或维护者关注的变化记录在这里。
 
 ## [Unreleased]

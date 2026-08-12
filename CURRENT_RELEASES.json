@@ -32,12 +32,14 @@
     "validation": "363 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract and lock check passed"
   },
   "app_mac": {
-    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "source_baseline_commit": "b00221f2604f5410ffac383bccaa6a21f108c1e8",
     "installed_path": "~/Applications/StockWatcher.app",
     "installed_source_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
     "status": "internal_trial",
     "installed_matches_source_baseline": false,
-    "provenance_note": "The installed app was not overwritten or rebuilt during source baselining; rebuild from the tag before distributing alpha.2.",
+    "provenance_note": "A separate alpha.4 app ZIP and DMG were built from b00221f, ad-hoc signed, mounted and Replay-smoked with a temporary HOME; the existing installed app was not overwritten.",
+    "alpha4_package_built": true,
+    "alpha4_package_installed": false,
     "architecture": "arm64",
     "signature": "ad-hoc"
   },
@@ -67,12 +69,15 @@
   "windows": {
     "pr": 4,
     "integration_merge_commit": "a5da2705ed8c6b8d9670d0b6dbc751018f78828c",
-    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "source_baseline_commit": "b00221f2604f5410ffac383bccaa6a21f108c1e8",
     "status": "windows_smoke_pass",
     "authoritative_m0": false,
     "governance_runs": [31478494946, 31479040103],
     "ci": "Windows Python 3.11 and 3.12 tests, Ruff, Mypy, Setup, fail-closed Preflight, PyInstaller, Inno Setup and artifact upload passed",
     "installed_asset_matches_source_baseline": false,
-    "note": "The existing target-machine portable predates the final safe-recovery and alpha.2 packaging baseline; rebuild from the tag when a new Windows package is needed."
+    "alpha4_build_source_prepared": true,
+    "alpha4_portable_built": false,
+    "alpha4_installer_built": false,
+    "note": "The exact b00221f Windows fresh-build source ZIP is prepared, but no Windows host, PowerShell or Inno Setup is available in this session; portable/installer and target-machine smoke remain blocked and are not simulated on macOS."
   }
 }

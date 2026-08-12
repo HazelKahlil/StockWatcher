@@ -6,9 +6,9 @@
 | --- | --- | --- | --- | --- |
 | 次日同点复盘 | `fix/candidate-outcomes-p1-reliability@ed63106`，开发版本 `0.6.0a4` / SQLite v8 | macOS 离线 `417 passed, 20 skipped, 2 deselected`；严格 `/trade_cal + DEGRADED/MISSING`、0/1/布尔开市标记、最多五次持久化重试、Ruff/Mypy/validator/lock/package contract/secret/diff 全绿 | 真实下一交易日 09:45/14:45 同点结算、错过时点回补和目标机安装验收未现场通过 | `local_code_complete_offline_verified_after_alpha4_reliability_fix` |
 | Shared Core | `main` 应用代码 `ad04e392158c7050f84e0318fe1d53aaa0370c34` / `0.4.0a2` | `363 passed, 20 skipped, 2 deselected`；Ruff/Mypy/validator/lock/package contract 全绿 | 真实交易时段证据不能由离线门替代 | `internal_trial_source_baseline` |
-| App Mac | 已安装版记录 `SOURCE_COMMIT=88ccf49f...`；重建源码为 `ad04e39` | 既有 arm64/ad-hoc、Keychain、SQLite、PDF、单实例和窗口行为证据保留 | 安装资产未重建为 alpha.2；固定时点、15:30 与真实恢复仍待补验 | `internal_trial` |
+| App Mac | alpha.4 包源码 `main@b00221f`；已安装版仍记录 `88ccf49f...` | 仓库外 `.app` ZIP/DMG、ad-hoc 签名、DMG 挂载、临时 HOME + Replay 启动/优雅退出均通过 | 新包未覆盖现有 App；固定时点、15:30 与真实恢复仍待补验 | `alpha4_package_verified_not_installed` |
 | Web | `web/internal-test-v1@bf447ba` | `434 passed, 25 skipped, 2 deselected`；Ruff/Mypy/validator/JS 全绿；Mac Docker 容器运行且公网 HTTP 200 | 完整交易日、通知/重放、断线与备份恢复；浏览器关闭后的 Web Push 未实现 | **`BLOCKED / NOT_ACCEPTED`** |
-| Windows | PR #4 merge `a5da270`，最终源码基线 `ad04e39` | Windows 3.11/3.12 Governance、Setup/Preflight、PyInstaller/Inno 与制品上传通过；Owner 报告基本可用 | 目标机旧 portable 未从 alpha.2 重建；权威 M0、安装/卸载/回滚与签名包未验收 | `WINDOWS_SMOKE_PASS` |
+| Windows | alpha.4 fresh-build 输入 `main@b00221f` | 同提交源码 ZIP 和离线 package contract 已验证；历史 `WINDOWS_SMOKE_PASS` 证据保留 | 当前会话无 Windows/PowerShell/Inno，alpha.4 portable/EXE 及安装/卸载未构建，不能用 macOS 冒充 | `WINDOWS_ALPHA4_PACKAGE_BLOCKED_NO_HOST` |
 
 ## 当前禁止的误读
 

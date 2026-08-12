@@ -110,7 +110,9 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 | `python3 -m json.tool CURRENT_RELEASES.json` | exit 0 |
 
 确定性 UI 已覆盖空数据、待结算、部分结算和完整结算；交接包保存 empty / pending /
-settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
+settled 三张实拍截图。Mac `.app` ZIP/DMG 已从 `b00221f` 在仓库外构建并用临时 HOME +
+Replay 验证，未覆盖现有 App；Windows 只形成同提交 fresh-build 源包，因当前无 Windows
+主机、PowerShell 和 Inno Setup，不冒充 portable/EXE 或安装验收。
 
 ## 本地提交与同步
 
@@ -119,7 +121,7 @@ settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
 - wire endpoint 返修分支：`fix/candidate-outcomes-trade-cal-wire-endpoint`；实现提交：
   `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
 - alpha.4 P1 可靠性返修分支：`fix/candidate-outcomes-p1-reliability`；实现提交：
-  `ed63106c467637c3518df7821b2c32ae3c683ab7`。验证完成后按 local-first 规则合入本地 `main`。
+  `ed63106c467637c3518df7821b2c32ae3c683ab7`；已合入本地 `main@b00221f`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界
