@@ -343,8 +343,14 @@ def test_morandi_theme_outcome_page_and_blue_notification_contract() -> None:
         "--ashare-red: #A75F5A",
         "--ashare-green: #66806B",
         "--ashare-gold: #A68A58",
+        "--top3-gain-red: #dc2626",
+        "--top3-gain-red: #ef4444",
     ):
         assert token in css
+    assert "font-size: clamp(1.85rem, 2.4vw, 2rem)" in css
+    assert '.cards .ashare-pct[data-direction="up"]' in css
+    assert "color: var(--top3-gain-red) !important" in css
+    assert 'href="/static/app.css?v=13"' in base
     assert ".hero-action-button.btn-notify" in css
     assert "background: var(--mist-blue)" in css
     assert 'href="/outcomes"' in base

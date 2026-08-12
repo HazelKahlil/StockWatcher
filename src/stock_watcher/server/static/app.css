@@ -20,6 +20,7 @@
   --ashare-red-border: rgba(167, 95, 90, 0.38);
   --ashare-gold: #A68A58;
   --ashare-green: #66806B;
+  --top3-gain-red: #dc2626;
 
   /* Typography System: Alpino is an optional installed/local face until webfont serving is authorized. */
   --font-english: "Alpino Variable", "Alpino";
@@ -46,6 +47,7 @@
     --ashare-red-border: rgba(193, 123, 117, 0.42);
     --ashare-gold: #BCA26E;
     --ashare-green: #86A08A;
+    --top3-gain-red: #ef4444;
   }
 }
 
@@ -846,10 +848,14 @@ body.alert-open { overflow: hidden; }
 }
 
 .ashare-pct {
-  font-size: 1.55rem;
+  font-size: clamp(1.85rem, 2.4vw, 2rem);
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--ashare-red);
+}
+
+.cards .ashare-pct[data-direction="up"] {
+  color: var(--top3-gain-red) !important;
 }
 
 .placeholder-card .display-name,
