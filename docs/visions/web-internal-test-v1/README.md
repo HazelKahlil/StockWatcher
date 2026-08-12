@@ -153,3 +153,6 @@
   `alertdialog`，保留原生通知、提醒中心及 WebSocket 新事件水位去重。
 - 当前仍由 Mac Docker + Cloudflare Tunnel 承载；离线门与部署成功均不能替代完整交易日
   现场验收，状态继续 `BLOCKED / NOT_ACCEPTED`。
+- 部署前 `bf447ba` Schema v8 备份已完成 checksum 与 integrity 校验；`d2dfc90` 单次迁移到
+  Schema v9 后，账号、会话、命令、事件数量保持，Web/Worker/Tunnel 与公网健康通过。公网
+  登录后的手动抓取和提醒仍留给 Human Owner 现场复核，不以匿名健康检查代替。

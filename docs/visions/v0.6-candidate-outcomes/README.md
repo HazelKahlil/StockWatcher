@@ -108,25 +108,27 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 
 | 命令 | 结果 |
 | --- | --- |
-| `uv sync --all-groups --frozen` | exit 0；56 packages audited |
-| `uv lock --check` | exit 0；67 packages resolved |
-| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；409 passed，20 skipped，2 deselected |
+| `uv sync --all-groups --frozen` | exit 0；83 packages audited |
+| `uv lock --check` | exit 0；92 packages resolved |
+| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；499 passed，25 skipped，2 deselected |
 | `uv run ruff check .` | exit 0 |
-| `uv run mypy src tests` | exit 0；113 source files |
+| `uv run mypy src tests` | exit 0；141 source files |
 | `python3 scripts/validate_workspace.py` | exit 0；29 required files |
 | `uv run python scripts/check_windows_package.py` | exit 0；仅离线跨平台契约，不冒充 Windows 真机 |
 | `git diff --check` | exit 0 |
 | `python3 -m json.tool CURRENT_RELEASES.json` | exit 0 |
 
-确定性 UI 已覆盖空数据、待结算、部分结算和完整结算；交接包保存 empty / pending /
-settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
+确定性 Web UI 已覆盖桌面首页、完整复盘、WebSocket 中央提醒与 390px 移动端；实拍同时验证
+Esc 关闭和焦点恢复。未覆盖现有已安装 Mac/Windows App。
 
 ## 本地提交与同步
 
 - 原功能提交：`c7b4f9989a298954f3127934b7570afb3f5aaf2b`。
 - 交易日历质量与重试返修提交：`d85f378`。
 - wire endpoint 返修分支：`fix/candidate-outcomes-trade-cal-wire-endpoint`；实现提交：
-  `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。验证完成后按 local-first 规则合入本地 `main`。
+  `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
+- alpha.4 Shared Core 已合入本地 `main@b00221f`；Web 部署实现为
+  `feat/web-outcomes-morandi-alerts@d2dfc90`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

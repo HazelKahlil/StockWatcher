@@ -11,19 +11,20 @@
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
   "candidate_outcomes": {
-    "python_version": "0.6.0a3",
-    "package_version": "0.6.0-alpha.3",
+    "python_version": "0.6.0a4",
+    "package_version": "0.6.0-alpha.4",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
-    "source_branch": "fix/candidate-outcomes-trade-cal-wire-endpoint",
-    "implementation_commit": "e85faf2d83b2a8877a6320dfd4b60ae9e780486d",
-    "status": "local_code_complete_offline_verified_after_wire_endpoint_fix",
-    "schema_version": 8,
-    "validation": "409 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation and diff check passed on macOS",
+    "source_branch": "fix/candidate-outcomes-p1-reliability + feat/web-outcomes-morandi-alerts",
+    "implementation_commit": "d09652731ee0c4872dfa68dd638642c0037f4bb0",
+    "status": "local_code_complete_offline_verified_after_alpha4_reliability_fix",
+    "desktop_schema_version": 8,
+    "web_schema_version": 9,
+    "validation": "Web: 499 passed, 25 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, JavaScript syntax, migration, secret scan, JSON and diff checks passed on macOS",
     "real_trading_time_validation": false,
     "installed_app_rebuilt": false,
     "local_main_integrated": true,
     "github_synced": false,
-    "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED Pro calendar, and bounded persisted minute retry; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
+    "note": "The offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal, controlled DEGRADED/MISSING calendar and at most five persisted attempts; Web adds Schema v9 and read-only outcome review, with no claim of live 09:45/14:45 acceptance."
   },
   "shared_core": {
     "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
@@ -42,8 +43,8 @@
     "signature": "ad-hoc"
   },
   "web": {
-    "branch": "web/internal-test-v1",
-    "commit": "bf447ba62957e3d12a766df26c980b96ad4c74b2",
+    "branch": "feat/web-outcomes-morandi-alerts",
+    "commit": "d2dfc90cd773643e6f23cb98606b7da0c606e90b",
     "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
     "status": "blocked",
     "release_status": "not_accepted",
@@ -53,14 +54,16 @@
     "containers_observed_healthy": true,
     "pytest_full": {
       "status": "pass_on_current_macos_worktree",
-      "passed": 434,
+      "passed": 499,
       "skipped": 25,
       "deselected": 2
     },
     "ruff": "pass",
-    "mypy": "pass; 136 source files",
+    "mypy": "pass; 141 source files",
     "workspace_validator": "pass; 29 required files",
     "javascript_syntax": "pass",
+    "schema_version": 9,
+    "deployed_image": "stockwatcher-web:web-alpha4-d2dfc90",
     "can_merge_main": false,
     "reason": "Independent deployed Web line remains BLOCKED / NOT_ACCEPTED pending its full trading-day and operational acceptance; it is not folded into main."
   },

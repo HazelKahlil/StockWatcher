@@ -2,8 +2,8 @@
 
 ## 唯一事实源
 
-- 分支：`web/internal-test-v1`。
-- HEAD：`bf447ba62957e3d12a766df26c980b96ad4c74b2`。
+- 当前返修分支：`feat/web-outcomes-morandi-alerts`。
+- 部署实现提交：`d2dfc90cd773643e6f23cb98606b7da0c606e90b`。
 - Web 基线：`502a447d7e593d638ea45518f2a5e4d4827f683f`（Mac RC3 tag 基线）。
 - Web 与 main 的共同基线是 `502a447...`；Web 有独有实现提交，不能把它当作 main 的祖先。
 - 当前 worktree：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e`。
@@ -16,11 +16,11 @@
 
 原因：
 
-1. 当前 macOS worktree 的完整 pytest 为 `434 passed, 25 skipped, 2 deselected`；Ruff、
-   Mypy（136 source files）、workspace validator（29 个必需文件）和 JavaScript syntax check
+1. 当前 macOS worktree 的完整 pytest 为 `499 passed, 25 skipped, 2 deselected`；Ruff、
+   Mypy（141 source files）、workspace validator（29 个必需文件）和 JavaScript syntax check
    全部通过。
-2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；有 healthcheck 的容器
-   为 healthy，`https://stock.hazelkahlil.com/` 当前返回 HTTP 200。
+2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；镜像
+   `stockwatcher-web:web-alpha4-d2dfc90`、Schema v9、迁移保留和公网入口均已验证。
 3. 以上仍是 Mac 主机与当前公网入口证据，不等于完整交易日、持续运行、提醒重放、备份恢复
    和浏览器完全关闭后的通知验收。
 4. 当前部署依赖 Mac 开机、联网及 Docker Desktop；VPS 已由 Human Owner 明确后置，本基准
@@ -31,7 +31,8 @@
 - FastAPI/Jinja2/原生 CSS/ES modules/WebSocket。
 - 唯一 headless Worker；lease 防重复 Worker；Web 不复制 CandidateEngine、StableTop3 或自动调度。
 - REST/API、Admin/Tester、Argon2id session、CSRF、RBAC、AES-256-GCM Token 存储边界和全局 redaction。
-- SQLite WAL v7、备份/恢复 CLI、Compose/Caddy 及运维脚本。
+- SQLite WAL v9、备份/恢复 CLI、Compose/Caddy 及运维脚本。
+- 认证只读 outcomes API、近一月摘要/完整页、莫兰迪视觉与中央自动提醒。
 
 ## 部署资产边界
 
