@@ -344,7 +344,7 @@ def test_real_degraded_trade_calendar_contract_resolves_next_open_date(tmp_path:
 @pytest.mark.parametrize("is_open", ["0", "1", 2, -1, None])
 def test_trade_calendar_rejects_non_contract_open_flags(
     tmp_path: Path,
-    is_open: object,
+    is_open: str | int | None,
 ) -> None:
     entry = date(2026, 8, 10)
     target = date(2026, 8, 11)

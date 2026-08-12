@@ -408,9 +408,13 @@ def test_web_outcome_sidecar_rejects_submission_after_shutdown(tmp_path: Path) -
     ran = threading.Event()
     service.stop()
 
+    def task() -> OutcomeActionReport:
+        ran.set()
+        return OutcomeActionReport()
+
     service._submit_outcome_task(  # noqa: SLF001
         "after-stop",
-        lambda: (ran.set() or OutcomeActionReport()),
+        task,
     )
 
     assert not ran.is_set()
