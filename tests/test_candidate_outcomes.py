@@ -341,6 +341,31 @@ def test_real_degraded_trade_calendar_contract_resolves_next_open_date(tmp_path:
     assert tracker.next_trading_date(friday) == tuesday
 
 
+def test_healthy_trade_calendar_is_rejected_even_with_supplier_timestamp(
+    tmp_path: Path,
+) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = trade_calendar_result(
+        (
+            {
+                "exchange": "SSE",
+                "cal_date": "20260811",
+                "is_open": 1,
+                "pretrade_date": "20260810",
+            },
+        ),
+        at=stamp(target, 15, 0),
+        quality=TransportQuality.HEALTHY,
+    )
+
+    with pytest.raises(ValueError, match="quality"):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / "healthy-calendar.sqlite3"), provider
+        ).next_trading_date(entry)
+
+
 @pytest.mark.parametrize("quality", [TransportQuality.STALE, TransportQuality.STOPPED])
 def test_stale_or_unavailable_trade_calendar_is_rejected(
     tmp_path: Path,
@@ -1001,6 +1026,43 @@ def test_transient_minute_failures_persist_bounded_retry(
     )
 
 
+def test_post_close_transient_failure_remains_discoverable_after_restart(
+    tmp_path: Path,
+) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.NETWORK)
+    path = tmp_path / "post-close-restart.sqlite3"
+    tracker = CandidateOutcomeTracker(SQLiteStore(path), provider)
+    tracker.record_scheduled_batch(
+        candidate_batch(stamp(entry_date, 9, 45)),
+        snapshot_id=520,
+        alert_id=520,
+        trigger_type="scheduled-09:45",
+        recorded_at=stamp(entry_date, 9, 45),
+    )
+
+    report = tracker.backfill_due(
+        now=stamp(target_date, 15, 5),
+        target_trade_date=target_date,
+        target_slot=OutcomeSlot.MORNING,
+        limit=3,
+    )
+    rows = tracker.store.list_candidate_outcomes(trading_days=None)
+
+    assert report.pending == 3
+    assert {row["settlement_attempts"] for row in rows} == {1}
+    assert {row["next_retry_at"] for row in rows} == {
+        stamp(target_date, 15, 8).isoformat()
+    }
+    restarted = CandidateOutcomeTracker(SQLiteStore(path), provider)
+    assert restarted.due_backfill_groups(now=stamp(target_date, 15, 7)) == ()
+    assert restarted.due_backfill_groups(now=stamp(target_date, 15, 8)) == (
+        (target_date, OutcomeSlot.MORNING),
+    )
+
+
 def test_minute_retry_schedule_stops_after_final_bounded_attempt(tmp_path: Path) -> None:
     entry_date = date(2026, 8, 10)
     target_date = date(2026, 8, 11)
@@ -1430,6 +1492,42 @@ def test_historical_backfill_persists_pending_retry_count(tmp_path: Path) -> Non
     assert status["status"] == "partial"
     assert status["pending"] == 3
     assert _backfill_status_text(status).endswith("另有3笔等待重试。")
+
+
+def test_historical_backfill_never_exceeds_bounded_attempt_limit(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 10)
+    target_date = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target_date,))
+    provider.historical_error = ProviderError(ProviderFailureReason.NETWORK)
+    store = SQLiteStore(tmp_path / "history-bounded-attempts.sqlite3")
+    batch = candidate_batch(stamp(entry_date, 9, 45))
+    snapshot_id = store.record_batch(batch)
+    store.record_alert_event(
+        snapshot_id,
+        stamp(entry_date, 9, 45).isoformat(),
+        "scheduled-09:45",
+        "macos-desktop",
+        "scheduled-09:45",
+    )
+    tracker = CandidateOutcomeTracker(store, provider)
+
+    for attempt_at in (
+        stamp(target_date, 15, 5),
+        stamp(target_date, 15, 8),
+        stamp(target_date, 15, 16),
+        stamp(target_date, 15, 36),
+        stamp(target_date, 16, 6),
+    ):
+        tracker.backfill_recent_scheduled(now=attempt_at, days=30)
+
+    before = len(provider.historical_calls)
+    tracker.backfill_recent_scheduled(now=stamp(target_date, 17, 0), days=30)
+    rows = store.list_candidate_outcomes(trading_days=None)
+
+    assert before == 15
+    assert len(provider.historical_calls) == before
+    assert {row["settlement_attempts"] for row in rows} == {5}
+    assert {row["next_retry_at"] for row in rows} == {None}
 
 
 def test_alert_retention_does_not_delete_candidate_outcomes(tmp_path: Path) -> None:
