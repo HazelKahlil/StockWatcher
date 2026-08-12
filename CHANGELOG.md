@@ -20,6 +20,13 @@
 - 同提交 Windows fresh-build 源包已生成；当前没有 Windows/PowerShell/Inno 环境，故未把
   macOS 离线 package contract 写成真实 portable、EXE、安装或卸载通过。
 
+### Web track
+
+- 独立 Web 线加入 Schema v9 次日复盘只读 API、近一月摘要与完整复盘页，并以单独执行链
+  隔离回补任务；Morandi 低饱和配色、蓝色通知按钮和支持 Esc/焦点恢复的中央提醒弹窗已部署。
+- `d2dfc90` 镜像在 Mac Docker 完成 v8→v9 单次迁移、前后备份校验和公网 live/ready 检查；
+  Web 仍为 `BLOCKED / NOT_ACCEPTED`，不得把离线与公网健康结果写成真实交易日验收。
+
 本项目采用 [Semantic Versioning](https://semver.org/)；所有值得用户或维护者关注的变化记录在这里。
 
 ## [Unreleased]
