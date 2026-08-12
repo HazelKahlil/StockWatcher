@@ -2,6 +2,13 @@
   "generated_at": "2026-08-12",
   "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
+  "github_sync": {
+    "milestone_pr": 6,
+    "main_publish_branch": "publish/v0.6.0-alpha.4",
+    "web_publish_branch": "publish/web-v0.6.0-alpha.4",
+    "tag_created": false,
+    "release_created": false
+  },
   "internal_baseline": {
     "python_version": "0.4.0a2",
     "tag": "v0.4.0-alpha.2",
@@ -22,7 +29,7 @@
     "real_trading_time_validation": false,
     "installed_app_rebuilt": false,
     "local_main_integrated": true,
-    "github_synced": false,
+    "github_synced": true,
     "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED/MISSING Pro calendar, strict numeric-or-boolean open flags, and at most five persisted minute attempts; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
   },
   "shared_core": {
@@ -45,6 +52,7 @@
   },
   "web": {
     "branch": "fix/web-top3-gain-emphasis",
+    "github_branch": "publish/web-v0.6.0-alpha.4",
     "commit": "9411cd8c65b6e99dddb58b07e5406514c5f0799b",
     "deployed_source_commit": "cfc6cd66be3edcf5468840c29b509eae643896b5",
     "deployed_image": "stockwatcher-web:web-alpha4-cfc6cd6",

@@ -1,13 +1,13 @@
 # 版本索引
 
-> 最后更新：2026-08-11
+> 最后更新：2026-08-12
 > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
 
 ## 活跃版本
 
 - **[v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md)** —
   正式 09:45/14:45 三只候选的下一真实交易日同档理论复盘、SQLite v8、历史回补与桌面 UI
-  （状态：本地实现与离线工程验证；真实同点行情待交易日现场验收，未同步 GitHub）。
+  （状态：本地实现与离线工程验证已通过 PR #6 同步 GitHub；真实同点行情仍待交易日现场验收）。
 - **[v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md)** —
   Mac / Web / Windows 当前状态的可重建内部试用基准（状态：源码基准；非商业发布、非权威
   M0；Web 继续 `BLOCKED / NOT_ACCEPTED`）。

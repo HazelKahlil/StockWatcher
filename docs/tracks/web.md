@@ -3,6 +3,7 @@
 ## 唯一事实源
 
 - 当前返修分支：`fix/web-top3-gain-emphasis`。
+- GitHub 交接分支：`publish/web-v0.6.0-alpha.4`。
 - 最终交接提交：`9411cd8c65b6e99dddb58b07e5406514c5f0799b`。
 - 部署代码提交：`cfc6cd66be3edcf5468840c29b509eae643896b5`。
 - Web 基线：`502a447d7e593d638ea45518f2a5e4d4827f683f`（Mac RC3 tag 基线）。

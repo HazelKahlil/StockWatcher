@@ -12,6 +12,8 @@
 ### Evidence boundary
 
 - 本版本的离线门和安装包不替代真实交易日 09:45/14:45 同点结算验收。
+- 源码通过 `publish/v0.6.0-alpha.4` / PR #6 做 GitHub 里程碑同步，Web 独立线同步到
+  `publish/web-v0.6.0-alpha.4`；由于真实交易日尚未验收，不创建 tag 或 Release。
 
 ### Packaging
 
