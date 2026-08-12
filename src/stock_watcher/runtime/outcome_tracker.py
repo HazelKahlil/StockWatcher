@@ -1040,8 +1040,6 @@ def _parse_open_flag(value: object) -> bool | None:
         return value
     if isinstance(value, int) and value in {0, 1}:
         return bool(value)
-    if isinstance(value, str) and value.strip() in {"0", "1"}:
-        return value.strip() == "1"
     return None
 
 

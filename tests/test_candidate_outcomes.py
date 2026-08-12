@@ -82,7 +82,7 @@ def candidate_batch(
             source_ts=at,
             provider_version=provider_version,
             config_version="candidate-outcome-test-v1",
-            app_version="0.6.0a3",
+            app_version="0.6.0a4",
             price=price,
             is_formal=formal,
             is_supplement=not formal,
@@ -324,7 +324,7 @@ def test_real_degraded_trade_calendar_contract_resolves_next_open_date(tmp_path:
             {
                 "exchange": "SSE",
                 "cal_date": "20260810",
-                "is_open": "0",
+                "is_open": 0,
                 "pretrade_date": "20260807",
             },
             {
@@ -339,6 +339,32 @@ def test_real_degraded_trade_calendar_contract_resolves_next_open_date(tmp_path:
     tracker = CandidateOutcomeTracker(SQLiteStore(tmp_path / "calendar.sqlite3"), provider)
 
     assert tracker.next_trading_date(friday) == tuesday
+
+
+@pytest.mark.parametrize("is_open", ["0", "1", 2, -1, None])
+def test_trade_calendar_rejects_non_contract_open_flags(
+    tmp_path: Path,
+    is_open: str | int | None,
+) -> None:
+    entry = date(2026, 8, 10)
+    target = date(2026, 8, 11)
+    provider = FakeOutcomeProvider((target,))
+    provider.calendar_result = trade_calendar_result(
+        (
+            {
+                "exchange": "SSE",
+                "cal_date": "20260811",
+                "is_open": is_open,
+                "pretrade_date": "20260810",
+            },
+        ),
+        at=stamp(target, 15, 0),
+    )
+
+    with pytest.raises(ValueError, match="open flag"):
+        CandidateOutcomeTracker(
+            SQLiteStore(tmp_path / "invalid-open-flag.sqlite3"), provider
+        ).next_trading_date(entry)
 
 
 def test_healthy_trade_calendar_is_rejected_even_with_supplier_timestamp(
@@ -1232,7 +1258,7 @@ def test_restart_discovery_prefers_current_slot_beyond_five_hundred_pending(
             "quality": "GOOD",
             "provider_version": "tushare-test-v1",
             "config_version": "candidate-outcome-test-v1",
-            "app_version": "0.6.0a3",
+            "app_version": "0.6.0a4",
             "created_at": created_at,
             "updated_at": created_at,
             "safe_reason": None,
@@ -1257,7 +1283,7 @@ def test_restart_discovery_prefers_current_slot_beyond_five_hundred_pending(
             "quality": "GOOD",
             "provider_version": "tushare-test-v1",
             "config_version": "candidate-outcome-test-v1",
-            "app_version": "0.6.0a3",
+            "app_version": "0.6.0a4",
             "created_at": current_created_at,
             "updated_at": current_created_at,
             "safe_reason": None,
@@ -1951,7 +1977,7 @@ def outcome_record(
         quality="GOOD" if status is OutcomeStatus.SETTLED else "UNVERIFIED",
         provider_version="tushare-test-v1",
         config_version="test-v1",
-        app_version="0.6.0a3",
+        app_version="0.6.0a4",
         created_at=entry_ts,
         updated_at=entry_ts,
     )

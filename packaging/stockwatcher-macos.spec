@@ -110,7 +110,7 @@ app = BUNDLE(
     name="StockWatcher.app",
     icon=str(macos_icon),
     bundle_identifier="com.kahlilhazel.stockwatcher",
-    version="0.6.0a3",
+    version="0.6.0a4",
     info_plist={
         "CFBundleDevelopmentRegion": "zh_CN",
         "CFBundleDisplayName": "StockWatcher",
