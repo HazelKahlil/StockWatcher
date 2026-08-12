@@ -1,8 +1,10 @@
-"""Admin CLI: migrate, create-user, backup, restore, provider-preflight.
+"""Admin CLI: migrate, users, backup, restore and provider preflight.
 
 Usage:
     python -m stock_watcher.server.admin_cli migrate
     python -m stock_watcher.server.admin_cli create-user --username NAME --role admin \\
+        [--password-stdin]
+    python -m stock_watcher.server.admin_cli reset-password --username NAME \\
         [--password-stdin]
     python -m stock_watcher.server.admin_cli backup [--output DIR]
     python -m stock_watcher.server.admin_cli restore --input DIR
@@ -94,6 +96,54 @@ def cmd_create_user(settings: ServerSettings, args: argparse.Namespace) -> int:
                 "username": user["username"],
                 "role": user["role"],
                 "note": "密码与哈希未回显；登录走 HTTPS 页面。",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_reset_password(settings: ServerSettings, args: argparse.Namespace) -> int:
+    """Reset one existing user's password without exposing it on argv or stdout."""
+    from .auth import AuthError, AuthService
+
+    store = _store(settings)
+    auth = AuthService(store)
+    username = str(args.username).strip().casefold()
+    user = auth.users.get_by_username(username)
+    if user is None:
+        print("reset-password failed: username does not exist", file=sys.stderr)
+        return 1
+
+    password = _read_password(args)
+    try:
+        password_hash = auth.hash_password(password)
+    except AuthError as error:
+        print(f"reset-password failed: {redact(str(error))}", file=sys.stderr)
+        return 1
+
+    user_id = int(user["user_id"])
+    updated = auth.users.update(user_id, password_hash=password_hash)
+    if updated is None:
+        print("reset-password failed: username does not exist", file=sys.stderr)
+        return 1
+    revoked_sessions = auth.revoke_user_sessions(user_id)
+    auth.audit.record(
+        actor_user_id=None,
+        action="user.password_reset_cli",
+        object_type="user",
+        object_id=str(user_id),
+        outcome="succeeded",
+        detail={"username": username, "revoked_sessions": revoked_sessions},
+    )
+    print(
+        json.dumps(
+            {
+                "user_id": user_id,
+                "username": updated["username"],
+                "role": updated["role"],
+                "note": "密码与哈希未回显；已有会话已撤销。",
             },
             ensure_ascii=False,
             indent=2,
@@ -530,6 +580,16 @@ def parse_args() -> argparse.ArgumentParser:
         action="store_true",
         help="read the password from stdin (one line)",
     )
+    reset = sub.add_parser(
+        "reset-password",
+        help="reset an existing user's password and revoke its sessions",
+    )
+    reset.add_argument("--username", required=True)
+    reset.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read the password from stdin (one line)",
+    )
     backup = sub.add_parser("backup", help="SQLite backup API snapshot + reports + manifest")
     backup.add_argument("--output", default=None)
     restore = sub.add_parser("restore", help="restore from a backup directory")
@@ -554,6 +614,8 @@ def main() -> int:
         return cmd_migrate(settings, args)
     if args.command == "create-user":
         return cmd_create_user(settings, args)
+    if args.command == "reset-password":
+        return cmd_reset_password(settings, args)
     if args.command == "backup":
         return cmd_backup(settings, args)
     if args.command == "restore":

@@ -26,10 +26,14 @@
 1. 在 CNB 专用仓库的 `main` 分支点“首次设置 Web”。该分支映射本地独立 Web 配置线，
    不是 StockWatcher 本地日常开发 `main`。
 2. 在打开的私有终端执行 `bash deploy/cnb/bootstrap-admin.sh`，在终端中输入管理员密码；密码不写
-   命令行、Git、日志或制品。
+   命令行、Git、日志或制品。脚本会拒绝首尾空格或制表符，避免不可见字符造成登录失败。
 3. 关闭运维空间，点“立即启动 Web”。登录后在 HTTPS 管理页录入 Tushare Token。
 4. 次日从 `09:00` 开始按 Web 交易日验收清单观察。未完成现场验收前，状态保持
    `BLOCKED / NOT_ACCEPTED`。
+
+若管理员已经创建但密码无法登录，在私有终端执行
+`bash deploy/cnb/bootstrap-admin.sh reset`。该模式只重置已有账号的密码并撤销其旧会话；密码仍只从
+标准输入读取，不会出现在命令参数或输出中。
 
 手动按钮运行两小时，便于非交易时段检查。自动任务只绑定独立分支，不影响本地 `main`、现有
 Mac Docker、域名或 Cloudflare Tunnel。
