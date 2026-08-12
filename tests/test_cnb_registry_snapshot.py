@@ -138,7 +138,7 @@ def test_cnb_key_escrow_is_private_non_overwriting_and_recoverable(
     assert key_path.read_bytes() == original_key
 
 
-def test_cnb_preview_fails_closed_and_snapshots_manual_shutdown() -> None:
+def test_cnb_preview_fails_closed_and_snapshots_while_running() -> None:
     script = PREVIEW_SCRIPT.read_text(encoding="utf-8")
     key_restore = script.index('registry-snapshot.sh" restore-key')
     result_restore = script.index('registry-snapshot.sh" restore;')
@@ -146,4 +146,10 @@ def test_cnb_preview_fails_closed_and_snapshots_manual_shutdown() -> None:
 
     assert key_restore < result_restore < web_start
     assert "starting with a new private database" not in script
+    assert 'backup_interval_seconds=${STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS:-900}' in script
+    assert 'create_snapshot "$(date +%Y%m%d)-periodic-$periodic_slot"' in script
     assert 'create_snapshot "$(date +%Y%m%d)-shutdown"' in script
+
+    pipeline = (PROJECT_ROOT / ".cnb.yml").read_text(encoding="utf-8")
+    assert 'STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "900"' in pipeline
+    assert 'STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "60"' in pipeline

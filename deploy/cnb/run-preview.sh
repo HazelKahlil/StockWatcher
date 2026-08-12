@@ -88,6 +88,12 @@ web_pid=$!
 start_worker
 
 manual_minutes=${STOCKWATCHER_CNB_MANUAL_DURATION_MINUTES:-}
+backup_interval_seconds=${STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS:-900}
+if [[ ! "$backup_interval_seconds" =~ ^[1-9][0-9]*$ ]]; then
+  echo "STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS must be a positive integer" >&2
+  exit 1
+fi
+last_periodic_snapshot_epoch=$(date +%s)
 if [[ -n "$manual_minutes" ]]; then
   cutoff_epoch=$(( $(date +%s) + manual_minutes * 60 ))
 else
@@ -115,6 +121,14 @@ while (( $(date +%s) < cutoff_epoch )); do
     wait "$worker_pid" 2>/dev/null || true
     sleep 10
     start_worker
+  fi
+
+  now_epoch=$(date +%s)
+  if (( now_epoch - last_periodic_snapshot_epoch >= backup_interval_seconds )); then
+    periodic_slot=$(( now_epoch / backup_interval_seconds ))
+    if create_snapshot "$(date +%Y%m%d)-periodic-$periodic_slot"; then
+      last_periodic_snapshot_epoch=$now_epoch
+    fi
   fi
 
   if [[ -z "$manual_minutes" ]]; then

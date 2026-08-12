@@ -178,9 +178,9 @@
   `feat/web-cnb-devspace` 配置线的运行镜像，不等同于 StockWatcher 本地日常开发 `main`。
 - `.cnb.yml` 在工作日上海时间 `08:25` 启动 2 核 only-preview 工作空间，运行 Web 与唯一
   Worker 到 `16:15`；8 小时离线保活低于 CNB 18 小时上限，没有伪造心跳或绕过回收。
-- `.cnb-runtime/` 被 Git 忽略并由工作空间 `backup: true` 恢复；主密钥只存在于该私有运行
-  目录。SQLite、报告和校验和通过私有 Docker 制品标签 `cnb-results-latest` 与当日标签归档，
-  不把主密钥与结果快照放在同一制品中。
+- `.cnb-runtime/` 被 Git 忽略；主密钥只在私有运行目录中使用，并通过独立私有制品跨空间恢复。
+  SQLite、报告和校验和通过私有 Docker 制品标签 `cnb-results-latest` 与当日标签归档，不把
+  主密钥与结果快照放在同一制品中。
 - 结果快照使用项目已有 SQLite Online Backup API，并在恢复前校验外层 SHA-256 与备份内
   `SHA256SUMS.txt`；Token 仍由 Owner 在 HTTPS 管理页录入，管理员密码只在私有终端交互输入。
 - CNB 官方 `cnb-pipeline` Skill 校验 `.cnb.yml` 和 `.cnb/web_trigger.yml` 的 YAML、语义、
@@ -196,3 +196,6 @@
   显式恢复两个仓库私有 Docker 制品：`cnb-secrets-v1` 只含主密钥与校验和，
   `cnb-results-latest` 只含数据库、报告与校验和。两者都不进入 Git，缺少或校验失败时预览
   fail-closed；管理员首次创建后必须上传两个制品，实际跨空间登录仍需重新现场验收。
+- 现场主动停止 `cnb-rdg-1jvrgo8lo` 时，流水线虽为 success，但退出钩子未执行，制品最后推送
+  时间仍停在停止前；因此不再把终止信号当作唯一持久化保证。手动预览改为运行中每 60 秒、
+  工作日预览每 15 分钟上传一次已校验快照，原 11:35/15:55/16:10 与正常退出快照继续保留。

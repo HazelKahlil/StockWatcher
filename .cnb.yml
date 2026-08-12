@@ -30,6 +30,7 @@ main:
       env:
         STOCKWATCHER_CNB_END_TIME: "16:15"
         STOCKWATCHER_CNB_BACKUP_TIMES: "11:35,15:55,16:10"
+        STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "900"
       stages:
         - name: 确认 Web 预览服务已声明
           script: echo "CNB only-preview service attached"
@@ -65,6 +66,7 @@ $:
         - docker
       env:
         STOCKWATCHER_CNB_MANUAL_DURATION_MINUTES: "120"
+        STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "60"
       stages:
         - name: 确认 Web 预览服务已声明
           script: echo "CNB manual only-preview service attached"
