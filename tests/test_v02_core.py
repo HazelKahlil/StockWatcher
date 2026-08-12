@@ -828,8 +828,12 @@ def test_export_selection_audit_generates_full_machine_readable_set(
     # test_exporter_true_top20 test covers the full 20-row contract.
     import csv as _csv
 
-    top20_rows = list(_csv.DictReader((output / "raw-top20.csv").open()))
-    top3_rows = list(_csv.DictReader((output / "raw-top3.csv").open()))
+    with (
+        (output / "raw-top20.csv").open(encoding="utf-8", newline="") as top20_file,
+        (output / "raw-top3.csv").open(encoding="utf-8", newline="") as top3_file,
+    ):
+        top20_rows = list(_csv.DictReader(top20_file))
+        top3_rows = list(_csv.DictReader(top3_file))
     assert 1 <= len(top20_rows) <= 20
     assert top20_rows[0]["rank"] == "1"
     assert len(top3_rows) == 3

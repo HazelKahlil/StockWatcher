@@ -50,6 +50,18 @@ def _lease_holder(db: Path) -> str | None:
     return None if row is None else str(row[0])
 
 
+def _stop_process(
+    process: subprocess.Popen[str] | subprocess.Popen[bytes], *, timeout: float
+) -> None:
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate(timeout=timeout)
+
+
 def test_duplicate_worker_second_exits_without_scanning(tmp_path: Path) -> None:
     db, _, env = _prepare(tmp_path)
     code = (
@@ -96,11 +108,7 @@ def test_duplicate_worker_second_exits_without_scanning(tmp_path: Path) -> None:
             ).fetchone()
         assert row == (first_holder, 1), row
     finally:
-        first.terminate()
-        try:
-            first.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            first.kill()
+        _stop_process(first, timeout=15)
 
 
 def test_worker_lease_heartbeat_refreshes(tmp_path: Path) -> None:
@@ -149,11 +157,7 @@ def test_worker_lease_heartbeat_refreshes(tmp_path: Path) -> None:
                 ).fetchone()[0]
         assert heartbeat_b != heartbeat_a, "lease heartbeat did not refresh"
     finally:
-        first.terminate()
-        try:
-            first.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            first.kill()
+        _stop_process(first, timeout=15)
 
 
 def test_worker_lease_heartbeat_survives_slow_business_tick(tmp_path: Path) -> None:
@@ -191,11 +195,7 @@ def test_worker_lease_heartbeat_survives_slow_business_tick(tmp_path: Path) -> N
         assert heartbeat_b != heartbeat_a, "slow tick blocked the lease heartbeat"
         assert process.poll() is None, "worker exited during a slow business tick"
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        _stop_process(process, timeout=20)
 
 
 def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
@@ -233,11 +233,7 @@ def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
         assert heartbeat_b != heartbeat_a, "runtime heartbeat blocked lease renewal"
         assert process.poll() is None, "worker exited during a slow runtime heartbeat"
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        _stop_process(process, timeout=20)
 
 
 def test_runtime_heartbeat_stops_worker_after_lease_loss(monkeypatch: Any) -> None:
