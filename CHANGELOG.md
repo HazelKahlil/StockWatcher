@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0-alpha.4] - 2026-08-12
+
+### Fixed
+
+- 交易日历只接受受控 `tushare_15000 + /trade_cal + 四字段 + DEGRADED/MISSING`，并严格
+  拒绝 HEALTHY、STALE、字段漂移、空响应、日期越界、矛盾状态和字符串开市标记。
+- 收盘后网络、限流和服务器异常保持 pending 并从 SQLite 有界恢复；实时与 30 天历史回补
+  都不得突破每笔五次尝试上限。
+
+### Evidence boundary
+
+- 本版本的离线门和安装包不替代真实交易日 09:45/14:45 同点结算验收。
+
 本项目采用 [Semantic Versioning](https://semver.org/)；所有值得用户或维护者关注的变化记录在这里。
 
 ## [Unreleased]

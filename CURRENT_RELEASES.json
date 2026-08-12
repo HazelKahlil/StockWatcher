@@ -11,19 +11,19 @@
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
   "candidate_outcomes": {
-    "python_version": "0.6.0a3",
-    "package_version": "0.6.0-alpha.3",
+    "python_version": "0.6.0a4",
+    "package_version": "0.6.0-alpha.4",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
-    "source_branch": "fix/candidate-outcomes-trade-cal-wire-endpoint",
-    "implementation_commit": "e85faf2d83b2a8877a6320dfd4b60ae9e780486d",
-    "status": "local_code_complete_offline_verified_after_wire_endpoint_fix",
+    "source_branch": "fix/candidate-outcomes-p1-reliability",
+    "implementation_commit": "ed63106c467637c3518df7821b2c32ae3c683ab7",
+    "status": "local_code_complete_offline_verified_after_alpha4_reliability_fix",
     "schema_version": 8,
-    "validation": "409 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation and diff check passed on macOS",
+    "validation": "417 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation, secret scan and diff check passed on macOS",
     "real_trading_time_validation": false,
     "installed_app_rebuilt": false,
     "local_main_integrated": true,
     "github_synced": false,
-    "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED Pro calendar, and bounded persisted minute retry; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
+    "note": "The real offline Provider-to-SDK-Pro-to-HTTP provenance chain is verified with exact /trade_cal wire endpoint, controlled DEGRADED/MISSING Pro calendar, strict numeric-or-boolean open flags, and at most five persisted minute attempts; formal scheduled Top3 theoretical review only, with no trading account, order execution, or claim of live 09:45/14:45 acceptance."
   },
   "shared_core": {
     "commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",

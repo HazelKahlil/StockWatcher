@@ -355,20 +355,12 @@ class CandidateOutcomeTracker:
         due = [
             row
             for row in pending_rows
-            if _historical_settlement_is_due(
-                row,
-                current,
-                ignore_attempt_limit=True,
-            )
+            if _historical_settlement_is_due(row, current)
         ][:settlement_limit]
         settled = 0
         unavailable = 0
         for row in due:
-            if not _historical_settlement_is_due(
-                row,
-                current,
-                ignore_attempt_limit=True,
-            ):
+            if not _historical_settlement_is_due(row, current):
                 continue
             result = self._settle_historical(
                 row,
@@ -613,14 +605,22 @@ class CandidateOutcomeTracker:
             return self._defer_historical(
                 row,
                 reason=_safe_failure("historical_minute", error),
-                next_retry=next_retry,
+                next_retry=(
+                    _next_transient_retry_at(now, attempt_number)
+                    if final
+                    else next_retry
+                ),
                 now=now,
             )
         except Exception as error:  # noqa: BLE001 - leave pending for retry
             return self._defer_historical(
                 row,
                 reason=_safe_failure("historical_minute", error),
-                next_retry=next_retry,
+                next_retry=(
+                    _next_transient_retry_at(now, attempt_number)
+                    if final
+                    else next_retry
+                ),
                 now=now,
             )
         point, point_reason = _point_from_historical_result(
@@ -648,7 +648,11 @@ class CandidateOutcomeTracker:
             return self._defer_historical(
                 row,
                 reason=safe_reason,
-                next_retry=next_retry,
+                next_retry=(
+                    _next_transient_retry_at(now, attempt_number)
+                    if final
+                    else next_retry
+                ),
                 now=now,
             )
         changed = self._settle(
@@ -863,8 +867,6 @@ def _historical_timestamp(record: Mapping[str, object]) -> datetime | None:
 def _historical_settlement_is_due(
     row: dict[str, Any],
     now: datetime,
-    *,
-    ignore_attempt_limit: bool = False,
 ) -> bool:
     target_date = _parse_date(row.get("target_trade_date"))
     slot = _parse_slot(row.get("target_slot"))
@@ -878,14 +880,13 @@ def _historical_settlement_is_due(
     if now < target_ts + timedelta(minutes=1):
         return False
     if (
-        not ignore_attempt_limit
-        and int(row.get("settlement_attempts") or 0)
+        int(row.get("settlement_attempts") or 0)
         >= CandidateOutcomeTracker.max_historical_attempts
     ):
         return False
     next_retry = _parse_datetime(row.get("next_retry_at"))
     if next_retry is None:
-        return ignore_attempt_limit or int(row.get("settlement_attempts") or 0) == 0
+        return int(row.get("settlement_attempts") or 0) == 0
     return now >= next_retry
 
 
@@ -920,6 +921,18 @@ def _next_historical_retry_at(
         }
     )
     return next((candidate for candidate in schedule if candidate > now), None)
+
+
+def _next_transient_retry_at(now: datetime, attempt_number: int) -> datetime | None:
+    """Keep post-close transport failures recoverable without creating an infinite loop."""
+    retry_delays = {
+        1: timedelta(minutes=3),
+        2: timedelta(minutes=8),
+        3: timedelta(minutes=20),
+        4: timedelta(minutes=30),
+    }
+    delay = retry_delays.get(attempt_number)
+    return now + delay if delay is not None else None
 
 
 def _historical_final_confirmation(row: Mapping[str, object], now: datetime) -> bool:
@@ -959,22 +972,18 @@ def _validated_trade_calendar_open_dates(
         raise ValueError("trade calendar route contract changed")
     if not _valid_received_timestamp(provenance.received_ts):
         raise ValueError("trade calendar received timestamp is invalid")
-    if provenance.quality is TransportQuality.DEGRADED:
-        kind = getattr(
-            provenance.source_timestamp_kind,
-            "value",
-            str(provenance.source_timestamp_kind),
-        )
-        if provenance.source_ts is not None or kind not in {
-            TransportTimestampKind.MISSING.value,
-            "received_fallback",
-        }:
-            raise ValueError("trade calendar degraded provenance is not expected")
-    elif provenance.quality is TransportQuality.HEALTHY:
-        if not _valid_received_timestamp(provenance.source_ts):
-            raise ValueError("healthy trade calendar source timestamp is invalid")
-    else:
+    if provenance.quality is not TransportQuality.DEGRADED:
         raise ValueError("trade calendar quality is not accepted")
+    kind = getattr(
+        provenance.source_timestamp_kind,
+        "value",
+        str(provenance.source_timestamp_kind),
+    )
+    if provenance.source_ts is not None or kind not in {
+        TransportTimestampKind.MISSING.value,
+        "received_fallback",
+    }:
+        raise ValueError("trade calendar degraded provenance is not expected")
     if not result.records:
         raise ValueError("trade calendar response is empty")
 
@@ -1031,8 +1040,6 @@ def _parse_open_flag(value: object) -> bool | None:
         return value
     if isinstance(value, int) and value in {0, 1}:
         return bool(value)
-    if isinstance(value, str) and value.strip() in {"0", "1"}:
-        return value.strip() == "1"
     return None
 
 
