@@ -1,6 +1,6 @@
 # v0.6：次日同点复盘
 
-> 状态：`local_code_complete_offline_verified_after_wire_endpoint_fix`；真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
+> 状态：`local_code_complete_offline_verified_after_alpha4_reliability_fix`；真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
 > 基线：`v0.4.0-alpha.2` / `main@e8df598c920a15dfb565bfc75e45a93d1eb48a07`
 > 范围：Shared Core 与 Mac/Windows 共用桌面端；不修改 Web 独立测试线。
 
@@ -41,7 +41,8 @@ Top3、提醒或弹窗。
 - 允许该路线因供应商不提供生成时间而产生的
   `DEGRADED + source_ts missing/received-fallback`；`received_ts` 必须为合法的
   aware datetime。
-- 每条 `cal_date`、`is_open`、请求区间、重复日期状态和 exchange 均严格校验；空响应、
+- 每条 `cal_date`、`is_open`、请求区间、重复日期状态和 exchange 均严格校验；`is_open`
+  只接受数字 0/1 或明确布尔值，不接受字符串；空响应、
   越界、矛盾、schema 变化、STALE/STOPPED、网络、限流或鉴权失败继续 fail closed。
 - 下一交易日只来自真实开市记录，绝不按星期一到星期五猜测节假日。
 
@@ -100,7 +101,7 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 | --- | --- |
 | `uv sync --all-groups --frozen` | exit 0；56 packages audited |
 | `uv lock --check` | exit 0；67 packages resolved |
-| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；409 passed，20 skipped，2 deselected |
+| `uv run pytest -m 'not live_tushare' -ra -o addopts=''` | exit 0；417 passed，20 skipped，2 deselected |
 | `uv run ruff check .` | exit 0 |
 | `uv run mypy src tests` | exit 0；113 source files |
 | `python3 scripts/validate_workspace.py` | exit 0；29 required files |
@@ -116,7 +117,9 @@ settled 三张实拍截图。未构建或覆盖现有 Mac/Windows App。
 - 原功能提交：`c7b4f9989a298954f3127934b7570afb3f5aaf2b`。
 - 交易日历质量与重试返修提交：`d85f378`。
 - wire endpoint 返修分支：`fix/candidate-outcomes-trade-cal-wire-endpoint`；实现提交：
-  `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。验证完成后按 local-first 规则合入本地 `main`。
+  `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
+- alpha.4 P1 可靠性返修分支：`fix/candidate-outcomes-p1-reliability`；实现提交：
+  `ed63106c467637c3518df7821b2c32ae3c683ab7`。验证完成后按 local-first 规则合入本地 `main`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界
