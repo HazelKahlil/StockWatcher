@@ -9,11 +9,14 @@ main:
           by:
             - pyproject.toml
             - uv.lock
-            - src/**
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
           versionBy:
             - pyproject.toml
             - uv.lock
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
       services:
         - name: vscode
@@ -42,11 +45,14 @@ $:
           by:
             - pyproject.toml
             - uv.lock
-            - src/**
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
           versionBy:
             - pyproject.toml
             - uv.lock
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
       services:
         - name: vscode
@@ -73,11 +79,14 @@ $:
           by:
             - pyproject.toml
             - uv.lock
-            - src/**
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
           versionBy:
             - pyproject.toml
             - uv.lock
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
       services:
         - name: vscode
@@ -98,11 +107,14 @@ $:
           by:
             - pyproject.toml
             - uv.lock
-            - src/**
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
           versionBy:
             - pyproject.toml
             - uv.lock
+            - README.md
+            - src
             - deploy/cnb/Dockerfile
       services:
         - name: vscode
