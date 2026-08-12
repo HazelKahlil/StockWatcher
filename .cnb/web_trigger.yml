@@ -1,0 +1,14 @@
+branch:
+  - reg: ^main$
+    buttons:
+      - name: 首次设置 Web
+        description: 打开私有运维空间，创建管理员；Token 仍只在 Web 管理页录入。
+        event: web_trigger_cnb_setup
+        openWorkspace: true
+        groupName: StockWatcher Web
+      - name: 立即启动 Web
+        description: 手动启动两小时预览，用于非交易时段检查或次日验收前预热。
+        event: web_trigger_cnb_preview
+        isDefault: true
+        openWorkspace: true
+        groupName: StockWatcher Web

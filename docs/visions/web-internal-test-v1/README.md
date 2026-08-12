@@ -169,3 +169,22 @@
   Web/Worker/Tunnel 健康与公网 `app.css?v=13` 均已校验。
 - 当前结构化 Review 为 `P0=0 / P1=0 / P2=0`；本轮 Web 仅剩真实交易日固定提醒、
   同点结算/重试与全日运行现场验收，在此之前继续 `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-13 CNB Web 时间窗试运行
+
+- Human Owner 授权只迁移独立 Web 运行线到 CNB；不迁移 macOS/Windows 桌面端，不改现有
+  Mac Docker、域名或 Cloudflare Tunnel，也不把 Tushare SDK/API 扩展成任意网页抓取。
+- CNB 私有目标仓库为 `kahlils-stockwatcher/stockwatcher-web`。CNB `main` 仅作为本地独立
+  `feat/web-cnb-devspace` 配置线的运行镜像，不等同于 StockWatcher 本地日常开发 `main`。
+- `.cnb.yml` 在工作日上海时间 `08:25` 启动 2 核 only-preview 工作空间，运行 Web 与唯一
+  Worker 到 `16:15`；8 小时离线保活低于 CNB 18 小时上限，没有伪造心跳或绕过回收。
+- `.cnb-runtime/` 被 Git 忽略并由工作空间 `backup: true` 恢复；主密钥只存在于该私有运行
+  目录。SQLite、报告和校验和通过私有 Docker 制品标签 `cnb-results-latest` 与当日标签归档，
+  不把主密钥与结果快照放在同一制品中。
+- 结果快照使用项目已有 SQLite Online Backup API，并在恢复前校验外层 SHA-256 与备份内
+  `SHA256SUMS.txt`；Token 仍由 Owner 在 HTTPS 管理页录入，管理员密码只在私有终端交互输入。
+- CNB 官方 `cnb-pipeline` Skill 校验 `.cnb.yml` 和 `.cnb/web_trigger.yml` 的 YAML、语义、
+  目录与 Schema 均通过；CNB 专用镜像本地构建通过，镜像内 Web 导入、Docker CLI、非 root
+  UID/GID 及无全局 pip 检查通过；临时 Schema v9 下 Web、Worker、live/ready 健康通过。
+- `09:00–16:00` 是配置目标，不宣称平台 SLA。CNB 故障、额度耗尽、供应商异常或 Token 未
+  完成录入时继续 fail-closed；次日完整交易日现场验收前保持 `BLOCKED / NOT_ACCEPTED`。

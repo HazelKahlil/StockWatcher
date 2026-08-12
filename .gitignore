@@ -24,6 +24,7 @@ deploy/secrets/
 deploy/state/
 deploy/reports/
 deploy/backups/
+.cnb-runtime/
 *.db
 *.db-*
 *.sqlite
