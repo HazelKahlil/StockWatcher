@@ -9,9 +9,15 @@ source "$script_dir/runtime-lib.sh"
 stockwatcher_cnb_prepare_runtime
 stockwatcher_cnb_export_app_env
 
+if ! "$script_dir/registry-snapshot.sh" restore-key; then
+  echo "CNB private key escrow is unavailable; run the private setup workspace first" >&2
+  exit 1
+fi
+
 if [[ ! -s "$SW_CNB_DB" ]]; then
   if ! "$script_dir/registry-snapshot.sh" restore; then
-    echo "No restorable CNB result snapshot; starting with a new private database"
+    echo "CNB result snapshot is unavailable; run the private setup workspace first" >&2
+    exit 1
   fi
 fi
 
@@ -58,6 +64,7 @@ create_snapshot() {
 }
 
 shutdown() {
+  local exit_status=$?
   trap - EXIT INT TERM
   if [[ -n "$worker_pid" ]]; then
     kill -TERM "$worker_pid" 2>/dev/null || true
@@ -67,6 +74,12 @@ shutdown() {
   fi
   wait "$worker_pid" 2>/dev/null || true
   wait "$web_pid" 2>/dev/null || true
+  if [[ -s "$SW_CNB_DB" ]]; then
+    if ! create_snapshot "$(date +%Y%m%d)-shutdown"; then
+      echo "CNB final result snapshot failed during shutdown" >&2
+    fi
+  fi
+  exit "$exit_status"
 }
 trap shutdown EXIT INT TERM
 
