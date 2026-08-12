@@ -44,10 +44,10 @@
     "signature": "ad-hoc"
   },
   "web": {
-    "branch": "feat/web-outcomes-morandi-alerts",
-    "commit": "8722814096d2a76aa6064232d2798a0866effd51",
-    "deployed_source_commit": "d2dfc90cd773643e6f23cb98606b7da0c606e90b",
-    "deployed_image": "stockwatcher-web:web-alpha4-d2dfc90",
+    "branch": "fix/web-top3-gain-emphasis",
+    "commit": "9411cd8c65b6e99dddb58b07e5406514c5f0799b",
+    "deployed_source_commit": "cfc6cd66be3edcf5468840c29b509eae643896b5",
+    "deployed_image": "stockwatcher-web:web-alpha4-cfc6cd6",
     "schema_version": 9,
     "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
     "status": "blocked",
@@ -60,14 +60,17 @@
       "status": "pass_on_current_macos_worktree",
       "passed": 499,
       "skipped": 25,
-      "deselected": 2
+      "deselected": 2,
+      "warnings": 0,
+      "warning_policy": "error"
     },
     "ruff": "pass",
     "mypy": "pass; 141 source files",
     "workspace_validator": "pass; 29 required files",
     "javascript_syntax": "pass",
+    "dependency_audit": "production and all locked groups: no known vulnerabilities found",
     "can_merge_main": false,
-    "reason": "Independent deployed Web line remains BLOCKED / NOT_ACCEPTED pending real 09:45/14:45 settlement, authenticated manual-fetch owner smoke and full trading-day acceptance; it is not folded into main."
+    "reason": "Independent deployed Web line has P0=0, P1=0 and P2=0 in the current offline review, but remains BLOCKED / NOT_ACCEPTED pending real trading-day 09:45/14:45 alerts, outcome settlement/retry and full-day operational acceptance; it is not folded into main."
   },
   "windows": {
     "pr": 4,

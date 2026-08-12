@@ -2,7 +2,7 @@
 
 > 状态：`local_code_complete_offline_verified_after_alpha4_reliability_fix`；真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
 > 基线：`v0.4.0-alpha.2` / `main@e8df598c920a15dfb565bfc75e45a93d1eb48a07`
-> 范围：Shared Core 与 Mac/Windows 共用桌面端；不修改 Web 独立测试线。
+> 范围：Shared Core 与 Mac/Windows 共用桌面端；Web 实现继续留在独立测试线，main 仅同步其状态索引。
 
 ## 目标
 
@@ -122,6 +122,8 @@ Replay 验证，未覆盖现有 App；Windows 只形成同提交 fresh-build 源
   `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
 - alpha.4 P1 可靠性返修分支：`fix/candidate-outcomes-p1-reliability`；实现提交：
   `ed63106c467637c3518df7821b2c32ae3c683ab7`；已合入本地 `main@b00221f`。
+- Web 独立线最终交接提交为 `fix/web-top3-gain-emphasis@9411cd8`，部署代码与镜像为
+  `cfc6cd6` / `stockwatcher-web:web-alpha4-cfc6cd6`；离线 Review 为 `P0=0 / P1=0 / P2=0`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

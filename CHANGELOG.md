@@ -24,7 +24,9 @@
 
 - 独立 Web 线加入 Schema v9 次日复盘只读 API、近一月摘要与完整复盘页，并以单独执行链
   隔离回补任务；Morandi 低饱和配色、蓝色通知按钮和支持 Esc/焦点恢复的中央提醒弹窗已部署。
-- `d2dfc90` 镜像在 Mac Docker 完成 v8→v9 单次迁移、前后备份校验和公网 live/ready 检查；
+- Top3 上涨百分比单独恢复旧版鲜明红并放大为 `1.85rem–2rem`；下跌与其他页面仍
+  保持 Morandi 低饱和色系。完整回归在 `-W error` 下零告警，生产与全锁定依赖审计无已知漏洞。
+- `cfc6cd6` 镜像在 Mac Docker 完成部署前后备份校验、Schema v9 完整性和公网 live/ready/CSS 检查；
   Web 仍为 `BLOCKED / NOT_ACCEPTED`，不得把离线与公网健康结果写成真实交易日验收。
 
 本项目采用 [Semantic Versioning](https://semver.org/)；所有值得用户或维护者关注的变化记录在这里。
