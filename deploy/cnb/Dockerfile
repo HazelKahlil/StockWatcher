@@ -1,4 +1,6 @@
 # CNB only-preview runtime for the isolated StockWatcher Web line.
+FROM docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c AS docker_cli
+
 FROM python:3.12-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS builder
 
 ARG UV_VERSION=0.9.26
@@ -20,13 +22,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/app/.venv/bin:$PATH \
     TZ=Asia/Shanghai
 
-RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
-        /etc/apt/sources.list.d/debian.sources \
-    && python -m pip uninstall --yes pip \
-    && apt-get -o Acquire::Retries=5 update \
-    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-        ca-certificates docker.io fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/* \
+COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker
+
+RUN python -m pip uninstall --yes pip \
     && groupadd --gid 10001 stockwatcher \
     && useradd --uid 10001 --gid stockwatcher --create-home \
         --home-dir /home/stockwatcher stockwatcher \
