@@ -52,6 +52,16 @@ class PasswordPolicy:
     maximum_username_length: int = 64
 
 
+@dataclass(frozen=True, slots=True)
+class SecurityUpdateResult:
+    user: dict[str, Any]
+    security_changed: bool
+    role_changed: bool
+    active_changed: bool
+    password_changed: bool
+    revoked_sessions: int
+
+
 @dataclass(slots=True)
 class RateLimiter:
     """Thread-safe, memory-bounded sliding-window limiter per key."""
@@ -171,7 +181,9 @@ class AuthService:
         login_ip_limiter: RateLimiter | None = None,
         login_global_limiter: RateLimiter | None = None,
         command_limiter: RateLimiter | None = None,
-        websocket_limiter: RateLimiter | None = None,
+        websocket_user_limiter: RateLimiter | None = None,
+        websocket_ip_limiter: RateLimiter | None = None,
+        websocket_global_limiter: RateLimiter | None = None,
         audit_ip_key: bytes | None = None,
         password_policy: PasswordPolicy = PasswordPolicy(),
     ) -> None:
@@ -199,9 +211,16 @@ class AuthService:
         # Compatibility alias for existing operational tests and diagnostics.
         self.login_limiter = self.login_account_limiter
         self.command_limiter = command_limiter or RateLimiter(max_attempts=20, window_seconds=60)
-        self.websocket_limiter = websocket_limiter or RateLimiter(
+        self.websocket_user_limiter = websocket_user_limiter or RateLimiter(
             max_attempts=10, window_seconds=60
         )
+        self.websocket_ip_limiter = websocket_ip_limiter or RateLimiter(
+            max_attempts=30, window_seconds=60
+        )
+        self.websocket_global_limiter = websocket_global_limiter or RateLimiter(
+            max_attempts=200, window_seconds=60, max_keys=1
+        )
+        self._websocket_limit_lock = threading.RLock()
         self.audit_ip_key = audit_ip_key or secrets.token_bytes(32)
         self.policy = password_policy
         self._dummy_password_hash = self.hasher.hash(secrets.token_urlsafe(32))
@@ -270,6 +289,67 @@ class AuthService:
             detail={"username": normalized, "role": role},
         )
         return user
+
+    def update_user_security(
+        self,
+        *,
+        actor_user_id: int | None,
+        user_id: int,
+        role: str | None = None,
+        active: bool | None = None,
+        password_hash: str | None = None,
+        audit_action: str = "user.update",
+        audit_detail: dict[str, Any] | None = None,
+    ) -> SecurityUpdateResult | None:
+        """Atomically update security attributes, revoke sessions, and audit."""
+        with self.store.transaction(immediate=True) as connection:
+            current = self.users.get_by_id(user_id, connection=connection)
+            if current is None:
+                return None
+            role_changed = role is not None and role != str(current["role"])
+            active_changed = active is not None and bool(active) != bool(current["active"])
+            password_changed = password_hash is not None
+            security_changed = role_changed or active_changed or password_changed
+            updated = self.users.update(
+                user_id,
+                role=role,
+                active=active,
+                password_hash=password_hash,
+                protect_last_admin=True,
+                connection=connection,
+            )
+            if updated is None:
+                return None
+            revoked_sessions = (
+                self.sessions.revoke_all_for_user(user_id, connection=connection)
+                if security_changed
+                else 0
+            )
+            detail = dict(audit_detail or {})
+            if role is not None:
+                detail["role"] = role
+            if active is not None:
+                detail["active"] = bool(active)
+            if password_changed:
+                detail["password_changed"] = True
+            detail["revoked_sessions"] = revoked_sessions
+            self.audit.record(
+                actor_user_id=actor_user_id,
+                action=audit_action,
+                object_type="user",
+                object_id=str(user_id),
+                outcome="succeeded",
+                detail=detail,
+                connection=connection,
+            )
+            return SecurityUpdateResult(
+                user=updated,
+                security_changed=security_changed,
+                role_changed=role_changed,
+                active_changed=active_changed,
+                password_changed=password_changed,
+                revoked_sessions=revoked_sessions,
+            )
 
     # -- login/logout ----------------------------------------------------
 
@@ -371,7 +451,7 @@ class AuthService:
             outcome="succeeded",
         )
 
-    def authenticate(self, token: str | None) -> dict[str, Any] | None:
+    def authenticate(self, token: str | None, *, touch: bool = True) -> dict[str, Any] | None:
         """Validate a session token; returns the joined session+user row."""
         if not token:
             return None
@@ -381,10 +461,7 @@ class AuthService:
         import datetime as _dt
 
         now = _dt.datetime.now(_dt.UTC)
-        for key, attr in (
-            ("idle_expires_at", "idle"),
-            ("absolute_expires_at", "absolute"),
-        ):
+        for key in ("idle_expires_at", "absolute_expires_at"):
             value = session.get(key)
             if not isinstance(value, str):
                 return None
@@ -400,11 +477,23 @@ class AuthService:
         if not session["active"] or session.get("revoked_at") is not None:
             self.sessions.revoke(token)
             return None
-        self.sessions.touch_if_due(
-            token,
-            idle_minutes=self.idle_minutes,
-            minimum_interval_seconds=self.session_touch_interval_seconds,
-        )
+        if touch:
+            last_seen_value = session.get("last_seen_at")
+            if not isinstance(last_seen_value, str):
+                return None
+            try:
+                last_seen = _dt.datetime.fromisoformat(last_seen_value)
+            except ValueError:
+                return None
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=_dt.UTC)
+            elapsed = (now - last_seen.astimezone(_dt.UTC)).total_seconds()
+            if elapsed >= self.session_touch_interval_seconds:
+                self.sessions.touch_if_due(
+                    token,
+                    idle_minutes=self.idle_minutes,
+                    minimum_interval_seconds=self.session_touch_interval_seconds,
+                )
         return session
 
     def require_csrf(self, token: str, csrf_value: str) -> bool:
@@ -415,6 +504,19 @@ class AuthService:
 
     def revoke_user_sessions(self, user_id: int) -> int:
         return self.sessions.revoke_all_for_user(user_id)
+
+    def consume_websocket_connection(self, *, user_id: int, client_ip: str) -> None:
+        """Atomically check and consume isolated WebSocket connection budgets."""
+        limits = (
+            (self.websocket_user_limiter, f"user:{user_id}"),
+            (self.websocket_ip_limiter, f"ip:{client_ip}"),
+            (self.websocket_global_limiter, "global"),
+        )
+        with self._websocket_limit_lock:
+            for limiter, key in limits:
+                limiter.check(key)
+            for limiter, key in limits:
+                limiter.consume(key)
 
     def rotate_session(self, token: str) -> str | None:
         """Session fixation protection on privilege change (not used for login)."""

@@ -8,8 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import sqlite3
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from stock_watcher.domain import SHANGHAI
 from stock_watcher.storage import SQLiteStore
@@ -90,14 +91,28 @@ class UserRepository:
             ).fetchone()
         return None if row is None else self._row(row)
 
-    def get_by_id(self, user_id: int) -> dict[str, Any] | None:
-        with self.store.connect() as connection:
-            row = connection.execute(
-                "SELECT user_id, username, password_hash, role, active, created_at, "
-                "updated_at, last_login_at, password_changed_at, created_by "
-                "FROM web_users WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
+    def get_by_id(
+        self,
+        user_id: int,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        def _select(conn: sqlite3.Connection) -> tuple[Any, ...] | None:
+            return cast(
+                tuple[Any, ...] | None,
+                conn.execute(
+                    "SELECT user_id, username, password_hash, role, active, created_at, "
+                    "updated_at, last_login_at, password_changed_at, created_by "
+                    "FROM web_users WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone(),
+            )
+
+        if connection is not None:
+            row = _select(connection)
+        else:
+            with self.store.connect() as local_connection:
+                row = _select(local_connection)
         return None if row is None else self._row(row)
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -118,6 +133,7 @@ class UserRepository:
         password_hash: str | None = None,
         last_login_at: str | None = None,
         protect_last_admin: bool = False,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any] | None:
         updates: list[str] = []
         values: list[Any] = []
@@ -138,13 +154,14 @@ class UserRepository:
             updates.append("last_login_at = ?")
             values.append(last_login_at)
         if not updates:
-            return self.get_by_id(user_id)
+            return self.get_by_id(user_id, connection=connection)
         updates.append("updated_at = ?")
         values.append(_now().isoformat())
         values.append(user_id)
-        with self.store.transaction(immediate=protect_last_admin) as connection:
+
+        def _apply(conn: sqlite3.Connection) -> dict[str, Any] | None:
             if protect_last_admin:
-                current = connection.execute(
+                current = conn.execute(
                     "SELECT role, active FROM web_users WHERE user_id = ?",
                     (user_id,),
                 ).fetchone()
@@ -158,19 +175,24 @@ class UserRepository:
                     and (proposed_role != "admin" or not proposed_active)
                 )
                 if removes_active_admin:
-                    count = connection.execute(
+                    count = conn.execute(
                         "SELECT COUNT(*) FROM web_users "
                         "WHERE role = 'admin' AND active = 1"
                     ).fetchone()
                     if count is None or int(count[0]) <= 1:
                         raise LastActiveAdminError("last active admin is protected")
-            cursor = connection.execute(
+            cursor = conn.execute(
                 f"UPDATE web_users SET {', '.join(updates)} WHERE user_id = ?",
                 values,
             )
             if cursor.rowcount != 1:
                 return None
-        return self.get_by_id(user_id)
+            return self.get_by_id(user_id, connection=conn)
+
+        if connection is not None:
+            return _apply(connection)
+        with self.store.transaction(immediate=protect_last_admin) as local_connection:
+            return _apply(local_connection)
 
     def count_active_admins(self) -> int:
         with self.store.connect() as connection:
@@ -301,15 +323,26 @@ class SessionRepository:
             )
             return cursor.rowcount == 1
 
-    def revoke_all_for_user(self, user_id: int) -> int:
+    def revoke_all_for_user(
+        self,
+        user_id: int,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> int:
         now = _now().isoformat()
-        with self.store.transaction() as connection:
-            cursor = connection.execute(
+
+        def _revoke(conn: sqlite3.Connection) -> int:
+            cursor = conn.execute(
                 "UPDATE web_sessions SET revoked_at = ? "
                 "WHERE user_id = ? AND revoked_at IS NULL",
                 (now, user_id),
             )
             return max(cursor.rowcount, 0)
+
+        if connection is not None:
+            return _revoke(connection)
+        with self.store.transaction() as local_connection:
+            return _revoke(local_connection)
 
     def cleanup_expired(
         self,

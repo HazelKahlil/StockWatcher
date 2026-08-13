@@ -127,19 +127,17 @@ def cmd_reset_password(settings: ServerSettings, args: argparse.Namespace) -> in
         return 1
 
     user_id = int(user["user_id"])
-    updated = auth.users.update(user_id, password_hash=password_hash)
-    if updated is None:
+    result = auth.update_user_security(
+        actor_user_id=None,
+        user_id=user_id,
+        password_hash=password_hash,
+        audit_action="user.password_reset_cli",
+        audit_detail={"username": username},
+    )
+    if result is None:
         print("reset-password failed: username does not exist", file=sys.stderr)
         return 1
-    revoked_sessions = auth.revoke_user_sessions(user_id)
-    auth.audit.record(
-        actor_user_id=None,
-        action="user.password_reset_cli",
-        object_type="user",
-        object_id=str(user_id),
-        outcome="succeeded",
-        detail={"username": username, "revoked_sessions": revoked_sessions},
-    )
+    updated = result.user
     print(
         json.dumps(
             {

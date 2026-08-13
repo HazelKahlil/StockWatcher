@@ -156,3 +156,13 @@ GitHub 审核分支已按 Human Owner 授权同步；未建 PR、未发布 Relea
 - 安全返修没有 push 或部署，也不替代下一真实交易日同点结算验收；仓库保护、共享/边缘限流、
   CVE/镜像扫描、SBOM/provenance 和首次保留清理仍需 Owner/外部环境完成，状态保持
   `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-14 Web 安全独立复审返修边界
+
+- 独立复审确认的管理员安全更新原子性、WebSocket 速率预算隔离和 Session touch 空写三项问题
+  已在 Web 独立本地分支返修；完整离线测试为 `547 passed, 25 skipped, 2 deselected`。
+- 本轮没有改变候选样本或胜负公式：09:45/14:45 每档三只仍持久化为 pending，历史与新记录均按
+  入选价到目标时点价的真实 `return_pct > 0` 判赢；从当日涨幅 +10% 回落到 +8% 只要相对入选价
+  仍为正收益，结果仍是赢。
+- 安全代码返修尚未 push、合并或部署；独立二次复审、远端 CI、外部安全门和下一真实交易日
+  同点结算仍未完成，状态保持 `BLOCKED / NOT_ACCEPTED`。

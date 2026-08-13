@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -388,6 +389,252 @@ def test_role_change_revokes_existing_sessions(
     assert changed.status_code == 200
     assert changed.json()["role"] == "admin"
     assert tester_client.get("/api/v1/me").status_code == 401
+
+
+def test_user_role_and_session_revocation_are_atomic(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    _, store, auth, admin, tester = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    traces: list[str] = []
+    connection = store.connect()
+    connection.set_trace_callback(traces.append)
+    try:
+        result = auth.update_user_security(
+            actor_user_id=int(admin["user_id"]),
+            user_id=int(tester["user_id"]),
+            role="admin",
+        )
+    finally:
+        connection.set_trace_callback(None)
+    assert result is not None
+    assert result.role_changed
+    assert result.revoked_sessions == 1
+    relevant = [
+        statement
+        for statement in traces
+        if statement.startswith(("BEGIN", "UPDATE", "INSERT", "COMMIT"))
+    ]
+    begin = next(index for index, value in enumerate(relevant) if value == "BEGIN IMMEDIATE")
+    user_update = next(
+        index for index, value in enumerate(relevant) if value.startswith("UPDATE web_users SET")
+    )
+    session_update = next(
+        index for index, value in enumerate(relevant) if value.startswith("UPDATE web_sessions SET")
+    )
+    audit_insert = next(
+        index
+        for index, value in enumerate(relevant)
+        if value.startswith("INSERT INTO web_audit_log")
+    )
+    commit = next(index for index, value in enumerate(relevant) if value == "COMMIT")
+    assert begin < user_update < session_update < audit_insert < commit
+    session = auth.sessions.get(str(logged_in["token"]))
+    assert session is not None and session["revoked_at"] is not None
+
+
+def test_password_change_rolls_back_when_session_revoke_fails(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, auth, admin, tester = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    before = auth.users.get_by_id(int(tester["user_id"]))
+    assert before is not None
+
+    def fail_revoke(_user_id: int, *, connection: Any = None) -> int:
+        assert connection is not None
+        raise sqlite3.OperationalError("injected session revoke failure")
+
+    monkeypatch.setattr(auth.sessions, "revoke_all_for_user", fail_revoke)
+    replacement = auth.hash_password("replacement-password-123")
+    with pytest.raises(sqlite3.OperationalError, match="injected session revoke failure"):
+        auth.update_user_security(
+            actor_user_id=int(admin["user_id"]),
+            user_id=int(tester["user_id"]),
+            password_hash=replacement,
+        )
+    after = auth.users.get_by_id(int(tester["user_id"]))
+    assert after is not None
+    assert after["password_hash"] == before["password_hash"]
+    assert after["password_changed_at"] == before["password_changed_at"]
+    session = auth.sessions.get(str(logged_in["token"]))
+    assert session is not None and session["revoked_at"] is None
+
+
+def test_security_audit_failure_rolls_back_user_mutation(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, auth, admin, tester = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+
+    def fail_audit(**kwargs: Any) -> None:
+        assert kwargs["connection"] is not None
+        raise sqlite3.OperationalError("injected audit failure")
+
+    monkeypatch.setattr(auth.audit, "record", fail_audit)
+    with pytest.raises(sqlite3.OperationalError, match="injected audit failure"):
+        auth.update_user_security(
+            actor_user_id=int(admin["user_id"]),
+            user_id=int(tester["user_id"]),
+            active=False,
+        )
+    after = auth.users.get_by_id(int(tester["user_id"]))
+    assert after is not None and bool(after["active"])
+    session = auth.sessions.get(str(logged_in["token"]))
+    assert session is not None and session["revoked_at"] is None
+
+
+def test_concurrent_user_role_changes_cannot_skip_revocation(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    _, _, auth, admin, tester = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    barrier = threading.Barrier(3)
+    errors: list[BaseException] = []
+
+    def update(role: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            auth.update_user_security(
+                actor_user_id=int(admin["user_id"]),
+                user_id=int(tester["user_id"]),
+                role=role,
+            )
+        except BaseException as error:  # pragma: no cover - surfaced below
+            errors.append(error)
+
+    threads = [
+        threading.Thread(target=update, args=(role,), daemon=True)
+        for role in ("admin", "tester")
+    ]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    assert not errors
+    session = auth.sessions.get(str(logged_in["token"]))
+    assert session is not None and session["revoked_at"] is not None
+
+
+def test_old_session_never_observes_promoted_admin_role(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, auth, admin, tester = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    update_visible = threading.Event()
+    allow_revoke = threading.Event()
+    original_revoke = auth.sessions.revoke_all_for_user
+    errors: list[BaseException] = []
+
+    def paused_revoke(user_id: int, *, connection: Any = None) -> int:
+        update_visible.set()
+        if not allow_revoke.wait(timeout=5):
+            raise TimeoutError("test did not release session revocation")
+        return int(original_revoke(user_id, connection=connection))
+
+    monkeypatch.setattr(auth.sessions, "revoke_all_for_user", paused_revoke)
+
+    def promote() -> None:
+        try:
+            auth.update_user_security(
+                actor_user_id=int(admin["user_id"]),
+                user_id=int(tester["user_id"]),
+                role="admin",
+            )
+        except BaseException as error:  # pragma: no cover - surfaced below
+            errors.append(error)
+
+    thread = threading.Thread(target=promote, daemon=True)
+    thread.start()
+    assert update_visible.wait(timeout=5)
+    try:
+        during = auth.sessions.get(str(logged_in["token"]))
+        assert during is not None
+        assert during["role"] == "tester"
+        assert during["revoked_at"] is None
+    finally:
+        allow_revoke.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not errors
+    after = auth.sessions.get(str(logged_in["token"]))
+    assert after is not None
+    assert after["role"] == "admin"
+    assert after["revoked_at"] is not None
+
+
+def test_authenticate_skips_write_transaction_when_touch_not_due(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    _, store, auth, _, _ = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    traces: list[str] = []
+    connection = store.connect()
+    connection.set_trace_callback(traces.append)
+    try:
+        assert auth.authenticate(str(logged_in["token"])) is not None
+    finally:
+        connection.set_trace_callback(None)
+    assert not any(statement.startswith("BEGIN") for statement in traces)
+    assert not any("UPDATE web_sessions SET last_seen_at" in statement for statement in traces)
+
+
+def test_authenticate_touch_false_is_read_only_even_when_due(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    _, store, auth, _, _ = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    token = str(logged_in["token"])
+    session = auth.sessions.get(token)
+    assert session is not None
+    before = datetime.now(SHANGHAI) - timedelta(minutes=10)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE web_sessions SET last_seen_at = ? WHERE session_token_hash = ?",
+            (before.isoformat(), session["session_token_hash"]),
+        )
+    traces: list[str] = []
+    connection = store.connect()
+    connection.set_trace_callback(traces.append)
+    try:
+        assert auth.authenticate(token, touch=False) is not None
+    finally:
+        connection.set_trace_callback(None)
+    assert not any(statement.startswith("BEGIN") for statement in traces)
+    assert not any("UPDATE web_sessions SET last_seen_at" in statement for statement in traces)
+
+
+def test_authenticate_updates_session_only_when_touch_is_due(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    _, store, auth, _, _ = app_env
+    logged_in = auth.login(username="tester1", password="tester-pass-123")
+    token = str(logged_in["token"])
+    session = auth.sessions.get(token)
+    assert session is not None
+    before = datetime.now(SHANGHAI) - timedelta(minutes=10)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE web_sessions SET last_seen_at = ? WHERE session_token_hash = ?",
+            (before.isoformat(), session["session_token_hash"]),
+        )
+    traces: list[str] = []
+    connection = store.connect()
+    connection.set_trace_callback(traces.append)
+    try:
+        assert auth.authenticate(token) is not None
+    finally:
+        connection.set_trace_callback(None)
+    assert any(statement.startswith("BEGIN") for statement in traces)
+    assert any("UPDATE web_sessions SET last_seen_at" in statement for statement in traces)
+    after = auth.sessions.get(token)
+    assert after is not None
+    assert datetime.fromisoformat(str(after["last_seen_at"])) > before
 
 
 def test_login_input_limits_apply_before_argon2(

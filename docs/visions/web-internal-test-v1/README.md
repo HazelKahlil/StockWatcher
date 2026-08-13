@@ -307,3 +307,22 @@
   checks、签名提交、禁止 force push/delete 和部署审批必须由 Human Owner 启用；依赖/镜像 CVE、
   SBOM/provenance、代理链动态压测和渗透测试仍是外部门。未 push、未部署、未启用删除型维护，
   项目继续 `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-14 Web 安全独立复审返修
+
+- 独立复审在 `21608635b6673a2a992fdc87e0b8cf82bc0ab3df` 上确认 `P1=1 / P2=2`：管理员安全属性
+  更新与 Session 撤销不是原子操作、WebSocket 每用户/IP 拒绝会消耗共享全局速率预算、Session
+  touch 节流仍会在每次认证时开启写事务。
+- 用户角色、启停状态或密码更新、全部 Session 撤销及安全审计现统一在同一个
+  `BEGIN IMMEDIATE` 事务中完成；API 与管理 CLI 复用该服务。事务提交后才尽力断开现有
+  WebSocket，撤销或审计失败都会回滚用户修改。
+- WebSocket 建连改为相互隔离的每用户、每 IP、全局速率预算，默认每分钟 `10/30/200`；活跃
+  连接上限在速率扣减前判断，局部拒绝不再消耗全局预算。Session 认证会先在内存判断 touch
+  是否到期，WebSocket 周期重验默认只读，仅每五分钟写入一次 touch。
+- 新增事务失败回滚、并发角色修改、旧 Session 不观察新管理员权限、touch 读写边界以及
+  WebSocket 预算隔离/正常重连容量回归。完整离线测试为
+  `547 passed, 25 skipped, 2 deselected`，`-W error` 零告警。
+- 本轮仅完成独立本地分支代码返修与验证，未 push、未建 PR、未合并、未部署，线上仍为
+  `34ce825014692aef01ae397499dd7604c67273ef`。独立二次复审、远端 CI、仓库保护、共享/边缘限流、
+  CVE/镜像扫描、SBOM/provenance、动态压测、渗透测试和下一真实交易日验收仍是阻断项，状态保持
+  `BLOCKED / NOT_ACCEPTED`。

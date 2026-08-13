@@ -26,12 +26,19 @@
   `1.85rem–2rem`；下跌仍用莫兰迪绿，其他页面和状态仍保持低饱和色系。
 - 消除 Starlette 已弃用 HTTP 测试客户端及测试资源未关闭告警，完整回归在
   `-W error` 下零告警通过；同时升级安全依赖并对生产与全锁定依赖执行漏洞审计。
+- 管理员修改用户角色、启停状态或密码时，用户更新、全部 Session 撤销和安全审计现统一在
+  单个 `BEGIN IMMEDIATE` 事务中提交；API 与管理 CLI 共用同一原子服务，提交后再尽力断开
+  已建立的 WebSocket，避免新权限与旧 Session 短暂并存。
+- WebSocket 建连速率改为相互隔离的每用户、每 IP、全局预算（默认每分钟 `10/30/200`）；
+  活跃连接数上限会在扣减速率预算前判断，单一用户或 IP 的拒绝不会耗尽全局额度。
+- Session 认证先在内存判断 touch 是否到期，未到期和 WebSocket 周期重验走只读路径；仅每五分钟
+  触发一次持久化 touch，减少高并发空写事务。
 
 ### Evidence boundary
 
-- 离线代码门、Mac Web 部署和安装包不能替代真实交易日 09:45/14:45 验收；Web 当前
-  Murphy Review 返修后为 `P0=0 / P1=0 / P2=0`，但在现场验收前继续
-  `BLOCKED / NOT_ACCEPTED`。
+- 离线代码门、Mac Web 部署和安装包不能替代真实交易日 09:45/14:45 验收；外部安全审计的
+  `P1=1 / P2=2` 已在独立本地分支完成代码返修并通过 `547 passed / 25 skipped / 2 deselected`，
+  但仍待独立复审、远端 CI 和外部发布门，现场验收前继续 `BLOCKED / NOT_ACCEPTED`。
 
 ## [web-internal-test-v1-favicon] - 2026-08-09
 

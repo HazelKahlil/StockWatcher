@@ -356,10 +356,10 @@ def test_ws_enforces_per_user_connection_cap(app_env: tuple[Any, SQLiteStore]) -
 
 def test_ws_enforces_global_connection_rate(app_env: tuple[Any, SQLiteStore]) -> None:
     app, _ = app_env
-    app.state.auth.websocket_limiter = RateLimiter(
+    app.state.auth.websocket_global_limiter = RateLimiter(
         max_attempts=1,
         window_seconds=60,
-        max_keys=10,
+        max_keys=1,
     )
     client = login(app)
     with client.websocket_connect("/ws/v1/events") as first:
@@ -369,6 +369,78 @@ def test_ws_enforces_global_connection_rate(app_env: tuple[Any, SQLiteStore]) ->
         with pytest.raises(WebSocketDisconnect) as closed:
             second.receive_text()
         assert closed.value.code == 4429
+
+
+def test_ws_user_rate_limit_does_not_block_other_users(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, _ = app_env
+    app.state.auth.create_user(
+        username="tester2",
+        password="tester-two-pass-123",
+        role="tester",
+    )
+    app.state.auth.websocket_user_limiter = RateLimiter(
+        max_attempts=1,
+        window_seconds=60,
+        max_keys=10,
+    )
+    app.state.auth.websocket_ip_limiter = RateLimiter(
+        max_attempts=10,
+        window_seconds=60,
+        max_keys=10,
+    )
+    app.state.auth.websocket_global_limiter = RateLimiter(
+        max_attempts=10,
+        window_seconds=60,
+        max_keys=1,
+    )
+    first_user = login(app)
+    second_user = login(app, "tester2", "tester-two-pass-123")
+    with first_user.websocket_connect("/ws/v1/events") as first:
+        first.receive_text()
+        first.receive_text()
+    with first_user.websocket_connect("/ws/v1/events") as blocked:
+        with pytest.raises(WebSocketDisconnect) as closed:
+            blocked.receive_text()
+        assert closed.value.code == 4429
+    with second_user.websocket_connect("/ws/v1/events") as allowed:
+        assert json.loads(allowed.receive_text())["event_type"] == "server.hello"
+        assert json.loads(allowed.receive_text())["event_type"] == "state.snapshot"
+
+
+def test_ws_rejected_active_cap_does_not_consume_global_budget(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, _ = app_env
+    app.state.ws_manager.max_per_user = 1
+    app.state.auth.websocket_global_limiter = RateLimiter(
+        max_attempts=2,
+        window_seconds=60,
+        max_keys=1,
+    )
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events") as first:
+        first.receive_text()
+        first.receive_text()
+        with client.websocket_connect("/ws/v1/events") as rejected:
+            with pytest.raises(WebSocketDisconnect) as closed:
+                rejected.receive_text()
+            assert closed.value.code == 4429
+    with client.websocket_connect("/ws/v1/events") as second_valid:
+        assert json.loads(second_valid.receive_text())["event_type"] == "server.hello"
+        assert json.loads(second_valid.receive_text())["event_type"] == "state.snapshot"
+
+
+def test_ws_global_rate_is_above_normal_reconnect_burst() -> None:
+    settings = ServerSettings(environment="test", public_origin="http://testserver")
+    settings.validate_for_web()
+    assert settings.rate_limits.websocket_global_connect_max >= settings.websocket_max_global
+    assert (
+        settings.rate_limits.websocket_global_connect_max
+        > settings.rate_limits.websocket_ip_connect_max
+        > settings.rate_limits.websocket_user_connect_max
+    )
 
 
 def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally() -> None:

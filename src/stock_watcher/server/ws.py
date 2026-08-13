@@ -20,7 +20,7 @@ from stock_watcher.services import EventOutbox
 from stock_watcher.services.public_state import PublicStateBuilder
 from stock_watcher.storage import SQLiteStore
 
-from .auth import AuthService
+from .auth import AuthError, AuthService
 
 HEARTBEAT_SECONDS = 20
 SEND_TIMEOUT_SECONDS = 5.0
@@ -104,6 +104,14 @@ class WebSocketManager:
             await websocket.close(code=4429, reason="connection limit exceeded")
             return
         try:
+            try:
+                auth.consume_websocket_connection(
+                    user_id=context.user_id,
+                    client_ip=context.client_ip,
+                )
+            except AuthError:
+                await websocket.close(code=4429, reason="connection rate limited")
+                return
             await self._serve(
                 websocket,
                 session,
@@ -271,11 +279,18 @@ class WebSocketManager:
         pending: list[dict[str, Any]] = []
         last_send = time.monotonic()
         next_auth_check = last_send + self.auth_check_seconds
+        touch_interval = max(0.0, auth.session_touch_interval_seconds)
+        next_session_touch = last_send + touch_interval
         while True:
             try:
                 now = time.monotonic()
                 if now >= next_auth_check:
-                    current = await asyncio.to_thread(auth.authenticate, session_token)
+                    should_touch = touch_interval == 0.0 or now >= next_session_touch
+                    current = await asyncio.to_thread(
+                        auth.authenticate,
+                        session_token,
+                        touch=should_touch,
+                    )
                     if current is None:
                         await websocket.close(code=4401, reason="session revoked")
                         return
@@ -286,6 +301,8 @@ class WebSocketManager:
                         await websocket.close(code=4403, reason="authorization changed")
                         return
                     session = current
+                    if should_touch:
+                        next_session_touch = now + touch_interval
                     next_auth_check = now + self.auth_check_seconds
                 if now - last_send >= self.heartbeat_seconds:
                     await _send(

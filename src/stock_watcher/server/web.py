@@ -40,7 +40,6 @@ from .api import (
 )
 from .auth import (
     SESSION_COOKIE_NAME,
-    AuthError,
     AuthService,
     RateLimiter,
     csrf_value_for_session,
@@ -111,10 +110,20 @@ def _build_services(settings: ServerSettings) -> dict[str, Any]:
             window_seconds=limits.command_window_seconds,
             max_keys=limits.max_keys,
         ),
-        websocket_limiter=RateLimiter(
-            max_attempts=limits.websocket_connect_max,
+        websocket_user_limiter=RateLimiter(
+            max_attempts=limits.websocket_user_connect_max,
             window_seconds=limits.websocket_connect_window_seconds,
             max_keys=limits.max_keys,
+        ),
+        websocket_ip_limiter=RateLimiter(
+            max_attempts=limits.websocket_ip_connect_max,
+            window_seconds=limits.websocket_connect_window_seconds,
+            max_keys=limits.max_keys,
+        ),
+        websocket_global_limiter=RateLimiter(
+            max_attempts=limits.websocket_global_connect_max,
+            window_seconds=limits.websocket_connect_window_seconds,
+            max_keys=1,
         ),
         audit_ip_key=master_key,
     )
@@ -351,17 +360,6 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             peer_host,
             app_settings.trusted_proxy_cidrs,
         ) or "unknown"
-        try:
-            for limit_key in (
-                "ws:global",
-                f"ws:ip:{client_address}",
-                f"ws:user:{session['user_id']}",
-            ):
-                auth.websocket_limiter.consume(limit_key)
-        except AuthError:
-            await websocket.accept()
-            await websocket.close(code=4429, reason="connection rate limited")
-            return
         await ws_manager.handle(
             websocket,
             session,

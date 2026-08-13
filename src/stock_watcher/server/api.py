@@ -992,32 +992,14 @@ def admin_router() -> APIRouter:
         payload: UserUpdatePayload,
         session: dict[str, Any] = Depends(require_admin_csrf),
         auth: AuthService = Depends(get_auth),
-        users: UserRepository = Depends(get_users),
     ) -> Response:
-        target = await asyncio.to_thread(users.get_by_id, user_id)
-        if target is None:
-            return error_response(request, "用户不存在", 404, "not_found")
         role = payload.role
         active = payload.active
         password = payload.password
-        removes_active_admin = bool(target["active"]) and target["role"] == "admin" and (
-            role == "tester" or active is False
-        )
-        if removes_active_admin and await asyncio.to_thread(users.count_active_admins) <= 1:
-            return error_response(
-                request,
-                "必须至少保留一个启用的管理员",
-                409,
-                "last_admin_required",
-            )
-        updates: dict[str, Any] = {}
-        if role is not None:
-            updates["role"] = role
-        if active is not None:
-            updates["active"] = active
+        password_hash: str | None = None
         if password is not None:
             try:
-                updates["password_hash"] = await asyncio.to_thread(
+                password_hash = await asyncio.to_thread(
                     auth.hash_password,
                     str(password),
                 )
@@ -1026,11 +1008,13 @@ def admin_router() -> APIRouter:
                     request, str(error), error.status_code, "invalid_password"
                 )
         try:
-            updated = await asyncio.to_thread(
-                users.update,
-                user_id,
-                protect_last_admin=True,
-                **updates,
+            result = await asyncio.to_thread(
+                auth.update_user_security,
+                actor_user_id=int(cast(int, session["user_id"])),
+                user_id=user_id,
+                role=role,
+                active=active,
+                password_hash=password_hash,
             )
         except LastActiveAdminError:
             return error_response(
@@ -1039,25 +1023,15 @@ def admin_router() -> APIRouter:
                 409,
                 "last_admin_required",
             )
-        if updated is None:
+        if result is None:
             return error_response(request, "用户不存在", 404, "not_found")
-        role_changed = role is not None and role != target["role"]
-        if active is False or password is not None or role_changed:
-            await asyncio.to_thread(auth.revoke_user_sessions, user_id)
+        if result.security_changed:
             await request.app.state.ws_manager.disconnect_user(
                 user_id,
-                code=4403 if role_changed else 4401,
-                reason="authorization changed" if role_changed else "session revoked",
+                code=4403 if result.role_changed else 4401,
+                reason="authorization changed" if result.role_changed else "session revoked",
             )
-        await asyncio.to_thread(
-            auth.audit.record,
-            actor_user_id=session["user_id"],
-            action="user.update",
-            object_type="user",
-            object_id=str(user_id),
-            outcome="succeeded",
-            detail={key: str(value) for key, value in updates.items() if key != "password_hash"},
-        )
+        updated = result.user
         return JSONResponse(
             status_code=200,
             content={

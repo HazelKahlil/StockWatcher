@@ -47,7 +47,9 @@ class RateLimitConfig:
     login_window_seconds: float = 300.0
     command_max: int = 20
     command_window_seconds: float = 60.0
-    websocket_connect_max: int = 10
+    websocket_user_connect_max: int = 10
+    websocket_ip_connect_max: int = 30
+    websocket_global_connect_max: int = 200
     websocket_connect_window_seconds: float = 60.0
     max_keys: int = 4096
 
@@ -215,6 +217,25 @@ class ServerSettings:
             raise RuntimeError("per-user WebSocket limit cannot exceed global limit")
         if self.websocket_max_per_ip > self.websocket_max_global:
             raise RuntimeError("per-IP WebSocket limit cannot exceed global limit")
+        websocket_rate_limits = (
+            self.rate_limits.websocket_user_connect_max,
+            self.rate_limits.websocket_ip_connect_max,
+            self.rate_limits.websocket_global_connect_max,
+        )
+        if any(value < 1 for value in websocket_rate_limits):
+            raise RuntimeError("WebSocket connection rate limits must be positive")
+        if (
+            self.rate_limits.websocket_user_connect_max
+            > self.rate_limits.websocket_global_connect_max
+        ):
+            raise RuntimeError("per-user WebSocket rate cannot exceed global rate")
+        if (
+            self.rate_limits.websocket_ip_connect_max
+            > self.rate_limits.websocket_global_connect_max
+        ):
+            raise RuntimeError("per-IP WebSocket rate cannot exceed global rate")
+        if self.rate_limits.websocket_global_connect_max < self.websocket_max_global:
+            raise RuntimeError("global WebSocket rate must cover the active connection capacity")
         if any(
             value < 1
             for value in (
