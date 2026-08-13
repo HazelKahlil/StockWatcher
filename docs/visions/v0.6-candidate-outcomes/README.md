@@ -146,3 +146,13 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 本轮未读取或回显 Token、Keychain、Credential Manager 或交易账户，不覆盖已安装 App，
 GitHub 审核分支已按 Human Owner 授权同步；未建 PR、未发布 Release，且未修改 GitHub `main`。非交易时段的代码、回放、迁移和 UI
 通过不能冒充真实次日同点行情验收；该现场项在完成后继续明确列给 Human Owner。
+
+## 2026-08-13 Web 安全审计补充边界
+
+- Web 独立线已在本地 `fix/web-security-audit-remediation` 返修 Session/WebSocket 生命周期、
+  登录资源门、代理/Origin/Host、请求体、SQLite 保留、公开 readiness、前端重连和发布分支 CI。
+- 本轮没有改变候选胜负合同：仍按入选价到目标时点价的 `return_pct > 0` 判赢，且 09:45/14:45
+  每档三只的 pending 样本继续持久化。
+- 安全返修没有 push 或部署，也不替代下一真实交易日同点结算验收；仓库保护、共享/边缘限流、
+  CVE/镜像扫描、SBOM/provenance 和首次保留清理仍需 Owner/外部环境完成，状态保持
+  `BLOCKED / NOT_ACCEPTED`。

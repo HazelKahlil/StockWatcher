@@ -179,6 +179,15 @@ class UserRepository:
             ).fetchone()
         return 0 if row is None else int(row[0])
 
+    def rehash_password(self, user_id: int, password_hash: str) -> bool:
+        """Upgrade Argon2 parameters without marking a user-initiated password change."""
+        with self.store.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE web_users SET password_hash = ?, updated_at = ? WHERE user_id = ?",
+                (password_hash, _now().isoformat(), user_id),
+            )
+            return cursor.rowcount == 1
+
 
 class SessionRepository:
     """Opaque server-side sessions; only hashes are persisted."""
@@ -253,15 +262,31 @@ class SessionRepository:
         return None if session is None else str(session["csrf_token_hash"])
 
     def touch(self, token: str, *, idle_minutes: float = 120.0) -> bool:
+        return self.touch_if_due(
+            token,
+            idle_minutes=idle_minutes,
+            minimum_interval_seconds=0,
+        )
+
+    def touch_if_due(
+        self,
+        token: str,
+        *,
+        idle_minutes: float = 120.0,
+        minimum_interval_seconds: float = 300.0,
+    ) -> bool:
         now = _now()
+        cutoff = now - timedelta(seconds=max(0.0, minimum_interval_seconds))
         with self.store.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE web_sessions SET last_seen_at = ?, idle_expires_at = ? "
-                "WHERE session_token_hash = ? AND revoked_at IS NULL",
+                "WHERE session_token_hash = ? AND revoked_at IS NULL "
+                "AND last_seen_at <= ?",
                 (
                     now.isoformat(),
                     (now + timedelta(minutes=idle_minutes)).isoformat(),
                     _sha256(token),
+                    cutoff.isoformat(),
                 ),
             )
             return cursor.rowcount == 1
@@ -286,15 +311,21 @@ class SessionRepository:
             )
             return max(cursor.rowcount, 0)
 
-    def cleanup_expired(self, *, now: datetime | None = None) -> int:
-        """Delete revoked sessions older than the retention window."""
+    def cleanup_expired(
+        self,
+        *,
+        now: datetime | None = None,
+        retention_days: int = SESSION_RETENTION_DAYS,
+    ) -> int:
+        """Delete revoked or naturally expired sessions after the retention window."""
         current = now or _now()
-        cutoff = (current - timedelta(days=SESSION_RETENTION_DAYS)).isoformat()
+        cutoff = (current - timedelta(days=retention_days)).isoformat()
         with self.store.transaction() as connection:
             cursor = connection.execute(
-                "DELETE FROM web_sessions WHERE revoked_at IS NOT NULL "
-                "AND revoked_at < ?",
-                (cutoff,),
+                "DELETE FROM web_sessions WHERE "
+                "(revoked_at IS NOT NULL AND revoked_at < ?) OR "
+                "(absolute_expires_at < ?) OR (idle_expires_at < ?)",
+                (cutoff, cutoff, cutoff),
             )
             return max(cursor.rowcount, 0)
 
@@ -448,3 +479,31 @@ class AuditLogRepository:
             }
             for row in rows
         ]
+
+    def prune(
+        self,
+        *,
+        now: datetime | None = None,
+        ordinary_retention_days: int = 180,
+        security_retention_days: int = 365,
+    ) -> int:
+        """Apply separate ordinary and security-sensitive audit retention."""
+        current = now or _now()
+        ordinary_cutoff = (current - timedelta(days=ordinary_retention_days)).isoformat()
+        security_cutoff = (current - timedelta(days=security_retention_days)).isoformat()
+        security_actions = (
+            "token.test",
+            "token.update",
+            "user.create",
+            "user.update",
+            "user.password_reset_cli",
+        )
+        placeholders = ", ".join("?" for _ in security_actions)
+        with self.store.transaction() as connection:
+            cursor = connection.execute(
+                "DELETE FROM web_audit_log WHERE "
+                f"(action NOT IN ({placeholders}) AND occurred_at < ?) OR "
+                f"(action IN ({placeholders}) AND occurred_at < ?)",
+                (*security_actions, ordinary_cutoff, *security_actions, security_cutoff),
+            )
+            return max(cursor.rowcount, 0)

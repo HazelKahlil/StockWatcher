@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
+import sqlite3
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -28,59 +31,114 @@ AUTH_SCHEME = "argon2id"
 
 
 class AuthError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int = 401) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 401,
+        code: str = "authentication_failed",
+        retry_after: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True, slots=True)
 class PasswordPolicy:
     minimum_length: int = 12
+    maximum_length: int = 256
+    maximum_username_length: int = 64
 
 
 @dataclass(slots=True)
 class RateLimiter:
-    """Sliding-window limiter with exponential backoff per key."""
+    """Thread-safe, memory-bounded sliding-window limiter per key."""
 
     max_attempts: int = 5
     window_seconds: float = 300.0
+    max_keys: int = 4096
     _events: dict[str, deque[float]] = field(default_factory=dict)
     _blocked_until: dict[str, float] = field(default_factory=dict)
+    _last_seen: dict[str, float] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def _prune(self, now: float) -> None:
+        expired: list[str] = []
+        for key, events in self._events.items():
+            while events and now - events[0] > self.window_seconds:
+                events.popleft()
+            if not events and now >= self._blocked_until.get(key, 0.0):
+                expired.append(key)
+        for key in expired:
+            self._events.pop(key, None)
+            self._blocked_until.pop(key, None)
+            self._last_seen.pop(key, None)
+
+    def _state(self, key: str, now: float) -> deque[float]:
+        self._prune(now)
+        events = self._events.get(key)
+        if events is None:
+            if len(self._events) >= self.max_keys:
+                raise AuthError(
+                    "too many attempts; retry later",
+                    status_code=429,
+                    code="rate_limited",
+                    retry_after=max(1, int(self.window_seconds)),
+                )
+            events = deque()
+            self._events[key] = events
+        self._last_seen[key] = now
+        return events
 
     def check(self, key: str) -> None:
-        now = time.monotonic()
-        blocked_until = self._blocked_until.get(key, 0.0)
-        if now < blocked_until:
-            raise AuthError(
-                "too many attempts; retry later",
-                status_code=429,
-            )
-        events = self._events.setdefault(key, deque())
-        while events and now - events[0] > self.window_seconds:
-            events.popleft()
-        if len(events) >= self.max_attempts:
-            backoff = min(300.0, 5.0 * (2 ** (len(events) - self.max_attempts)))
-            self._blocked_until[key] = now + backoff
-            raise AuthError("too many attempts; retry later", status_code=429)
+        with self._lock:
+            now = time.monotonic()
+            events = self._state(key, now)
+            blocked_until = self._blocked_until.get(key, 0.0)
+            if now < blocked_until or len(events) >= self.max_attempts:
+                if now >= blocked_until:
+                    blocked_until = now + self.window_seconds
+                    self._blocked_until[key] = blocked_until
+                raise AuthError(
+                    "too many attempts; retry later",
+                    status_code=429,
+                    code="rate_limited",
+                    retry_after=max(1, int(blocked_until - now) + 1),
+                )
 
     def record_failure(self, key: str) -> None:
-        now = time.monotonic()
-        events = self._events.setdefault(key, deque())
-        while events and now - events[0] > self.window_seconds:
-            events.popleft()
-        events.append(now)
+        with self._lock:
+            now = time.monotonic()
+            events = self._state(key, now)
+            events.append(now)
+            if len(events) >= self.max_attempts:
+                self._blocked_until[key] = now + self.window_seconds
 
     def consume(self, key: str) -> None:
         """Check and consume one allowed request from the sliding window."""
-        self.check(key)
-        self.record_failure(key)
+        with self._lock:
+            self.check(key)
+            self.record_failure(key)
 
     def retry_after(self, key: str) -> int:
-        return max(0, int(self._blocked_until.get(key, 0.0) - time.monotonic()) + 1)
+        with self._lock:
+            return max(0, int(self._blocked_until.get(key, 0.0) - time.monotonic()) + 1)
+
+    def reset(self, key: str) -> None:
+        with self._lock:
+            self._events.pop(key, None)
+            self._blocked_until.pop(key, None)
+            self._last_seen.pop(key, None)
 
 
-def ip_hash(client_ip: str) -> str:
-    return hashlib.sha256(client_ip.encode("utf-8")).hexdigest()[:16]
+def ip_hash(client_ip: str, key: bytes) -> str:
+    return hmac.new(
+        key,
+        b"stockwatcher-audit-ip-v1\0" + client_ip.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:24]
 
 
 def csrf_value_matches(provided: str, stored_hash: str) -> bool:
@@ -108,8 +166,13 @@ class AuthService:
         password_hasher: PasswordHasher | None = None,
         absolute_hours: float = 12.0,
         idle_minutes: float = 120.0,
-        login_limiter: RateLimiter | None = None,
+        session_touch_interval_seconds: float = 300.0,
+        login_account_limiter: RateLimiter | None = None,
+        login_ip_limiter: RateLimiter | None = None,
+        login_global_limiter: RateLimiter | None = None,
         command_limiter: RateLimiter | None = None,
+        websocket_limiter: RateLimiter | None = None,
+        audit_ip_key: bytes | None = None,
         password_policy: PasswordPolicy = PasswordPolicy(),
     ) -> None:
         self.store = store
@@ -123,9 +186,25 @@ class AuthService:
         )
         self.absolute_hours = absolute_hours
         self.idle_minutes = idle_minutes
-        self.login_limiter = login_limiter or RateLimiter(max_attempts=5, window_seconds=300)
+        self.session_touch_interval_seconds = session_touch_interval_seconds
+        self.login_account_limiter = login_account_limiter or RateLimiter(
+            max_attempts=5, window_seconds=300
+        )
+        self.login_ip_limiter = login_ip_limiter or RateLimiter(
+            max_attempts=20, window_seconds=300
+        )
+        self.login_global_limiter = login_global_limiter or RateLimiter(
+            max_attempts=60, window_seconds=300, max_keys=1
+        )
+        # Compatibility alias for existing operational tests and diagnostics.
+        self.login_limiter = self.login_account_limiter
         self.command_limiter = command_limiter or RateLimiter(max_attempts=20, window_seconds=60)
+        self.websocket_limiter = websocket_limiter or RateLimiter(
+            max_attempts=10, window_seconds=60
+        )
+        self.audit_ip_key = audit_ip_key or secrets.token_bytes(32)
         self.policy = password_policy
+        self._dummy_password_hash = self.hasher.hash(secrets.token_urlsafe(32))
 
     # -- passwords -------------------------------------------------------
 
@@ -134,6 +213,12 @@ class AuthService:
             raise AuthError(
                 f"password must be at least {self.policy.minimum_length} characters",
                 status_code=400,
+            )
+        if len(password) > self.policy.maximum_length:
+            raise AuthError(
+                f"password must be at most {self.policy.maximum_length} characters",
+                status_code=400,
+                code="invalid_password",
             )
         return self.hasher.hash(password)
 
@@ -154,6 +239,12 @@ class AuthService:
         normalized = username.strip().casefold()
         if not normalized:
             raise AuthError("username must not be empty", status_code=400)
+        if len(normalized) > self.policy.maximum_username_length:
+            raise AuthError(
+                f"username must be at most {self.policy.maximum_username_length} characters",
+                status_code=400,
+                code="invalid_username",
+            )
         password_hash = self.hash_password(password)
         try:
             user = self.users.create(
@@ -162,8 +253,14 @@ class AuthService:
                 role=role,
                 created_by=created_by,
             )
-        except Exception as error:
-            raise AuthError("username already exists", status_code=409) from error
+        except sqlite3.IntegrityError as error:
+            if "web_users.username" not in str(error):
+                raise
+            raise AuthError(
+                "username already exists",
+                status_code=409,
+                code="username_exists",
+            ) from error
         self.audit.record(
             actor_user_id=created_by,
             action="user.create",
@@ -185,11 +282,23 @@ class AuthService:
         user_agent: str = "",
     ) -> dict[str, Any]:
         normalized = username.strip().casefold()
-        limit_key = f"login:{normalized}:{client_ip or 'unknown'}"
-        self.login_limiter.check(limit_key)
+        if len(normalized) > self.policy.maximum_username_length:
+            raise AuthError("用户名或密码错误", status_code=401, code="invalid_credentials")
+        if len(password) > self.policy.maximum_length:
+            raise AuthError("用户名或密码错误", status_code=401, code="invalid_credentials")
+        account_key = f"account:{normalized or 'empty'}"
+        ip_key = f"ip:{client_ip or 'unknown'}"
+        global_key = "global"
+        for limiter, key in (
+            (self.login_global_limiter, global_key),
+            (self.login_ip_limiter, ip_key),
+            (self.login_account_limiter, account_key),
+        ):
+            limiter.check(key)
         user = self.users.get_by_username(normalized)
         if user is None or not user["active"]:
-            self.login_limiter.record_failure(limit_key)
+            self.verify_password(self._dummy_password_hash, password)
+            self._record_login_failure(account_key, ip_key, global_key)
             self.audit.record(
                 action="auth.login",
                 object_type="user",
@@ -197,9 +306,9 @@ class AuthService:
                 outcome="denied",
                 detail={"reason": "invalid_credentials"},
             )
-            raise AuthError("用户名或密码错误", status_code=401)
+            raise AuthError("用户名或密码错误", status_code=401, code="invalid_credentials")
         if not self.verify_password(str(user["password_hash"]), password):
-            self.login_limiter.record_failure(limit_key)
+            self._record_login_failure(account_key, ip_key, global_key)
             self.audit.record(
                 actor_user_id=user["user_id"],
                 action="auth.login",
@@ -208,14 +317,18 @@ class AuthService:
                 outcome="denied",
                 detail={"reason": "invalid_credentials"},
             )
-            raise AuthError("用户名或密码错误", status_code=401)
+            raise AuthError("用户名或密码错误", status_code=401, code="invalid_credentials")
+        self.login_account_limiter.reset(account_key)
+        if self.hasher.check_needs_rehash(str(user["password_hash"])):
+            replacement = self.hasher.hash(password)
+            self.users.rehash_password(int(user["user_id"]), replacement)
         token = generate_opaque_token()
         csrf = csrf_value_for_session(token)
         self.sessions.create(
             user_id=int(user["user_id"]),
             token=token,
             csrf_value=csrf,
-            ip_hash=ip_hash(client_ip) if client_ip else None,
+            ip_hash=ip_hash(client_ip, self.audit_ip_key) if client_ip else None,
             user_agent=user_agent,
             absolute_hours=self.absolute_hours,
             idle_minutes=self.idle_minutes,
@@ -240,6 +353,11 @@ class AuthService:
             "csrf": csrf,
             "user": self.public_user(user),
         }
+
+    def _record_login_failure(self, account_key: str, ip_key: str, global_key: str) -> None:
+        self.login_account_limiter.record_failure(account_key)
+        self.login_ip_limiter.record_failure(ip_key)
+        self.login_global_limiter.record_failure(global_key)
 
     def logout(self, token: str) -> None:
         session = self.sessions.get(token)
@@ -282,7 +400,11 @@ class AuthService:
         if not session["active"] or session.get("revoked_at") is not None:
             self.sessions.revoke(token)
             return None
-        self.sessions.touch(token, idle_minutes=self.idle_minutes)
+        self.sessions.touch_if_due(
+            token,
+            idle_minutes=self.idle_minutes,
+            minimum_interval_seconds=self.session_touch_interval_seconds,
+        )
         return session
 
     def require_csrf(self, token: str, csrf_value: str) -> bool:

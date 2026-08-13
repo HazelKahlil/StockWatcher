@@ -19,14 +19,19 @@ export async function api(path, options = {}) {
     throw new Error('unauthorized');
   }
   if (!response.ok) {
-    let message = `请求失败 (${response.status})`;
+    const contentType = response.headers.get('content-type') || '';
+    let payload = null;
     try {
-      const payload = await response.json();
-      message = payload.error?.message || message;
-    } catch { /* keep default */ }
+      payload = contentType.includes('application/json')
+        ? await response.json()
+        : await response.text();
+    } catch { /* retain null payload */ }
+    const message = (payload && typeof payload === 'object' && payload.error?.message)
+      || `请求失败 (${response.status})`;
     const error = new Error(message);
     error.status = response.status;
-    error.payload = await response.json().catch(() => null);
+    error.code = payload && typeof payload === 'object' ? payload.error?.code : null;
+    error.payload = payload;
     throw error;
   }
   return response;
@@ -39,6 +44,9 @@ export async function apiJson(path, options = {}) {
 
 let ws = null;
 let lastEventId = null;
+let reconnectAttempt = 0;
+let reconnectTimer = null;
+let reconnectStopped = false;
 const listeners = new Set();
 
 export function onEvent(fn) {
@@ -62,6 +70,7 @@ function notifyListeners(event) {
 }
 
 export function connectEvents() {
+  if (reconnectStopped || !navigator.onLine) return null;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return ws;
   }
@@ -78,10 +87,20 @@ export function connectEvents() {
     if (labelEl) labelEl.textContent = label;
     else stateEl.textContent = label;
   };
-  ws.addEventListener('open', () => setState('实时连接在线', 'healthy'));
-  ws.addEventListener('close', () => {
+  ws.addEventListener('open', () => {
+    reconnectAttempt = 0;
+    setState('实时连接在线', 'healthy');
+  });
+  ws.addEventListener('close', (event) => {
+    ws = null;
+    if (event.code === 4401 || event.code === 4403) {
+      reconnectStopped = true;
+      setState('登录状态已变化，请重新登录', 'stale');
+      window.location.assign('/');
+      return;
+    }
     setState('实时连接断开，重连中…', 'stale');
-    setTimeout(connectEvents, 3000);
+    scheduleReconnect();
   });
   ws.addEventListener('message', (message) => {
     let event;
@@ -97,6 +116,39 @@ export function connectEvents() {
   });
   return ws;
 }
+
+function scheduleReconnect() {
+  if (reconnectStopped || reconnectTimer || !navigator.onLine) return;
+  const baseDelay = Math.min(30000, 1000 * (2 ** reconnectAttempt));
+  const hiddenPenalty = document.hidden ? 2 : 1;
+  const jitter = Math.floor(Math.random() * 500);
+  const delay = Math.min(30000, baseDelay * hiddenPenalty) + jitter;
+  reconnectAttempt += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectEvents();
+  }, delay);
+}
+
+window.addEventListener('online', () => {
+  if (!reconnectStopped) {
+    reconnectAttempt = 0;
+    connectEvents();
+  }
+});
+
+window.addEventListener('offline', () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !reconnectStopped && (!ws || ws.readyState === WebSocket.CLOSED)) {
+    connectEvents();
+  }
+});
 
 export function requestNotificationPermission() {
   if (!('Notification' in window)) return Promise.resolve('unsupported');

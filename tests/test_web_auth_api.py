@@ -1,19 +1,35 @@
 """Auth, RBAC, CSRF, rate limit, API contract and snapshot-race tests."""
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as FastAPITestClient
+from starlette.types import Message
 
 from stock_watcher.domain import SHANGHAI
+from stock_watcher.server.auth import AuthError, RateLimiter
 from stock_watcher.server.config import ServerSettings
+from stock_watcher.server.security import (
+    RequestBodyLimitMiddleware,
+    origin_matches,
+    trusted_client_ip,
+)
 from stock_watcher.server.web import create_app
 from stock_watcher.services import CommandType
 from stock_watcher.storage import SQLiteStore
+
+
+class TestClient(FastAPITestClient):
+    def __init__(self, app: Any, **kwargs: Any) -> None:
+        headers = dict(kwargs.pop("headers", {}))
+        headers.setdefault("Origin", str(app.state.settings.public_origin))
+        super().__init__(app, headers=headers, **kwargs)
 
 
 @pytest.fixture()
@@ -26,6 +42,7 @@ def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore, Any, Any, Any]:
         base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
     )
     settings = ServerSettings(
+        environment="test",
         db_path=tmp_path / "db" / "test.db",
         report_dir=tmp_path / "reports",
         master_key_file=master_key_file,
@@ -66,6 +83,67 @@ def test_login_bad_credentials_and_rate_limit(
         json={"username": "nobody", "password": "wrong-password"},
     )
     assert response.status_code == 429
+    assert response.headers["Retry-After"]
+    assert response.json()["error"]["code"] == "rate_limited"
+
+
+def test_proxy_origin_and_rate_limiter_boundaries() -> None:
+    assert origin_matches("https://stock.example.com", "https://stock.example.com")
+    assert not origin_matches("http://stock.example.com", "https://stock.example.com")
+    assert not origin_matches("https://stock.example.com:444", "https://stock.example.com")
+    assert not origin_matches("https://stock.example.com/path", "https://stock.example.com")
+
+    spoofed = {"x-forwarded-for": "203.0.113.7"}
+    assert trusted_client_ip(spoofed, "198.51.100.9", ()) == "198.51.100.9"
+    assert (
+        trusted_client_ip(spoofed, "172.20.0.5", ("172.16.0.0/12",))
+        == "203.0.113.7"
+    )
+    assert (
+        trusted_client_ip(
+            {"x-forwarded-for": "invalid"},
+            "172.20.0.5",
+            ("172.16.0.0/12",),
+        )
+        == "172.20.0.5"
+    )
+
+    limiter = RateLimiter(max_attempts=2, window_seconds=60, max_keys=2)
+    limiter.record_failure("first")
+    limiter.record_failure("second")
+    with pytest.raises(AuthError) as bounded:
+        limiter.record_failure("third")
+    assert bounded.value.code == "rate_limited"
+    assert len(limiter._events) <= 2
+
+
+def test_streamed_request_body_limit_cannot_be_bypassed() -> None:
+    sent: list[Message] = []
+    messages = iter(
+        (
+            {"type": "http.request", "body": b"1234", "more_body": True},
+            {"type": "http.request", "body": b"5678", "more_body": False},
+        )
+    )
+
+    async def receive() -> Message:
+        return next(messages)
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    async def consume_body(_scope: Any, receive_body: Any, send_body: Any) -> None:
+        while True:
+            message = await receive_body()
+            if not message.get("more_body"):
+                break
+        await send_body({"type": "http.response.start", "status": 200, "headers": []})
+        await send_body({"type": "http.response.body", "body": b""})
+
+    middleware = RequestBodyLimitMiddleware(consume_body, max_bytes=6)
+    asyncio.run(middleware({"type": "http", "headers": []}, receive, send))
+
+    assert sent[0]["status"] == 413
 
 
 def test_production_login_cookie_and_http_headers(tmp_path: Path) -> None:
@@ -93,8 +171,21 @@ def test_production_login_cookie_and_http_headers(tmp_path: Path) -> None:
     assert "SameSite=lax" in cookie
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Cross-Origin-Opener-Policy"] == "same-origin"
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+    assert response.headers["Strict-Transport-Security"].startswith("max-age=31536000")
     assert response.headers["Cache-Control"] == "private, no-store"
     assert client.get("/api/v1/openapi.json").status_code == 404
+
+
+def test_production_direct_http_startup_fails_closed(tmp_path: Path) -> None:
+    settings = ServerSettings(
+        environment="production",
+        db_path=tmp_path / "db" / "production.db",
+        report_dir=tmp_path / "reports",
+        public_origin="http://stock.example.com",
+    )
+    with pytest.raises(RuntimeError, match="HTTPS public origin"):
+        create_app(settings)
 
 
 def test_rbac_matrix(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
@@ -139,8 +230,16 @@ def test_csrf_protection(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> Non
         headers={"X-CSRF-Token": "wrong-value"},
     )
     assert response.status_code == 403
-    # Stable per-session CSRF from /me works.
+    # A valid CSRF token cannot bypass the exact Origin check.
     csrf = client.get("/api/v1/me").json()["csrf_token"]
+    response = client.post(
+        "/api/v1/commands/manual-refresh",
+        json={},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://evil.example"},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "origin_mismatch"
+    # Stable per-session CSRF from /me works.
     response = client.post(
         "/api/v1/commands/manual-refresh",
         json={},
@@ -163,6 +262,21 @@ def test_csrf_remains_valid_across_multiple_tabs(
         headers={"X-CSRF-Token": first, "Idempotency-Key": "multi-tab"},
     )
     assert response.status_code == 202
+
+
+def test_login_requires_exact_origin(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, _, _, _ = app_env
+    client = FastAPITestClient(app)
+    for headers in ({}, {"Origin": "https://evil.example"}):
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"username": "tester1", "password": "tester-pass-123"},
+            headers=headers,
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "origin_mismatch"
 
 
 def test_command_rate_limit_consumes_successful_requests(
@@ -223,6 +337,24 @@ def test_admin_user_management(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) 
     assert bad.status_code == 400
 
 
+def test_database_error_does_not_become_username_exists(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, auth, _, _ = app_env
+
+    def broken_create(**_kwargs: Any) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(auth.users, "create", broken_create)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        auth.create_user(
+            username="db-failure-user",
+            password="db-failure-password",
+            role="tester",
+        )
+
+
 def test_password_change_revokes_all_existing_user_sessions(
     app_env: tuple[Any, SQLiteStore, Any, Any, Any],
 ) -> None:
@@ -238,6 +370,93 @@ def test_password_change_revokes_all_existing_user_sessions(
     )
     assert changed.status_code == 200
     assert tester_client.get("/api/v1/me").status_code == 401
+
+
+def test_role_change_revokes_existing_sessions(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, _, _, tester = app_env
+    tester_client = TestClient(app)
+    login(tester_client, "tester1", "tester-pass-123")
+    admin_client = TestClient(app)
+    csrf = login(admin_client, "admin one", "admin-pass-12345")
+    changed = admin_client.patch(
+        f"/api/v1/admin/users/{tester['user_id']}",
+        json={"role": "admin"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["role"] == "admin"
+    assert tester_client.get("/api/v1/me").status_code == 401
+
+
+def test_login_input_limits_apply_before_argon2(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _, auth, _, _ = app_env
+
+    def unexpected_login(**_kwargs: Any) -> None:
+        raise AssertionError("oversized credentials reached AuthService.login")
+
+    monkeypatch.setattr(auth, "login", unexpected_login)
+    client = TestClient(app)
+    for payload in (
+        {"username": "u" * 65, "password": "valid-password"},
+        {"username": "tester1", "password": "p" * 257},
+        {"username": 123, "password": "valid-password"},
+    ):
+        response = client.post("/api/v1/auth/login", json=payload)
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_login_concurrency_saturation_fails_fast(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _, auth, _, _ = app_env
+
+    class SaturatedSemaphore:
+        async def acquire(self) -> None:
+            await asyncio.sleep(1)
+
+        def release(self) -> None:
+            raise AssertionError("an unacquired semaphore must not be released")
+
+    def unexpected_login(**_kwargs: Any) -> None:
+        raise AssertionError("saturated login reached Argon2")
+
+    monkeypatch.setattr(auth, "login", unexpected_login)
+    app.state.login_semaphore = SaturatedSemaphore()
+    response = TestClient(app).post(
+        "/api/v1/auth/login",
+        json={"username": "tester1", "password": "tester-pass-123"},
+    )
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "1"
+    assert response.json()["error"]["code"] == "login_busy"
+
+
+def test_invalid_host_and_oversized_request_are_rejected(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    app, _, _, _, _ = app_env
+    invalid_host = FastAPITestClient(
+        app,
+        base_url="http://evil.example",
+        headers={"Origin": app.state.settings.public_origin},
+    )
+    assert invalid_host.get("/").status_code == 400
+
+    too_large = TestClient(app).post(
+        "/api/v1/auth/login",
+        content=b"x" * (app.state.settings.request_body_limit_bytes + 1),
+        headers={"Content-Type": "application/json"},
+    )
+    assert too_large.status_code == 413
+    assert too_large.json()["error"]["code"] == "request_too_large"
+
 
 
 def test_command_status_is_limited_to_requester_or_admin(
@@ -324,6 +543,9 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
         in dashboard_script
     )
     assert "const state = await loadState();\n      showAutomaticAlert" not in dashboard_script
+    assert "if (stateRefreshPromise)" in dashboard_script
+    assert "stateRefreshQueued = true" in dashboard_script
+    assert "while (stateRefreshQueued)" in dashboard_script
     assert "handledAlertIds.clear()" in dashboard_script
     assert "event.event_type === 'server.resync_required'" in dashboard_script
     assert dashboard_script.index("onEvent((event)") < dashboard_script.index(

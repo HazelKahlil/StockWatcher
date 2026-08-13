@@ -7,7 +7,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$script_dir/runtime-lib.sh"
 
 stockwatcher_cnb_prepare_runtime
-stockwatcher_cnb_export_app_env
+stockwatcher_cnb_export_app_env 1
 
 if ! "$script_dir/registry-snapshot.sh" restore-key; then
   echo "CNB private key escrow is unavailable; run the private setup workspace first" >&2

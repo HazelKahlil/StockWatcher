@@ -126,9 +126,18 @@ class CommandService:
                         expires_at.isoformat(),
                     ),
                 )
-            except Exception:
+            except sqlite3.IntegrityError as error:
                 # The partial unique index fired: a manual_refresh (or the
                 # caller's idempotency key) is already queued/running.
+                message = str(error)
+                if not any(
+                    marker in message
+                    for marker in (
+                        "web_commands.command_type",
+                        "web_commands.idempotency_key",
+                    )
+                ):
+                    raise
                 existing = self._find_active_like(
                     connection,
                     command_type,
@@ -357,6 +366,24 @@ class CommandService:
                 ).fetchone()
                 transitions.append(self._row(updated))
         return transitions
+
+    def prune_completed(
+        self,
+        *,
+        now: datetime | None = None,
+        retention_days: int = 90,
+    ) -> int:
+        """Remove terminal command rows after their operational retention window."""
+        current = _shanghai(now or self._clock())
+        cutoff = (current - timedelta(days=retention_days)).isoformat()
+        with self.store.transaction() as connection:
+            cursor = connection.execute(
+                "DELETE FROM web_commands WHERE status IN "
+                "('succeeded', 'failed', 'cancelled', 'expired') "
+                "AND completed_at IS NOT NULL AND completed_at < ?",
+                (cutoff,),
+            )
+            return max(cursor.rowcount, 0)
 
     def _row(self, row: tuple[Any, ...]) -> dict[str, Any]:
         output = dict(zip(_COMMAND_COLUMNS, row))

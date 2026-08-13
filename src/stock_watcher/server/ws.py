@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -17,10 +20,20 @@ from stock_watcher.services import EventOutbox
 from stock_watcher.services.public_state import PublicStateBuilder
 from stock_watcher.storage import SQLiteStore
 
+from .auth import AuthService
+
 HEARTBEAT_SECONDS = 20
 SEND_TIMEOUT_SECONDS = 5.0
 QUEUE_HARD_LIMIT = 1000
 QUEUE_COALESCE_AFTER = 300
+AUTH_CHECK_SECONDS = 20.0
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionContext:
+    user_id: int
+    session_hash: str
+    client_ip: str
 
 
 def _envelope(
@@ -51,29 +64,131 @@ class WebSocketManager:
         *,
         source_commit: str,
         heartbeat_seconds: int = HEARTBEAT_SECONDS,
+        auth_check_seconds: float = AUTH_CHECK_SECONDS,
+        max_per_user: int = 5,
+        max_per_ip: int = 10,
+        max_global: int = 100,
     ) -> None:
         self.store = store
         self.outbox = outbox
         self.public_state = public_state
         self.source_commit = source_commit
         self.heartbeat_seconds = heartbeat_seconds
-        self._connections: set[WebSocket] = set()
+        self.auth_check_seconds = auth_check_seconds
+        self.max_per_user = max_per_user
+        self.max_per_ip = max_per_ip
+        self.max_global = max_global
+        self._connections: dict[WebSocket, ConnectionContext] = {}
+        self._connection_lock = asyncio.Lock()
 
     @property
     def connection_count(self) -> int:
         return len(self._connections)
 
-    async def handle(self, websocket: WebSocket, session: dict[str, Any]) -> None:
+    async def handle(
+        self,
+        websocket: WebSocket,
+        session: dict[str, Any],
+        *,
+        session_token: str,
+        auth: AuthService,
+        client_ip: str,
+    ) -> None:
+        context = ConnectionContext(
+            user_id=int(session["user_id"]),
+            session_hash=str(session["session_token_hash"]),
+            client_ip=client_ip,
+        )
         await websocket.accept()
-        self._connections.add(websocket)
+        if not await self._register(websocket, context):
+            await websocket.close(code=4429, reason="connection limit exceeded")
+            return
         try:
-            await self._serve(websocket, session)
+            await self._serve(
+                websocket,
+                session,
+                session_token=session_token,
+                auth=auth,
+            )
         finally:
-            self._connections.discard(websocket)
+            async with self._connection_lock:
+                self._connections.pop(websocket, None)
 
-    async def _serve(self, websocket: WebSocket, session: dict[str, Any]) -> None:
-        minimum = self.outbox.minimum_available_id()
-        latest = self.outbox.latest_id()
+    async def _register(self, websocket: WebSocket, context: ConnectionContext) -> bool:
+        async with self._connection_lock:
+            if len(self._connections) >= self.max_global:
+                return False
+            user_count = sum(
+                item.user_id == context.user_id for item in self._connections.values()
+            )
+            if user_count >= self.max_per_user:
+                return False
+            ip_count = sum(
+                item.client_ip == context.client_ip for item in self._connections.values()
+            )
+            if ip_count >= self.max_per_ip:
+                return False
+            self._connections[websocket] = context
+            return True
+
+    async def disconnect_user(
+        self,
+        user_id: int,
+        *,
+        code: int = 4403,
+        reason: str = "authorization changed",
+    ) -> int:
+        return await self._disconnect_matching(
+            lambda context: context.user_id == user_id,
+            code=code,
+            reason=reason,
+        )
+
+    async def disconnect_session(
+        self,
+        session_hash: str,
+        *,
+        code: int = 4401,
+        reason: str = "session revoked",
+    ) -> int:
+        return await self._disconnect_matching(
+            lambda context: context.session_hash == session_hash,
+            code=code,
+            reason=reason,
+        )
+
+    async def _disconnect_matching(
+        self,
+        predicate: Callable[[ConnectionContext], bool],
+        *,
+        code: int,
+        reason: str,
+    ) -> int:
+        async with self._connection_lock:
+            targets = [
+                websocket
+                for websocket, context in self._connections.items()
+                if predicate(context)
+            ]
+            for websocket in targets:
+                self._connections.pop(websocket, None)
+        for websocket in targets:
+            try:
+                await websocket.close(code=code, reason=reason)
+            except RuntimeError:
+                pass
+        return len(targets)
+
+    async def _serve(
+        self,
+        websocket: WebSocket,
+        session: dict[str, Any],
+        *,
+        session_token: str,
+        auth: AuthService,
+    ) -> None:
+        minimum = await asyncio.to_thread(self.outbox.minimum_available_id)
+        latest = await asyncio.to_thread(self.outbox.latest_id)
         requested_after_id = websocket.query_params.get("after_id")
         # A fresh page load starts at the current server watermark. Explicit
         # cursors still replay missed events, including after_id=0 for tests and
@@ -128,48 +243,63 @@ class WebSocketManager:
                 ),
             )
             return
-        state = self.public_state.build(
+        state = await asyncio.to_thread(
+            self.public_state.build,
             now=__import__("datetime").datetime.now(
                 __import__("stock_watcher.domain", fromlist=["SHANGHAI"]).SHANGHAI
-            )
+            ),
         )
         await _send(
             websocket,
             _envelope(
-                    0,
-                    "state.snapshot",
-                    _now_iso(),
-                    self.source_commit,
-                    {
-                        "state_version": int(state.get("state_version", 0)),
-                        "service_state": state.get("service_state", "starting"),
-                        "market_state": state.get("market_state", "unknown"),
-                        "snapshot_id": state.get("snapshot_id"),
-                        "candidates": state.get("candidates", []),
-                        "overall_weak": bool(state.get("overall_weak", False)),
-                        "source_ts": state.get("source_ts"),
-                    },
-                ),
+                0,
+                "state.snapshot",
+                _now_iso(),
+                self.source_commit,
+                {
+                    "state_version": int(state.get("state_version", 0)),
+                    "service_state": state.get("service_state", "starting"),
+                    "market_state": state.get("market_state", "unknown"),
+                    "snapshot_id": state.get("snapshot_id"),
+                    "candidates": state.get("candidates", []),
+                    "overall_weak": bool(state.get("overall_weak", False)),
+                    "source_ts": state.get("source_ts"),
+                },
+            ),
         )
         cursor = after_id
         pending: list[dict[str, Any]] = []
-        last_send = __import__("time").monotonic()
+        last_send = time.monotonic()
+        next_auth_check = last_send + self.auth_check_seconds
         while True:
             try:
-                now = __import__("time").monotonic()
+                now = time.monotonic()
+                if now >= next_auth_check:
+                    current = await asyncio.to_thread(auth.authenticate, session_token)
+                    if current is None:
+                        await websocket.close(code=4401, reason="session revoked")
+                        return
+                    if (
+                        int(current["user_id"]) != int(session["user_id"])
+                        or str(current["role"]) != str(session["role"])
+                    ):
+                        await websocket.close(code=4403, reason="authorization changed")
+                        return
+                    session = current
+                    next_auth_check = now + self.auth_check_seconds
                 if now - last_send >= self.heartbeat_seconds:
                     await _send(
                         websocket,
                         _envelope(
-                                0,
-                                "server.heartbeat",
-                                _now_iso(),
-                                self.source_commit,
-                                {"server_time": _now_iso()},
-                            ),
+                            0,
+                            "server.heartbeat",
+                            _now_iso(),
+                            self.source_commit,
+                            {"server_time": _now_iso()},
+                        ),
                     )
                     last_send = now
-                events = self.outbox.read_since(cursor, limit=100)
+                events = await asyncio.to_thread(self.outbox.read_since, cursor, limit=100)
                 for event in events:
                     cursor = int(event["event_id"])
                     if _event_visible(event, session):
@@ -195,13 +325,13 @@ class WebSocketManager:
                     await _send(
                         websocket,
                         _envelope(
-                                int(event["event_id"]),
-                                str(event["event_type"]),
-                                str(event["occurred_at"]),
-                                str(event["source_commit"]),
-                                event["payload"],
-                                event.get("correlation_id"),
-                            ),
+                            int(event["event_id"]),
+                            str(event["event_type"]),
+                            str(event["occurred_at"]),
+                            str(event["source_commit"]),
+                            event["payload"],
+                            event.get("correlation_id"),
+                        ),
                     )
                 await asyncio.sleep(1.0)
             except WebSocketDisconnect:

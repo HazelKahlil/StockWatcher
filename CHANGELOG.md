@@ -117,6 +117,10 @@
 
 ### Security
 
+- Web 安全审计返修：WebSocket 周期重验并在注销、改密、停用、升降权后关闭；严格
+  Origin/Host/可信代理边界；Argon2 线程池与并发门、账户/IP/全局限流、输入和请求体上限；
+  Session touch 节流与需备份确认后启用的 Session/命令/审计保留策略；公开 readiness 最小化；发布分支触发
+  Web 专用 CI 与依赖变更审查。GitHub 分支保护和部署审批仍需 Human Owner 在仓库设置中启用。
 - 普通 UI 收敛为一个 Tushare Token；Pro 代理与原生实时共用系统安全存储中的 Primary
   凭据（Windows Credential Manager / macOS 系统钥匙串）。SDK 调用只临时注入内存并恢复，
   不调用 `set_token()`，不把 Token 写入源码、配置、SQLite、日志、截图、fixture、命令行或安装包。

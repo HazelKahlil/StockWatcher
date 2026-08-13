@@ -10,6 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "registry-snapshot.sh"
 PREVIEW_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "run-preview.sh"
+RUNTIME_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "runtime-lib.sh"
 
 
 def _write_fake_docker(target: Path) -> None:
@@ -156,3 +157,10 @@ def test_cnb_preview_fails_closed_and_snapshots_while_running() -> None:
     assert "type: cnb:apply" in pipeline
     assert "event: api_trigger_cnb_preview" in pipeline
     assert "services:\n        - name: vscode" in pipeline
+
+    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
+    assert "local require_https_origin=${1:-0}" in runtime
+    assert "public_origin=${CNB_VSCODE_WEB_URL:-http://127.0.0.1:8686}" in runtime
+    assert "require_https_origin == 1" in runtime
+    assert "CNB_VSCODE_WEB_URL must be an HTTPS origin" in runtime
+    assert "stockwatcher_cnb_export_app_env 1" in script

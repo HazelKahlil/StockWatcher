@@ -2,13 +2,77 @@ name: Governance
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "publish/web-*"
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  web-security:
+    name: Web security and runtime contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --frozen --python "3.12"
+      - name: Run Web security regression suite
+        run: >-
+          uv run pytest tests/test_web_auth_api.py tests/test_web_ws.py
+          tests/test_web_services.py tests/test_web_worker.py
+          tests/test_web_healthcheck.py -W error
+      - name: Check Python, JavaScript, workspace, and security evidence
+        run: |
+          uv run ruff check .
+          uv run mypy src tests
+          python scripts/validate_workspace.py
+          find src/stock_watcher/server/static -name '*.js' -print0 | xargs -0 -n1 node --check
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("evidence/security/repo-secret-scan.json").read_text())
+          if report.get("status") != "PASS" or report.get("confirmed_finding_count") != 0:
+              raise SystemExit("repository secret scan evidence is not an unambiguous PASS")
+          findings = report.get("findings", [])
+          if report.get("raw_finding_count") != len(findings):
+              raise SystemExit("repository secret scan finding count is inconsistent")
+          for finding in findings:
+              path = Path(finding["file"])
+              line_number = int(finding["line"])
+              lines = path.read_text(encoding="utf-8").splitlines()
+              if not 1 <= line_number <= len(lines):
+                  raise SystemExit(f"stale secret scan line: {path}:{line_number}")
+              if finding["pattern"].casefold() not in lines[line_number - 1].casefold():
+                  raise SystemExit(f"stale secret scan pattern: {path}:{line_number}")
+          PY
+      - name: Build the locked Web image
+        run: |
+          docker build \
+            --build-arg UV_VERSION=0.9.26 \
+            --build-arg SOURCE_COMMIT="${GITHUB_SHA}" \
+            --build-arg BUILD_VERSION=web-security-review \
+            -f deploy/Dockerfile \
+            -t stockwatcher-web:"${GITHUB_SHA}" .
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
   workspace-integrity:
     runs-on: ubuntu-latest
     steps:

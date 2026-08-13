@@ -281,3 +281,29 @@
   （142 source files）、JavaScript syntax、workspace validator、shell syntax 与
   `git diff --check` 全绿。部署与恢复证据仍不能替代下一真实交易日验收，状态继续
   `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-13 Web 外部安全审计返修
+
+- 以 GitHub 审计基准 `27d509a5cc57e684402c72fc0d5ebd55d50e557e` 建立独立本地分支
+  `fix/web-security-audit-remediation`。WebSocket 现在周期重验 Session、active 与 role，注销、
+  改密、停用或升降权会撤销旧 Session 并主动关闭连接；每用户、每 IP、全局连接数和建连速率
+  均有上限。
+- 登录只从显式可信代理读取转发地址，未知账号执行等成本 Argon2 校验；Argon2 移入线程池并由
+  独立并发门保护，同时执行账户、IP、全局限流。登录及其他 Cookie 写请求要求精确 Origin，
+  用户名、密码、Token、Host 和完整流式请求体均在进入昂贵处理前限制。
+- Session touch 改为有条件节流；自然过期/撤销 Session、终态命令和普通/安全审计分别实现保留
+  期限。已有数据库的删除型维护默认关闭，只有完成 Owner 确认的可恢复备份后才设置
+  `RETENTION_ENABLED=true`；单项清理失败不再阻断其他维护。
+- production Web 强制 HTTPS public origin，启用 Trusted Host、最小应用安全头和最小公开
+  readiness；Caddy 清除客户端转发头后重建，Compose 不发布 Web 业务端口。CNB 只有真正启动
+  Web 时才要求平台 HTTPS origin，离线密钥/快照操作仍可使用本机元数据而不会误启动明文 Web。
+- 前端 API 错误只读取一次响应体并保留状态/错误码；WebSocket 改为指数退避、抖动和
+  4401/4403 停止重连；Dashboard 合并并发状态刷新。GitHub workflow 已覆盖 Web 发布分支、
+  Web 安全回归、Ruff、Mypy、workspace、JavaScript、证据一致性、依赖变更审查和镜像构建。
+- 完整离线回归为 `536 passed, 25 skipped, 2 deselected`、`-W error` 零告警；Ruff、Mypy
+  （143 source files）、JavaScript/shell 语法、workspace validator、lock、Windows 离线打包合同、
+  安全证据一致性与 `git diff --check` 全绿。
+- 代码不能代替仓库设置：Web 扩为多实例前仍须接入共享或边缘限流；GitHub reviewer、required
+  checks、签名提交、禁止 force push/delete 和部署审批必须由 Human Owner 启用；依赖/镜像 CVE、
+  SBOM/provenance、代理链动态压测和渗透测试仍是外部门。未 push、未部署、未启用删除型维护，
+  项目继续 `BLOCKED / NOT_ACCEPTED`。

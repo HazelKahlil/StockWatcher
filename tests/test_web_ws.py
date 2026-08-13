@@ -6,11 +6,20 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as FastAPITestClient
+from starlette.websockets import WebSocketDisconnect
 
+from stock_watcher.server.auth import RateLimiter
 from stock_watcher.server.config import ServerSettings
 from stock_watcher.server.web import create_app
 from stock_watcher.storage import SQLiteStore
+
+
+class TestClient(FastAPITestClient):
+    def __init__(self, app: Any, **kwargs: Any) -> None:
+        headers = dict(kwargs.pop("headers", {}))
+        headers.setdefault("Origin", str(app.state.settings.public_origin))
+        super().__init__(app, headers=headers, **kwargs)
 
 
 @pytest.fixture()
@@ -21,6 +30,7 @@ def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore]:
     master_key_file = tmp_path / "master.key"
     master_key_file.write_text(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
     settings = ServerSettings(
+        environment="test",
         db_path=tmp_path / "db" / "test.db",
         report_dir=tmp_path / "reports",
         master_key_file=master_key_file,
@@ -212,6 +222,155 @@ def test_ws_unauthorized_rejected(app_env: tuple[Any, SQLiteStore]) -> None:
             websocket.receive_text()
 
 
+def test_ws_closes_after_logout(app_env: tuple[Any, SQLiteStore]) -> None:
+    app, _ = app_env
+    client = login(app)
+    csrf = client.get("/api/v1/me").json()["csrf_token"]
+    with client.websocket_connect("/ws/v1/events") as websocket:
+        websocket.receive_text()
+        websocket.receive_text()
+        response = client.post(
+            "/api/v1/auth/logout",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 204
+        with pytest.raises(WebSocketDisconnect) as closed:
+            websocket.receive_text()
+        assert closed.value.code == 4401
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"password": "replacement-password-123"},
+        {"active": False},
+    ],
+    ids=["password-change", "deactivation"],
+)
+def test_ws_closes_after_account_security_change(
+    app_env: tuple[Any, SQLiteStore],
+    mutation: dict[str, object],
+) -> None:
+    app, _ = app_env
+    tester = app.state.auth.users.get_by_username("tester1")
+    assert tester is not None
+    app.state.auth.create_user(
+        username="admin1",
+        password="admin-password-123",
+        role="admin",
+    )
+    tester_client = login(app)
+    admin_client = login(app, "admin1", "admin-password-123")
+    csrf = admin_client.get("/api/v1/me").json()["csrf_token"]
+    with tester_client.websocket_connect("/ws/v1/events") as websocket:
+        websocket.receive_text()
+        websocket.receive_text()
+        changed = admin_client.patch(
+            f"/api/v1/admin/users/{tester['user_id']}",
+            json=mutation,
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert changed.status_code == 200
+        with pytest.raises(WebSocketDisconnect) as closed:
+            websocket.receive_text()
+        assert closed.value.code == 4401
+
+
+def test_ws_admin_visibility_removed_after_role_change(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, _ = app_env
+    tester = app.state.auth.users.get_by_username("tester1")
+    assert tester is not None
+    app.state.auth.create_user(
+        username="admin1",
+        password="admin-password-123",
+        role="admin",
+    )
+    tester_client = login(app)
+    admin_client = login(app, "admin1", "admin-password-123")
+    csrf = admin_client.get("/api/v1/me").json()["csrf_token"]
+    with tester_client.websocket_connect("/ws/v1/events") as websocket:
+        websocket.receive_text()
+        websocket.receive_text()
+        changed = admin_client.patch(
+            f"/api/v1/admin/users/{tester['user_id']}",
+            json={"role": "admin"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert changed.status_code == 200
+        with pytest.raises(WebSocketDisconnect) as closed:
+            websocket.receive_text()
+        assert closed.value.code == 4403
+
+
+def test_ws_closes_after_absolute_expiry(app_env: tuple[Any, SQLiteStore]) -> None:
+    app, store = app_env
+    app.state.ws_manager.auth_check_seconds = 0.0
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events") as websocket:
+        websocket.receive_text()
+        websocket.receive_text()
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE web_sessions SET absolute_expires_at = ?",
+                ("2000-01-01T00:00:00+08:00",),
+            )
+        with pytest.raises(WebSocketDisconnect) as closed:
+            websocket.receive_text()
+        assert closed.value.code == 4401
+
+
+@pytest.mark.parametrize("origin", [None, "https://testserver", "http://evil.example"])
+def test_ws_rejects_missing_or_mismatched_origin(
+    app_env: tuple[Any, SQLiteStore],
+    origin: str | None,
+) -> None:
+    app, _ = app_env
+    client = FastAPITestClient(app)
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"username": "tester1", "password": "tester-pass-123"},
+        headers={"Origin": app.state.settings.public_origin},
+    )
+    assert response.status_code == 200
+    headers = {} if origin is None else {"Origin": origin}
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with client.websocket_connect("/ws/v1/events", headers=headers) as websocket:
+            websocket.receive_text()
+    assert closed.value.code == 4403
+
+
+def test_ws_enforces_per_user_connection_cap(app_env: tuple[Any, SQLiteStore]) -> None:
+    app, _ = app_env
+    app.state.ws_manager.max_per_user = 1
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events") as first:
+        first.receive_text()
+        first.receive_text()
+        with client.websocket_connect("/ws/v1/events") as second:
+            with pytest.raises(WebSocketDisconnect) as closed:
+                second.receive_text()
+            assert closed.value.code == 4429
+
+
+def test_ws_enforces_global_connection_rate(app_env: tuple[Any, SQLiteStore]) -> None:
+    app, _ = app_env
+    app.state.auth.websocket_limiter = RateLimiter(
+        max_attempts=1,
+        window_seconds=60,
+        max_keys=10,
+    )
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events") as first:
+        first.receive_text()
+        first.receive_text()
+    with client.websocket_connect("/ws/v1/events") as second:
+        with pytest.raises(WebSocketDisconnect) as closed:
+            second.receive_text()
+        assert closed.value.code == 4429
+
+
 def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally() -> None:
     script = (
         Path(__file__).resolve().parents[1]
@@ -227,3 +386,12 @@ def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally(
     assert "lastEventId = Number(event.payload?.latest_event_id || 0);" in script
     assert "event.event_type === 'server.resync_required'" in script
     assert "if (csrfToken)" not in script
+    api_wrapper = script.split("export async function apiJson", 1)[0]
+    assert api_wrapper.count("await response.json()") == 1
+    assert "error.status = response.status" in api_wrapper
+    assert "error.code =" in api_wrapper
+    assert "error.payload = payload" in api_wrapper
+    assert "event.code === 4401 || event.code === 4403" in script
+    assert "1000 * (2 ** reconnectAttempt)" in script
+    assert "Math.random() * 500" in script
+    assert "setTimeout(connectEvents, 3000)" not in script

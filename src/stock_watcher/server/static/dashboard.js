@@ -24,6 +24,8 @@ let activeAutomaticAlert = null;
 let latestDashboardState = null;
 let receivedAlertSequence = 0;
 let dismissedThroughAlertSequence = 0;
+let stateRefreshPromise = null;
+let stateRefreshQueued = false;
 
 function clearRefreshProgressTimers() {
   if (refreshProgressTimer) {
@@ -389,13 +391,27 @@ function showDetail(code, state) {
     });
 }
 
-async function loadState() {
-  try {
-    const state = await apiJson('/api/v1/state');
-    renderState(state);
-    return state;
-  } catch { /* WS/REST 双通道，断开时保留最后数据 */ }
-  return null;
+function loadState() {
+  if (stateRefreshPromise) {
+    stateRefreshQueued = true;
+    return stateRefreshPromise;
+  }
+  stateRefreshPromise = (async () => {
+    let latest = null;
+    do {
+      stateRefreshQueued = false;
+      try {
+        latest = await apiJson('/api/v1/state');
+        renderState(latest);
+      } catch { /* WS/REST 双通道，断开时保留最后数据 */ }
+    } while (stateRefreshQueued);
+    return latest;
+  })().finally(() => {
+    const rerun = stateRefreshQueued;
+    stateRefreshPromise = null;
+    if (rerun) void loadState();
+  });
+  return stateRefreshPromise;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

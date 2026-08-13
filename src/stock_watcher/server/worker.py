@@ -11,6 +11,7 @@ import os
 import signal
 import threading
 import time as time_module
+from collections.abc import Callable
 from datetime import datetime
 
 from stock_watcher.build_info import source_commit
@@ -28,6 +29,7 @@ from stock_watcher.services import (
 from stock_watcher.services.secret_service import load_master_key
 from stock_watcher.services.stockwatcher_service import StockWatcherService
 from stock_watcher.storage import SQLiteStore
+from stock_watcher.storage.web import AuditLogRepository, SessionRepository
 
 from .config import ServerSettings
 from .redaction import redact
@@ -70,6 +72,8 @@ class WorkerRuntime:
             ),
         )
         self.commands = CommandService(self.store)
+        self.sessions = SessionRepository(self.store)
+        self.audit = AuditLogRepository(self.store)
         master_key = load_master_key(settings.require_master_key())
         self.secrets = SecretService(
             self.store,
@@ -465,12 +469,43 @@ class WorkerRuntime:
         from stock_watcher.domain import SHANGHAI
 
         now = _dt.now(SHANGHAI)
-        try:
-            self.outbox.prune(now=now)
-            self.secrets.expire_requests(now=now)
-            self.secrets.prune_requests(now=now)
-        except Exception as error:
-            logger.warning("maintenance error: %s", redact(str(error)))
+        tasks: list[tuple[str, Callable[[], int]]] = [
+            ("outbox", lambda: self.outbox.prune(now=now)),
+            ("secret-expiry", lambda: self.secrets.expire_requests(now=now)),
+            ("secret-prune", lambda: self.secrets.prune_requests(now=now)),
+        ]
+        if self.settings.retention_enabled:
+            tasks.extend(
+                (
+                    (
+                        "session-prune",
+                        lambda: self.sessions.cleanup_expired(
+                            now=now,
+                            retention_days=self.settings.session_retention_days,
+                        ),
+                    ),
+                    (
+                        "command-prune",
+                        lambda: self.commands.prune_completed(
+                            now=now,
+                            retention_days=self.settings.command_retention_days,
+                        ),
+                    ),
+                    (
+                        "audit-prune",
+                        lambda: self.audit.prune(
+                            now=now,
+                            ordinary_retention_days=self.settings.audit_retention_days,
+                            security_retention_days=self.settings.security_audit_retention_days,
+                        ),
+                    ),
+                )
+            )
+        for name, task in tasks:
+            try:
+                task()
+            except Exception as error:
+                logger.warning("maintenance %s error: %s", name, redact(str(error)))
 
 
 def main() -> int:

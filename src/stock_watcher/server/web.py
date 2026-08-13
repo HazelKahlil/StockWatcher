@@ -4,16 +4,20 @@ Entry point: ``python -m stock_watcher.server.web``.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from argon2 import PasswordHasher
 from fastapi import FastAPI, Request, WebSocket
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from stock_watcher.build_info import source_commit
 from stock_watcher.services import CommandService, EventOutbox, SecretService
@@ -34,9 +38,20 @@ from .api import (
     error_response,
     state_router,
 )
-from .auth import SESSION_COOKIE_NAME, AuthService, csrf_value_for_session
+from .auth import (
+    SESSION_COOKIE_NAME,
+    AuthError,
+    AuthService,
+    RateLimiter,
+    csrf_value_for_session,
+)
 from .config import ServerSettings
 from .healthcheck import worker_readiness
+from .security import (
+    RequestBodyLimitMiddleware,
+    origin_matches,
+    trusted_client_ip,
+)
 from .ws import WebSocketManager
 
 logger = logging.getLogger("stock_watcher.server")
@@ -60,16 +75,54 @@ def _build_services(settings: ServerSettings) -> dict[str, Any]:
     commit = settings.source_commit if settings.source_commit != "unknown" else source_commit()
     outbox = EventOutbox(store, read_store=read_store, source_commit=commit)
     commands = CommandService(store, read_store=read_store)
+    master_key = (
+        load_master_key(settings.master_key_file)
+        if settings.master_key_file is not None
+        else None
+    )
+    limits = settings.rate_limits
     auth = AuthService(
         store,
+        password_hasher=PasswordHasher(
+            time_cost=settings.argon2.time_cost,
+            memory_cost=settings.argon2.memory_cost_kib,
+            parallelism=settings.argon2.parallelism,
+        ),
         absolute_hours=settings.session_absolute_hours,
         idle_minutes=settings.session_idle_minutes,
+        session_touch_interval_seconds=settings.session_touch_interval_seconds,
+        login_account_limiter=RateLimiter(
+            max_attempts=limits.login_account_max,
+            window_seconds=limits.login_window_seconds,
+            max_keys=limits.max_keys,
+        ),
+        login_ip_limiter=RateLimiter(
+            max_attempts=limits.login_ip_max,
+            window_seconds=limits.login_window_seconds,
+            max_keys=limits.max_keys,
+        ),
+        login_global_limiter=RateLimiter(
+            max_attempts=limits.login_global_max,
+            window_seconds=limits.login_window_seconds,
+            max_keys=1,
+        ),
+        command_limiter=RateLimiter(
+            max_attempts=limits.command_max,
+            window_seconds=limits.command_window_seconds,
+            max_keys=limits.max_keys,
+        ),
+        websocket_limiter=RateLimiter(
+            max_attempts=limits.websocket_connect_max,
+            window_seconds=limits.websocket_connect_window_seconds,
+            max_keys=limits.max_keys,
+        ),
+        audit_ip_key=master_key,
     )
     secrets: SecretService | None = None
-    if settings.master_key_file is not None:
+    if master_key is not None:
         secrets = SecretService(
             store,
-            master_key=load_master_key(settings.master_key_file),
+            master_key=master_key,
             environment=settings.environment,
             key_version=settings.secret_key_version,
         )
@@ -90,6 +143,7 @@ def _build_services(settings: ServerSettings) -> dict[str, Any]:
 
 def create_app(settings: ServerSettings | None = None) -> FastAPI:
     app_settings = settings or ServerSettings.from_env()
+    app_settings.validate_for_web()
     services = _build_services(app_settings)
     store: SQLiteStore = services["store"]
     read_store: SQLiteStore = services["read_store"]
@@ -104,6 +158,10 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             if app_settings.source_commit != "unknown"
             else source_commit()
         ),
+        auth_check_seconds=app_settings.websocket_auth_check_seconds,
+        max_per_user=app_settings.websocket_max_per_user,
+        max_per_ip=app_settings.websocket_max_per_ip,
+        max_global=app_settings.websocket_max_global,
     )
 
     @asynccontextmanager
@@ -126,9 +184,18 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
             else "/api/v1/openapi.json"
         ),
     )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=list(app_settings.allowed_hosts()),
+    )
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=app_settings.request_body_limit_bytes,
+    )
     for key, value in services.items():
         setattr(app.state, key, value)
     app.state.ws_manager = ws_manager
+    app.state.login_semaphore = asyncio.Semaphore(app_settings.login_hash_concurrency)
 
     @app.middleware("http")
     async def harden_http_responses(request: Request, call_next: Any) -> Any:
@@ -142,6 +209,18 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         )
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'self'; connect-src 'self'; img-src 'self' data:; "
+            "font-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'",
+        )
+        if app_settings.environment == "production":
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
         if not request.url.path.startswith("/static/"):
             response.headers.setdefault("Cache-Control", "private, no-store")
         return response
@@ -163,6 +242,15 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         return error_response(request, str(exc), exc.status_code, exc.code)
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        # Preserve the established API contract while Pydantic enforces strict
+        # types and bounded lengths before credentials reach Argon2 or SQLite.
+        return error_response(request, "Invalid request payload", 400, "invalid_request")
+
     # -- health -----------------------------------------------------------
 
     @app.get("/health/live")
@@ -172,35 +260,20 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     @app.get("/health/ready")
     async def health_ready() -> JSONResponse:
         try:
-            with read_store.connect() as connection:
-                version = connection.execute(
-                    "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-                ).fetchone()
-            if version is None or int(version[0]) != store.CURRENT_SCHEMA_VERSION:
-                return JSONResponse(status_code=503, content={"status": "not_ready"})
-            worker_ready, worker_status = worker_readiness(read_store, app_settings)
-            if not worker_ready:
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "status": "not_ready",
-                        "schema_version": int(version[0]),
-                        **worker_status,
-                    },
-                )
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "status": "ready",
-                    "schema_version": int(version[0]),
-                    **worker_status,
-                    "degraded": False,
-                },
+            ready = await asyncio.to_thread(
+                _readiness_status,
+                read_store,
+                app_settings,
+                store.CURRENT_SCHEMA_VERSION,
             )
-        except Exception as error:
+            return JSONResponse(
+                status_code=200 if ready else 503,
+                content={"status": "ready" if ready else "not_ready"},
+            )
+        except Exception:
             return JSONResponse(
                 status_code=503,
-                content={"status": "not_ready", "detail": type(error).__name__},
+                content={"status": "not_ready"},
             )
 
     # -- pages ------------------------------------------------------------
@@ -208,7 +281,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         token = request.cookies.get(SESSION_COOKIE_NAME)
-        session = auth.authenticate(token) if token else None
+        session = await asyncio.to_thread(auth.authenticate, token) if token else None
         if session is None:
             return templates.TemplateResponse(
                 request,
@@ -218,7 +291,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            {"user": session, "csrf": _csrf_for_session(auth, token)},
+            {"user": session, "csrf": _csrf_for_session(token)},
         )
 
     @app.get("/alerts", response_class=HTMLResponse)
@@ -240,7 +313,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page(request: Request) -> HTMLResponse:
         token = request.cookies.get(SESSION_COOKIE_NAME)
-        session = auth.authenticate(token) if token else None
+        session = await asyncio.to_thread(auth.authenticate, token) if token else None
         if session is None:
             return templates.TemplateResponse(
                 request,
@@ -256,46 +329,70 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "admin.html",
-            {"user": session, "csrf": _csrf_for_session(auth, token)},
+            {"user": session, "csrf": _csrf_for_session(token)},
         )
 
     # -- WebSocket --------------------------------------------------------
 
     @app.websocket("/ws/v1/events")
     async def ws_events(websocket: WebSocket) -> None:
+        origin = websocket.headers.get("origin", "")
+        if not origin_matches(origin, app_settings.public_origin):
+            await websocket.close(code=4403, reason="origin rejected")
+            return
         token = websocket.cookies.get(SESSION_COOKIE_NAME)
-        session = auth.authenticate(token) if token else None
+        session = await asyncio.to_thread(auth.authenticate, token) if token else None
         if session is None:
             await websocket.close(code=4401, reason="unauthorized")
             return
-        origin = websocket.headers.get("origin", "")
-        if origin and _origin_mismatch(origin, app_settings.public_origin):
-            await websocket.close(code=4403, reason="origin rejected")
+        peer_host = websocket.client.host if websocket.client else None
+        client_address = trusted_client_ip(
+            websocket.headers,
+            peer_host,
+            app_settings.trusted_proxy_cidrs,
+        ) or "unknown"
+        try:
+            for limit_key in (
+                "ws:global",
+                f"ws:ip:{client_address}",
+                f"ws:user:{session['user_id']}",
+            ):
+                auth.websocket_limiter.consume(limit_key)
+        except AuthError:
+            await websocket.accept()
+            await websocket.close(code=4429, reason="connection rate limited")
             return
-        await ws_manager.handle(websocket, session)
+        await ws_manager.handle(
+            websocket,
+            session,
+            session_token=token or "",
+            auth=auth,
+            client_ip=client_address,
+        )
 
     return app
 
 
-def _csrf_for_session(auth: AuthService, token: str | None) -> str:
+def _csrf_for_session(token: str | None) -> str:
     """Return the stable per-session CSRF value for server-rendered pages."""
     if token is None:
-        return ""
-    session = auth.sessions.get(token)
-    if session is None:
         return ""
     return csrf_value_for_session(token)
 
 
-def _origin_mismatch(origin: str, public_origin: str) -> bool:
-    try:
-        from urllib.parse import urlparse
-
-        public_host = urlparse(public_origin).netloc
-        origin_host = urlparse(origin).netloc
-        return origin_host != public_host
-    except ValueError:
-        return True
+def _readiness_status(
+    read_store: SQLiteStore,
+    settings: ServerSettings,
+    expected_schema_version: int,
+) -> bool:
+    with read_store.connect() as connection:
+        version = connection.execute(
+            "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+    if version is None or int(version[0]) != expected_schema_version:
+        return False
+    worker_ready, _worker_status = worker_readiness(read_store, settings)
+    return worker_ready
 
 
 async def _page(
@@ -305,7 +402,7 @@ async def _page(
     templates: Jinja2Templates,
 ) -> HTMLResponse:
     token = request.cookies.get(SESSION_COOKIE_NAME)
-    session = auth.authenticate(token) if token else None
+    session = await asyncio.to_thread(auth.authenticate, token) if token else None
     if session is None:
         return templates.TemplateResponse(
             request,
@@ -315,7 +412,7 @@ async def _page(
     return templates.TemplateResponse(
         request,
         template,
-        {"user": session, "csrf": _csrf_for_session(auth, token)},
+        {"user": session, "csrf": _csrf_for_session(token)},
     )
 
 

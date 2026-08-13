@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import stock_watcher.server.worker as worker_module
@@ -323,3 +324,88 @@ def test_worker_keeps_command_queued_while_automatic_scan_is_busy() -> None:
     finally:
         release.set()
         busy.join(timeout=1)
+
+
+def test_maintenance_tasks_are_isolated_after_one_prune_failure() -> None:
+    calls: list[str] = []
+
+    class Outbox:
+        def prune(self, **_: object) -> int:
+            calls.append("outbox")
+            raise sqlite3.OperationalError("outbox unavailable")
+
+    class Secrets:
+        def expire_requests(self, **_: object) -> int:
+            calls.append("secret-expiry")
+            return 0
+
+        def prune_requests(self, **_: object) -> int:
+            calls.append("secret-prune")
+            return 0
+
+    class Sessions:
+        def cleanup_expired(self, **_: object) -> int:
+            calls.append("session-prune")
+            return 0
+
+    class Commands:
+        def prune_completed(self, **_: object) -> int:
+            calls.append("command-prune")
+            return 0
+
+    class Audit:
+        def prune(self, **_: object) -> int:
+            calls.append("audit-prune")
+            return 0
+
+    runtime = cast(Any, WorkerRuntime.__new__(WorkerRuntime))
+    runtime.outbox = Outbox()
+    runtime.secrets = Secrets()
+    runtime.sessions = Sessions()
+    runtime.commands = Commands()
+    runtime.audit = Audit()
+    runtime.settings = SimpleNamespace(
+        retention_enabled=True,
+        session_retention_days=30,
+        command_retention_days=90,
+        audit_retention_days=180,
+        security_audit_retention_days=365,
+    )
+
+    runtime._maintenance()
+
+    assert calls == [
+        "outbox",
+        "secret-expiry",
+        "secret-prune",
+        "session-prune",
+        "command-prune",
+        "audit-prune",
+    ]
+
+
+def test_worker_retention_pruning_is_opt_in() -> None:
+    calls: list[str] = []
+
+    class Outbox:
+        def prune(self, **_: object) -> int:
+            calls.append("outbox")
+            return 0
+
+    class Secrets:
+        def expire_requests(self, **_: object) -> int:
+            calls.append("secret-expiry")
+            return 0
+
+        def prune_requests(self, **_: object) -> int:
+            calls.append("secret-prune")
+            return 0
+
+    runtime = cast(Any, WorkerRuntime.__new__(WorkerRuntime))
+    runtime.outbox = Outbox()
+    runtime.secrets = Secrets()
+    runtime.settings = SimpleNamespace(retention_enabled=False)
+
+    runtime._maintenance()
+
+    assert calls == ["outbox", "secret-expiry", "secret-prune"]

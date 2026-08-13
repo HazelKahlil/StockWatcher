@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +30,7 @@ from stock_watcher.services import (
 from stock_watcher.services.secret_service import MASTER_KEY_BYTES, fingerprint
 from stock_watcher.services.stockwatcher_service import StockWatcherService
 from stock_watcher.storage import SQLiteStore
+from stock_watcher.storage.web import AuditLogRepository, SessionRepository
 
 
 def make_store(tmp_path: Path) -> SQLiteStore:
@@ -226,6 +229,129 @@ def test_command_create_claim_complete(tmp_path: Path) -> None:
     assert saved is not None
     assert saved["status"] == "succeeded"
     assert saved["result"] == {"rounds": 3}
+
+
+def test_database_error_does_not_become_command_coalesced() -> None:
+    class BrokenConnection:
+        def execute(self, *_args: Any, **_kwargs: Any) -> None:
+            raise sqlite3.OperationalError("disk I/O error")
+
+    class BrokenStore:
+        @contextmanager
+        def transaction(self) -> Any:
+            yield BrokenConnection()
+
+    commands = CommandService(cast(Any, BrokenStore()))
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        commands.create(
+            command_type=CommandType.MANUAL_REFRESH,
+            requested_by=1,
+        )
+
+
+def test_web_session_command_and_audit_retention(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    seed_user(store)
+    sessions = SessionRepository(store)
+    sessions.create(
+        user_id=1,
+        token="expired-token",
+        csrf_value="expired-csrf",
+        ip_hash=None,
+        user_agent="pytest",
+    )
+    sessions.create(
+        user_id=1,
+        token="current-token",
+        csrf_value="current-csrf",
+        ip_hash=None,
+        user_agent="pytest",
+    )
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=SHANGHAI)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE web_sessions SET idle_expires_at = ?, absolute_expires_at = ? "
+            "WHERE session_token_hash = ?",
+            (
+                (now - timedelta(days=40)).isoformat(),
+                (now - timedelta(days=40)).isoformat(),
+                hashlib.sha256(b"expired-token").hexdigest(),
+            ),
+        )
+    assert sessions.cleanup_expired(now=now, retention_days=30) == 1
+    assert sessions.get("expired-token") is None
+    assert sessions.get("current-token") is not None
+
+    before = sessions.get("current-token")
+    assert before is not None
+    assert not sessions.touch_if_due(
+        "current-token",
+        minimum_interval_seconds=300,
+    )
+    after = sessions.get("current-token")
+    assert after is not None
+    assert after["last_seen_at"] == before["last_seen_at"]
+
+    commands = CommandService(store, clock=lambda: now)
+    old_command = commands.create(
+        command_type=CommandType.TOKEN_TEST,
+        requested_by=1,
+        idempotency_key="retention-old",
+    )
+    recent_command = commands.create(
+        command_type=CommandType.TOKEN_TEST,
+        requested_by=1,
+        idempotency_key="retention-recent",
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE web_commands SET status = 'succeeded', completed_at = ? "
+            "WHERE command_id = ?",
+            ((now - timedelta(days=100)).isoformat(), old_command["command_id"]),
+        )
+        connection.execute(
+            "UPDATE web_commands SET status = 'succeeded', completed_at = ? "
+            "WHERE command_id = ?",
+            ((now - timedelta(days=10)).isoformat(), recent_command["command_id"]),
+        )
+    assert commands.prune_completed(now=now, retention_days=90) == 1
+    assert commands.get(str(old_command["command_id"])) is None
+    assert commands.get(str(recent_command["command_id"])) is not None
+
+    audit = AuditLogRepository(store)
+    for object_id, action in (
+        ("ordinary-old", "auth.login"),
+        ("security-kept", "user.update"),
+        ("security-old", "token.update"),
+    ):
+        audit.record(
+            action=action,
+            object_type="test",
+            object_id=object_id,
+            outcome="succeeded",
+        )
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE web_audit_log SET occurred_at = ? WHERE object_id = ?",
+            ((now - timedelta(days=200)).isoformat(), "ordinary-old"),
+        )
+        connection.execute(
+            "UPDATE web_audit_log SET occurred_at = ? WHERE object_id = ?",
+            ((now - timedelta(days=200)).isoformat(), "security-kept"),
+        )
+        connection.execute(
+            "UPDATE web_audit_log SET occurred_at = ? WHERE object_id = ?",
+            ((now - timedelta(days=400)).isoformat(), "security-old"),
+        )
+    assert audit.prune(
+        now=now,
+        ordinary_retention_days=180,
+        security_retention_days=365,
+    ) == 2
+    kept = {row["object_id"] for row in audit.list(limit=20)}
+    assert "ordinary-old" not in kept
+    assert "security-old" not in kept
+    assert "security-kept" in kept
 
 
 def test_command_wrong_holder_cannot_complete(tmp_path: Path) -> None:

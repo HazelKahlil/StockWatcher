@@ -23,7 +23,10 @@
 		-Server
 	}
 
-	reverse_proxy web:8000
+	reverse_proxy web:8000 {
+		header_up -Forwarded
+		header_up X-Forwarded-For {http.request.header.Cf-Connecting-Ip}
+	}
 
 	log {
 		output stdout

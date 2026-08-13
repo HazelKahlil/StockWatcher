@@ -22,6 +22,11 @@ sudo docker compose --env-file .env build --pull
 
 The final delivery must replace floating base tags with immutable digests and record the resulting application image digest.
 
+Production startup also fails closed unless `STOCKWATCHER_PUBLIC_ORIGIN` is HTTPS. Keep
+`TRUSTED_PROXY_CIDRS` restricted to the Docker proxy network, retain the application request-body
+limit, and do not publish the Web container's port directly. The default Argon2 concurrency is two;
+raising it requires a memory-capacity review.
+
 ## Migrate and create the first admin
 
 ```bash
@@ -58,6 +63,11 @@ sudo docker compose --env-file .env ps
 ```
 
 Never delete the database or caches as a first response to failure. Preserve evidence and follow the rollback runbook.
+
+The Worker can prune old sessions, terminal commands and audit rows, but the retention task is
+fail-safe disabled by default (`RETENTION_ENABLED=false`). Before enabling it for an existing
+database, create and verify a backup; do not shorten retention or run the first cleanup against live
+data without Human Owner confirmation.
 
 ## macOS internal test through Cloudflare Tunnel
 

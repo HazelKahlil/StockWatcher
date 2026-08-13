@@ -21,6 +21,8 @@
 - 主密钥单独保存在仓库私有 Docker 制品 `cnb-secrets-v1`，仅含密钥及校验和；不会与数据库、
   报告或 Token 放在同一恢复包中，也不会写入 Git、日志或命令行。预览空间必须同时校验并恢复
   密钥制品与结果制品，否则 fail-closed，不会启动一个空数据库误导登录。
+- Web 启动要求 CNB 提供的 `CNB_VSCODE_WEB_URL` 是 HTTPS origin；缺失或为 HTTP 时直接退出，
+  不再以 production 配置回退到明文 localhost origin。
 
 ## 一次性设置
 

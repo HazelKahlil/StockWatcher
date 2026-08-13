@@ -5,14 +5,16 @@ The web process never instantiates providers or runs scans.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from stock_watcher.domain import SHANGHAI, OutcomeStatus, build_outcome_review
 from stock_watcher.runtime import candidate_outcome_rows
@@ -28,6 +30,36 @@ from stock_watcher.storage.web import (
 
 from .auth import SESSION_COOKIE_NAME, AuthError, AuthService, csrf_value_for_session
 from .redaction import redact_value
+from .security import request_origin_matches, trusted_client_ip
+
+
+class LoginPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class UserCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=12, max_length=256)
+    role: Literal["tester", "admin"] = "tester"
+
+
+class UserUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    role: Literal["tester", "admin"] | None = None
+    active: bool | None = None
+    password: str | None = Field(default=None, min_length=12, max_length=256)
+
+
+class TokenPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    token: str = Field(min_length=1, max_length=512)
 
 
 def _now() -> datetime:
@@ -122,9 +154,17 @@ class ApiError(RuntimeError):
         self.code = code
 
 
-def error_response(request: Request, message: str, status_code: int, code: str) -> JSONResponse:
+def error_response(
+    request: Request,
+    message: str,
+    status_code: int,
+    code: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
+        headers=headers,
         content={
             "error": {
                 "code": code,
@@ -201,6 +241,9 @@ def require_csrf(
     session: dict[str, Any] = Depends(current_session),
     auth: AuthService = Depends(get_auth),
 ) -> dict[str, Any]:
+    settings = request.app.state.settings
+    if not request_origin_matches(request.headers, str(settings.public_origin)):
+        raise ApiError("请求来源校验失败", 403, "origin_mismatch")
     token = request.cookies.get(SESSION_COOKIE_NAME)
     csrf_value = request.headers.get("X-CSRF-Token", "")
     if not auth.require_csrf(token or "", csrf_value):
@@ -213,6 +256,9 @@ def require_admin_csrf(
     session: dict[str, Any] = Depends(require_admin),
     auth: AuthService = Depends(get_auth),
 ) -> dict[str, Any]:
+    settings = request.app.state.settings
+    if not request_origin_matches(request.headers, str(settings.public_origin)):
+        raise ApiError("请求来源校验失败", 403, "origin_mismatch")
     token = request.cookies.get(SESSION_COOKIE_NAME)
     csrf_value = request.headers.get("X-CSRF-Token", "")
     if not auth.require_csrf(token or "", csrf_value):
@@ -221,10 +267,9 @@ def require_admin_csrf(
 
 
 def client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else None
+    settings = request.app.state.settings
+    peer = request.client.host if request.client else None
+    return trusted_client_ip(request.headers, peer, settings.trusted_proxy_cidrs)
 
 
 # -- auth router -----------------------------------------------------------
@@ -236,21 +281,51 @@ def auth_router() -> APIRouter:
     @router.post("/login")
     async def login(
         request: Request,
-        payload: dict[str, Any],
+        payload: LoginPayload,
         auth: AuthService = Depends(get_auth),
-        audit: AuditLogRepository = Depends(get_audit),
     ) -> Response:
-        username = str(payload.get("username") or "")
-        password = str(payload.get("password") or "")
+        settings = request.app.state.settings
+        if not request_origin_matches(request.headers, str(settings.public_origin)):
+            return error_response(
+                request,
+                "请求来源校验失败",
+                403,
+                "origin_mismatch",
+            )
+        semaphore: asyncio.Semaphore = request.app.state.login_semaphore
         try:
-            result = auth.login(
-                username=username,
-                password=password,
+            await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
+        except TimeoutError:
+            return error_response(
+                request,
+                "登录校验繁忙，请稍后重试",
+                429,
+                "login_busy",
+                headers={"Retry-After": "1"},
+            )
+        try:
+            result = await asyncio.to_thread(
+                auth.login,
+                username=payload.username,
+                password=payload.password,
                 client_ip=client_ip(request),
                 user_agent=request.headers.get("User-Agent", ""),
             )
         except AuthError as error:
-            return error_response(request, str(error), error.status_code, "invalid_credentials")
+            headers = (
+                {"Retry-After": str(error.retry_after)}
+                if error.retry_after is not None
+                else None
+            )
+            return error_response(
+                request,
+                str(error),
+                error.status_code,
+                error.code,
+                headers=headers,
+            )
+        finally:
+            semaphore.release()
         response = JSONResponse(
             status_code=200,
             content={"user": result["user"]},
@@ -270,7 +345,11 @@ def auth_router() -> APIRouter:
         auth: AuthService = Depends(get_auth),
     ) -> Response:
         token = request.cookies.get(SESSION_COOKIE_NAME)
-        auth.logout(token or "")
+        await asyncio.to_thread(auth.logout, token or "")
+        if session.get("session_token_hash"):
+            await request.app.state.ws_manager.disconnect_session(
+                str(session["session_token_hash"]),
+            )
         response = Response(status_code=204)
         response.delete_cookie(
             SESSION_COOKIE_NAME,
@@ -746,13 +825,13 @@ def admin_router() -> APIRouter:
     @router.post("/token/test")
     async def token_test(
         request: Request,
-        payload: dict[str, Any],
+        payload: TokenPayload,
         session: dict[str, Any] = Depends(require_admin_csrf),
         secrets: SecretService | None = Depends(get_secrets),
         commands: CommandService = Depends(get_commands),
         audit: AuditLogRepository = Depends(get_audit),
     ) -> Response:
-        candidate = str(payload.get("token") or "")
+        candidate = payload.token
         if secrets is None:
             return error_response(request, "密钥服务不可用", 503, "secrets_unavailable")
         if not candidate:
@@ -789,13 +868,13 @@ def admin_router() -> APIRouter:
     @router.put("/token")
     async def token_update(
         request: Request,
-        payload: dict[str, Any],
+        payload: TokenPayload,
         session: dict[str, Any] = Depends(require_admin_csrf),
         secrets: SecretService | None = Depends(get_secrets),
         commands: CommandService = Depends(get_commands),
         audit: AuditLogRepository = Depends(get_audit),
     ) -> Response:
-        candidate = str(payload.get("token") or "")
+        candidate = payload.token
         if secrets is None:
             return error_response(request, "密钥服务不可用", 503, "secrets_unavailable")
         if not candidate:
@@ -883,20 +962,16 @@ def admin_router() -> APIRouter:
     @router.post("/users")
     async def users_create(
         request: Request,
-        payload: dict[str, Any],
+        payload: UserCreatePayload,
         session: dict[str, Any] = Depends(require_admin_csrf),
         auth: AuthService = Depends(get_auth),
     ) -> Response:
-        username = str(payload.get("username") or "")
-        password = str(payload.get("password") or "")
-        role = str(payload.get("role") or "tester")
-        if role not in {"tester", "admin"}:
-            return error_response(request, "角色必须为 tester 或 admin", 400, "invalid_role")
         try:
-            user = auth.create_user(
-                username=username,
-                password=password,
-                role=role,
+            user = await asyncio.to_thread(
+                auth.create_user,
+                username=payload.username,
+                password=payload.password,
+                role=payload.role,
                 created_by=int(cast(int, session["user_id"])),
             )
         except AuthError as error:
@@ -914,25 +989,21 @@ def admin_router() -> APIRouter:
     async def users_update(
         user_id: int,
         request: Request,
-        payload: dict[str, Any],
+        payload: UserUpdatePayload,
         session: dict[str, Any] = Depends(require_admin_csrf),
         auth: AuthService = Depends(get_auth),
         users: UserRepository = Depends(get_users),
     ) -> Response:
-        target = users.get_by_id(user_id)
+        target = await asyncio.to_thread(users.get_by_id, user_id)
         if target is None:
             return error_response(request, "用户不存在", 404, "not_found")
-        role = payload.get("role")
-        active = payload.get("active")
-        password = payload.get("password")
-        if role is not None and role not in {"tester", "admin"}:
-            return error_response(request, "角色必须为 tester 或 admin", 400, "invalid_role")
-        if active is not None and not isinstance(active, bool):
-            return error_response(request, "active 必须为布尔值", 400, "invalid_active")
+        role = payload.role
+        active = payload.active
+        password = payload.password
         removes_active_admin = bool(target["active"]) and target["role"] == "admin" and (
             role == "tester" or active is False
         )
-        if removes_active_admin and users.count_active_admins() <= 1:
+        if removes_active_admin and await asyncio.to_thread(users.count_active_admins) <= 1:
             return error_response(
                 request,
                 "必须至少保留一个启用的管理员",
@@ -944,15 +1015,23 @@ def admin_router() -> APIRouter:
             updates["role"] = role
         if active is not None:
             updates["active"] = active
-        if password:
+        if password is not None:
             try:
-                updates["password_hash"] = auth.hash_password(str(password))
+                updates["password_hash"] = await asyncio.to_thread(
+                    auth.hash_password,
+                    str(password),
+                )
             except AuthError as error:
                 return error_response(
                     request, str(error), error.status_code, "invalid_password"
                 )
         try:
-            updated = users.update(user_id, protect_last_admin=True, **updates)
+            updated = await asyncio.to_thread(
+                users.update,
+                user_id,
+                protect_last_admin=True,
+                **updates,
+            )
         except LastActiveAdminError:
             return error_response(
                 request,
@@ -962,9 +1041,16 @@ def admin_router() -> APIRouter:
             )
         if updated is None:
             return error_response(request, "用户不存在", 404, "not_found")
-        if active is False or password:
-            auth.revoke_user_sessions(user_id)
-        auth.audit.record(
+        role_changed = role is not None and role != target["role"]
+        if active is False or password is not None or role_changed:
+            await asyncio.to_thread(auth.revoke_user_sessions, user_id)
+            await request.app.state.ws_manager.disconnect_user(
+                user_id,
+                code=4403 if role_changed else 4401,
+                reason="authorization changed" if role_changed else "session revoked",
+            )
+        await asyncio.to_thread(
+            auth.audit.record,
             actor_user_id=session["user_id"],
             action="user.update",
             object_type="user",

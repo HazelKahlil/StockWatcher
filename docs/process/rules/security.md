@@ -1,6 +1,6 @@
 # 安全与授权规则：最小权限、秘密不落库、绝不触碰交易账户
 
-> 最后更新：2026-07-22 ｜ 适用：外部 SDK/API、账户、凭证、通知、LLM、依赖和发布
+> 最后更新：2026-08-13 ｜ 适用：外部 SDK/API、账户、凭证、通知、Web、LLM、依赖和发布
 
 ## 硬规则（违反按 review P1；交易/凭证泄露按 P0）
 
@@ -20,6 +20,25 @@
 - HTTP TLS 验证不得关闭；系统代理使用行为由 profile 明确配置。
 - `.env`、`config/user.yaml`、数据库、缓存和日志由 `.gitignore` 阻止入库，提交前仍需人工 review。
 - 依赖或 SDK 升级作为独立 PR，先回放和现场 smoke，再进入正常运行配置。
+
+## Web 安全闭环
+
+- production Web 必须配置精确的 HTTPS public origin 与允许 Host；不得用 `*` 放开 Host。
+- 只有 socket peer 位于显式可信代理 CIDR 时才读取 `X-Forwarded-For`；Caddy 必须清除客户端
+  原始转发头并重建单一来源地址，Web 容器不得直接发布业务端口。
+- Cookie 状态变更请求必须同时通过精确 Origin/Referer 与 CSRF；Cookie WebSocket 必须携带
+  完全匹配 scheme、host、port 的 Origin。
+- Argon2 校验必须在线程池中运行并有独立并发上限；登录同时执行账户、IP、全局限流，输入
+  长度、请求体和限流键集合都必须有上限。当前单 Web 进程扩大为多实例前，必须先引入共享或
+  边缘限流，不能把单进程内存限流外推为集群保护。
+- WebSocket 建连后必须周期性重验 Session、active 与 role；注销、改密、停用或任何角色变化
+  都撤销旧 Session 并主动关闭匹配连接。每用户、每 IP 与全局连接数均需限制。
+- Session touch 必须节流；自然过期/撤销 Session、终态命令和审计日志按明确期限清理。保留
+  清理默认关闭；任何在已有数据库上首次启用或缩短期限的操作，先做已校验备份并由 Human
+  Owner 确认。
+- 公开 readiness 只返回 ready/not_ready；租约、扫描、数据库和故障原因只进入认证管理诊断。
+- Web 发布分支需要 PR、reviewer、required checks、禁止 force push/delete 和部署审批；这些
+  GitHub 仓库权限设置只能由 Human Owner 确认后启用，代码中的 workflow 不能冒充已生效保护。
 
 ## 反例
 

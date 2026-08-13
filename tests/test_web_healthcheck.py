@@ -19,6 +19,7 @@ def _settings(tmp_path: Path) -> ServerSettings:
     db.parent.mkdir(parents=True)
     SQLiteStore(db).initialize()
     return ServerSettings(
+        environment="test",
         db_path=db,
         report_dir=tmp_path / "reports",
         public_origin="http://testserver",
@@ -80,7 +81,7 @@ def test_web_readiness_rejects_expired_worker_lease(tmp_path: Path) -> None:
         )
     response = TestClient(app).get("/health/ready")
     assert response.status_code == 503
-    assert response.json()["worker_lease_held"] is False
+    assert response.json() == {"status": "not_ready"}
 
 
 def test_web_readiness_uses_fresh_read_only_store(tmp_path: Path) -> None:

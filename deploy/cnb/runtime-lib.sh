@@ -45,8 +45,15 @@ PY
 }
 
 stockwatcher_cnb_export_app_env() {
+  local require_https_origin=${1:-0}
   local source_commit
+  local public_origin
   source_commit=${CNB_COMMIT:-$(git -C "$SW_CNB_WORKSPACE" rev-parse HEAD)}
+  public_origin=${CNB_VSCODE_WEB_URL:-http://127.0.0.1:8686}
+  if [[ $require_https_origin == 1 && $public_origin != https://* ]]; then
+    echo "CNB_VSCODE_WEB_URL must be an HTTPS origin" >&2
+    return 1
+  fi
 
   export STOCKWATCHER_ENV=production
   export STOCKWATCHER_DB_PATH=$SW_CNB_DB
@@ -54,7 +61,7 @@ stockwatcher_cnb_export_app_env() {
   export STOCKWATCHER_BACKUP_DIR=$SW_CNB_BACKUPS
   export STOCKWATCHER_MASTER_KEY_FILE=$SW_CNB_MASTER_KEY
   export STOCKWATCHER_BUSINESS_TIMEZONE=Asia/Shanghai
-  export STOCKWATCHER_PUBLIC_ORIGIN=${CNB_VSCODE_WEB_URL:-http://127.0.0.1:8686}
+  export STOCKWATCHER_PUBLIC_ORIGIN=$public_origin
   export STOCKWATCHER_SESSION_ABSOLUTE_HOURS=12
   export STOCKWATCHER_SESSION_IDLE_MINUTES=120
   export STOCKWATCHER_LOG_LEVEL=${STOCKWATCHER_LOG_LEVEL:-INFO}
