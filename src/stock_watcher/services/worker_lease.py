@@ -65,9 +65,13 @@ class WorkerLease:
         is already configured for WAL by ``SQLiteStore``; this connection
         intentionally does not run ``PRAGMA journal_mode`` again.
         """
-        connection = sqlite3.connect(self.store.path, timeout=2.0)
+        # FULL WAL durability can briefly hold the writer lock during startup
+        # or a checkpoint.  A heartbeat must wait through that short handoff
+        # instead of declaring the lease lost; the wait remains well below the
+        # default 20-second lease TTL.
+        connection = sqlite3.connect(self.store.path, timeout=5.0)
         try:
-            connection.execute("PRAGMA busy_timeout=2000")
+            connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA foreign_keys=ON")
             if immediate:
                 connection.execute("BEGIN IMMEDIATE")
