@@ -4,10 +4,10 @@
 
 | 轨道 | 权威代码基线/分支 | 当前证据 | 未完成/阻塞 | 结论 |
 | --- | --- | --- | --- | --- |
-| 次日同点复盘 | `main@6a81825` / Web `cnb/main`（代码 `214563c`），开发版本 `0.6.0a4`；桌面 SQLite v8 / Web v9 | Web 离线 `512 passed, 26 skipped`，`-W error` 零告警；严格日历、最多五次重试、认证 outcomes API 与迁移门全绿 | 真实下一交易日 09:45/14:45 同点结算仍待现场验收 | `local_code_complete_offline_verified_after_alpha4_reliability_fix` |
+| 次日同点复盘 | `main@6a81825` / Web `cnb/main`（运行代码 `34ce825`），开发版本 `0.6.0a4`；桌面 SQLite v8 / Web v9 | Web 离线 `513 passed, 25 skipped, 2 deselected`，`-W error` 零告警；严格日历、最多五次重试、认证 outcomes API 与迁移门全绿 | 真实下一交易日 09:45/14:45 同点结算仍待现场验收 | `local_code_complete_offline_verified_after_alpha4_reliability_fix` |
 | Shared Core | `main` 应用代码 `ad04e392158c7050f84e0318fe1d53aaa0370c34` / `0.4.0a2` | `363 passed, 20 skipped, 2 deselected`；Ruff/Mypy/validator/lock/package contract 全绿 | 真实交易时段证据不能由离线门替代 | `internal_trial_source_baseline` |
 | App Mac | 已安装版记录 `SOURCE_COMMIT=88ccf49f...`；重建源码为 `ad04e39` | 既有 arm64/ad-hoc、Keychain、SQLite、PDF、单实例和窗口行为证据保留 | 安装资产未重建为 alpha.2；固定时点、15:30 与真实恢复仍待补验 | `internal_trial` |
-| Web | 本地 `cnb/main` 已包含代码 `214563c` 的桌面提醒及 Murphy 返修，本轮未部署/未 push | `512 passed, 26 skipped`、`-W error` 零告警、Murphy 定向回归 `32 passed`；数据库回退/非法游标与弹窗关闭竞态有回归，本机 Chrome 既有桌面布局、右下角关闭、刷新/重开验证仍保留；Schema v9 | 本轮部署，以及真实交易日 09:45/14:45 固定提醒、同点结算/重试与全日运行现场验收 | **`BLOCKED / NOT_ACCEPTED`** |
+| Web | 独立 `cnb/main` 已同步并部署运行代码 `34ce825`；Mac Docker 镜像 `stockwatcher-web:web-alpha4-34ce825` | `513 passed, 25 skipped, 2 deselected`、`-W error` 零告警；桌面浅色 UI、右下角提醒、恢复游标与关闭竞态回归通过；公网 `app.css?v=14`；Schema v9；恢复后关键表计数与最新备份校验一致 | 真实交易日 09:45/14:45 固定提醒、同点结算/重试与全日运行现场验收 | **`BLOCKED / NOT_ACCEPTED`** |
 | Windows | PR #4 merge `a5da270`，最终源码基线 `ad04e39` | Windows 3.11/3.12 Governance、Setup/Preflight、PyInstaller/Inno 与制品上传通过；Owner 报告基本可用 | 目标机旧 portable 未从 alpha.2 重建；权威 M0、安装/卸载/回滚与签名包未验收 | `WINDOWS_SMOKE_PASS` |
 
 ## 当前禁止的误读

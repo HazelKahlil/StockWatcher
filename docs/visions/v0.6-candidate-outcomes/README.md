@@ -1,6 +1,6 @@
 # v0.6：次日同点复盘
 
-> 状态：`0.6.0a4` 本地离线返修与 Web 接入；真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
+> 状态：`0.6.0a4` 本地离线返修与 Web 接入；Web 独立线已同步 CNB 并部署，真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
 > 基线：`v0.4.0-alpha.2` / `main@e8df598c920a15dfb565bfc75e45a93d1eb48a07`
 > 范围：Shared Core、Mac/Windows 共用桌面端与 Web 独立测试线的只读复盘旁路。
 
@@ -136,11 +136,13 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
   `fix/web-top3-gain-emphasis@cfc6cd6`。
 - 2026-08-13 Web 桌面视觉与提醒生命周期返修实现提交为 `53501ad`，已由独立分支
   `fix/web-desktop-ui-alert-lifecycle` 快进合入本地 `cnb/main`；Murphy Review 返修提交为
-  `214563c`，处理数据库恢复后的游标回退和弹窗关闭竞态；本轮未 push、未部署。
+  `214563c`，处理数据库恢复后的游标回退和弹窗关闭竞态；恢复备份发现与只读在线备份返修为
+  `33bc3ea`、`34ce825`。Web 独立 `cnb/main` 已同步，线上镜像为
+  `stockwatcher-web:web-alpha4-34ce825`。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界
 
-本轮不读取 Token、Keychain、Credential Manager、用户真实数据库、运行日志或交易账户，
-不覆盖已安装 App，不 push、不建 PR、不发布 Release。非交易时段的代码、回放、迁移和 UI
+本轮未读取或回显 Token、Keychain、Credential Manager 或交易账户，不覆盖已安装 App，
+未同步 GitHub、未建 PR、未发布 Release；仅按 Human Owner 授权同步并部署独立 Web 线。非交易时段的代码、回放、迁移和 UI
 通过不能冒充真实次日同点行情验收；该现场项在完成后继续明确列给 Human Owner。

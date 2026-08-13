@@ -260,3 +260,24 @@
   语法、workspace validator、lock、Windows 离线打包合同与 `git diff --check` 全绿。
 - 最终结构化 Review 为 `P0=0 / P1=0 / P2=0`。未 push、未部署、未替换线上镜像；数据库恢复与
   弹窗竞态的代码证据不能替代下一真实交易日现场验收，状态继续 `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-13 Web UI 上线与恢复备份返修
+
+- 桌面浅色 UI、右下角提醒与 Murphy 返修先以源码 `52cd13a` 构建并替换线上 Web/Worker；公网
+  `app.css?v=14`、`app.js?v=6` 与 `dashboard.js` 均和该源码字节一致。
+- 发布后备份检查现场发现主库 `idx_service_leases_expiry` 索引损坏；Worker fail-closed 退出，
+  readiness 返回 503，自动恢复又因只匹配 live DB 文件名和单层目录而选中较旧迁移备份。
+  未把这次自动恢复当作成功：立即停止 Web/Worker，使用已校验的发布后完整备份恢复 Schema v9。
+  恢复后关键计数为 `scan_attempts=1696`、`candidate_outcomes=18`、`web_users=6`、
+  `web_events=12331`、`alert_events=18`，与发布前/发布后快照一致。
+- `33bc3ea` 让自动恢复递归发现 `/backups` 下运维分组目录中的 `stockwatcher.sqlite3`，并新增
+  “最新嵌套运维备份优先于旧迁移备份”回归；`34ce825` 让在线备份通过只读源连接执行 SQLite
+  Backup API，避免备份容器成为第三个 WAL writer。
+- 最终运行镜像为 `stockwatcher-web:web-alpha4-34ce825`，运行源码
+  `34ce825014692aef01ae397499dd7604c67273ef`。恢复后在线备份
+  `/backups/stockwatcher-postfix-20260813T111830Z/stockwatcher-20260813T191830Z` 的 checksum、
+  `integrity_check=ok`、外键 0、Schema v9 与关键计数均通过；live DB 同步保持完整。
+- 完整离线门为 `513 passed, 25 skipped, 2 deselected`、`-W error` 零告警；Ruff、Mypy
+  （142 source files）、JavaScript syntax、workspace validator、shell syntax 与
+  `git diff --check` 全绿。部署与恢复证据仍不能替代下一真实交易日验收，状态继续
+  `BLOCKED / NOT_ACCEPTED`。
