@@ -202,4 +202,6 @@
 - 2026-08-13 08:25 的首次定时构建 `cnb-nso-1jvs84381` 在 Prepare 阶段被 CNB 拒绝：
   `crontab` 事件不能直接使用 `vscode` 服务。定时任务已改为 `cnb:apply` 触发同仓库的
   `api_trigger_cnb_preview` 子流水线；只有该 API 子流水线挂载 `vscode`，避免再次触发平台
-  事件限制。修复后需以新的定时或手动 API 运行证据确认。
+  事件限制。随后手动 API 构建 `cnb-pco-1jvs8bn88` 已通过 Prepare、创建运行中的
+  only-preview 开发空间并到达 StockWatcher 登录页，事件路径现场验证通过；管理员登录和
+  Token 激活仍待 Owner 在新空间完成。
