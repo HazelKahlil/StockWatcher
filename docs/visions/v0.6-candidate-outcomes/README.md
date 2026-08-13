@@ -1,6 +1,6 @@
 # v0.6：次日同点复盘
 
-> 状态：`0.6.0a4` 本地离线返修与 Web 接入；Web 独立线已同步 CNB 并部署，真实交易时段同点行情待 Human Owner 验收，未同步 GitHub。
+> 状态：`0.6.0a4` 本地离线返修与 Web 接入；Web 独立线已同步 CNB 并部署，也已同步 GitHub 审核分支，真实交易时段同点行情待 Human Owner 验收。
 > 基线：`v0.4.0-alpha.2` / `main@e8df598c920a15dfb565bfc75e45a93d1eb48a07`
 > 范围：Shared Core、Mac/Windows 共用桌面端与 Web 独立测试线的只读复盘旁路。
 
@@ -139,10 +139,10 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
   `214563c`，处理数据库恢复后的游标回退和弹窗关闭竞态；恢复备份发现与只读在线备份返修为
   `33bc3ea`、`34ce825`。Web 独立 `cnb/main` 已同步，线上镜像为
   `stockwatcher-web:web-alpha4-34ce825`。
-- GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
+- GitHub：Web 独立线已推送至 `publish/web-v0.6.0-alpha.4`，目标提交为本次同步时的最新 Web 提交；GitHub `main` 保持不变，未创建 PR、未发布 Release。
 
 ## 证据边界
 
 本轮未读取或回显 Token、Keychain、Credential Manager 或交易账户，不覆盖已安装 App，
-未同步 GitHub、未建 PR、未发布 Release；仅按 Human Owner 授权同步并部署独立 Web 线。非交易时段的代码、回放、迁移和 UI
+GitHub 审核分支已按 Human Owner 授权同步；未建 PR、未发布 Release，且未修改 GitHub `main`。非交易时段的代码、回放、迁移和 UI
 通过不能冒充真实次日同点行情验收；该现场项在完成后继续明确列给 Human Owner。
