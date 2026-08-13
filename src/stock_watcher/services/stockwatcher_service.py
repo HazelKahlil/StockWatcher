@@ -289,6 +289,7 @@ class StockWatcherService:
         self._outcome_lock = threading.Lock()
         self._outcome_initial_backfill_done = False
         self._outcome_initial_backfill_retry_at: datetime | None = None
+        self._outcome_unresolved_retry_at: datetime | None = None
         self._outcome_executor_closed = False
         self._command_context = threading.local()
         self._holder_id = ""
@@ -348,7 +349,10 @@ class StockWatcherService:
             futures = tuple(self._outcome_futures)
         for future in futures:
             future.cancel()
-        self._outcome_executor.shutdown(wait=False, cancel_futures=True)
+        # Do not close the store while a sidecar task can still be writing its
+        # pending/settled rows.  Running provider calls are bounded by their
+        # transport timeouts and the Web/Worker stop grace periods.
+        self._outcome_executor.shutdown(wait=True, cancel_futures=True)
         if not self._runtime_session_active:
             return
         try:
@@ -577,6 +581,45 @@ class StockWatcherService:
                 run_backfill,
             )
 
+    def _submit_unresolved_outcome_targets(self, now: datetime) -> None:
+        """Resolve calendar targets left pending by an interrupted sidecar."""
+        tracker = self._ensure_outcome_tracker()
+        if tracker is None:
+            return
+        if (
+            self._outcome_unresolved_retry_at is not None
+            and now < self._outcome_unresolved_retry_at
+        ):
+            return
+        try:
+            pending = self.store.list_pending_candidate_outcomes(
+                unresolved_only=True,
+                limit=1,
+            )
+        except Exception as error:  # noqa: BLE001 - outcome sidecar is isolated
+            logger.warning(
+                "candidate outcome unresolved discovery failed: %s",
+                type(error).__name__,
+            )
+            return
+        if not pending:
+            self._outcome_unresolved_retry_at = None
+            return
+
+        def resolve_targets() -> OutcomeActionReport:
+            report = tracker.resolve_pending_targets(
+                now=_shanghai(self._clock()),
+                limit=100,
+            )
+            self._outcome_unresolved_retry_at = (
+                _shanghai(self._clock()) + timedelta(minutes=5)
+                if report.safe_reasons
+                else None
+            )
+            return report
+
+        self._submit_outcome_task("resolve:unresolved-targets", resolve_targets)
+
     def _submit_fixed_outcome_settlement(
         self,
         now: datetime,
@@ -781,6 +824,7 @@ class StockWatcherService:
             self._refresh_public_state(now)
             return TickResult(skipped_reason="credential-missing")
         self._submit_initial_outcome_backfill(now)
+        self._submit_unresolved_outcome_targets(now)
         runtime = self._runtime
         assert runtime is not None
         universe_current = self._universe_is_current(now)
@@ -1102,6 +1146,17 @@ class StockWatcherService:
                 trigger_type=trigger.value,
                 detail=alert_detail,
             )
+            if trigger.value in CandidateOutcomeTracker.scheduled_triggers:
+                outcome_entries = (
+                    CandidateOutcomeTracker.pending_entries_for_scheduled_batch(
+                        self.batch,
+                        snapshot_id=snapshot_id,
+                        alert_id=alert_id,
+                        trigger_type=trigger.value,
+                        recorded_at=now,
+                    )
+                )
+                self.store.create_candidate_outcomes_in(connection, outcome_entries)
             candidates = self._candidate_payload(self.batch)
             triggering_codes = (
                 [str(detail["trigger_symbol"])]

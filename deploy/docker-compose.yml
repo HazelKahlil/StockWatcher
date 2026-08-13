@@ -21,6 +21,7 @@ x-app-common: &app-common
     STOCKWATCHER_ENV: production
     STOCKWATCHER_DB_PATH: /var/lib/stockwatcher/db/stockwatcher.db
     STOCKWATCHER_REPORT_DIR: /var/lib/stockwatcher/reports
+    STOCKWATCHER_BACKUP_DIR: /backups
     STOCKWATCHER_MASTER_KEY_FILE: /run/secrets/stockwatcher_master_key
     STOCKWATCHER_BUSINESS_TIMEZONE: Asia/Shanghai
     STOCKWATCHER_PUBLIC_ORIGIN: https://${DOMAIN:?set DOMAIN}
@@ -47,6 +48,7 @@ services:
   web:
     <<: *app-common
     command: ["python", "-m", "stock_watcher.server.web"]
+    stop_grace_period: 120s
     expose:
       - "8000"
     healthcheck:

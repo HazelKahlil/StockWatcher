@@ -47,7 +47,10 @@ class WorkerRuntime:
         self.settings = settings
         settings.db_path.parent.mkdir(parents=True, exist_ok=True)
         settings.report_dir.mkdir(parents=True, exist_ok=True)
-        self.store = SQLiteStore(settings.db_path)
+        self.store = SQLiteStore(
+            settings.db_path,
+            recovery_backup_dirs=(settings.backup_dir,),
+        )
         self.store.initialize()
         self.lease = WorkerLease(
             self.store,
@@ -114,6 +117,7 @@ class WorkerRuntime:
             self.lease.acquire()
         except LeaseAcquireError as error:
             logger.warning("safe exit without scanning: %s", redact(str(error)))
+            self.store.close()
             return 0
         logger.info(
             "worker lease acquired: holder=%s fencing=%s",
@@ -199,6 +203,7 @@ class WorkerRuntime:
             self.lease.release()
         except Exception:
             pass
+        self.store.close()
         logger.info("worker stopped cleanly")
         return 0
 

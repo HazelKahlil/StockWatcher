@@ -34,7 +34,10 @@ from .redaction import redact
 
 def _store(settings: ServerSettings) -> SQLiteStore:
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-    store = SQLiteStore(settings.db_path)
+    store = SQLiteStore(
+        settings.db_path,
+        recovery_backup_dirs=(settings.backup_dir,),
+    )
     store.initialize()
     return store
 

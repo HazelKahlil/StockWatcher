@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import StrEnum
 from statistics import median
@@ -60,6 +60,10 @@ class CandidateOutcome:
 
     @classmethod
     def from_mapping(cls, row: dict[str, Any]) -> CandidateOutcome:
+        status = OutcomeStatus(str(row["status"]))
+        stored_return = (
+            float(row["return_pct"]) if row.get("return_pct") is not None else None
+        )
         return cls(
             id=int(row["id"]),
             entry_snapshot_id=int(row["entry_snapshot_id"]),
@@ -83,11 +87,16 @@ class CandidateOutcome:
                 if row.get("exit_source_ts")
                 else None
             ),
-            return_pct=(
-                float(row["return_pct"]) if row.get("return_pct") is not None else None
+            return_pct=stored_return,
+            status=status,
+            # The realized entry-to-exit return is the source of truth.  Older
+            # rows may contain an outcome derived from the wrong day-over-day
+            # change percentage (for example +10% -> +8% was marked loss).
+            outcome=(
+                classify_return(stored_return)
+                if status is OutcomeStatus.SETTLED and stored_return is not None
+                else (OutcomeResult(str(row["outcome"])) if row.get("outcome") else None)
             ),
-            status=OutcomeStatus(str(row["status"])),
-            outcome=(OutcomeResult(str(row["outcome"])) if row.get("outcome") else None),
             settlement_method=(
                 SettlementMethod(str(row["settlement_method"]))
                 if row.get("settlement_method")
@@ -152,6 +161,10 @@ def classify_return(value: float) -> OutcomeResult:
 
 
 def build_outcome_review(records: tuple[CandidateOutcome, ...]) -> OutcomeReview:
+    # Keep callers that construct domain records directly on the same safe
+    # rule as database-backed callers: wins/losses are based on realized
+    # entry-to-exit return, never on a persisted or display-time label.
+    records = tuple(_canonicalize_result(record) for record in records)
     morning_records = tuple(record for record in records if record.slot is OutcomeSlot.MORNING)
     afternoon_records = tuple(
         record for record in records if record.slot is OutcomeSlot.AFTERNOON
@@ -198,6 +211,12 @@ def build_outcome_review(records: tuple[CandidateOutcome, ...]) -> OutcomeReview
         complete_portfolio_days=len(complete_days),
         portfolio_win_days=win_days,
     )
+
+
+def _canonicalize_result(record: CandidateOutcome) -> CandidateOutcome:
+    if record.status is OutcomeStatus.SETTLED and record.return_pct is not None:
+        return replace(record, outcome=classify_return(float(record.return_pct)))
+    return record
 
 
 def _statistics(records: tuple[CandidateOutcome, ...]) -> OutcomeStats:

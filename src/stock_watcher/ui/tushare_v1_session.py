@@ -2374,7 +2374,8 @@ class TushareV1Session:
         with self._outcome_future_lock:
             for future in self._outcome_futures:
                 future.cancel()
-        self._outcome_executor.shutdown(wait=False, cancel_futures=True)
+        self._outcome_executor.shutdown(wait=True, cancel_futures=True)
+        self.store.close()
 
     def _set_missing_credential(self) -> None:
         legacy_present = self._legacy_credential_present

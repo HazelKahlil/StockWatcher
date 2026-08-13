@@ -80,6 +80,84 @@ class CandidateOutcomeTracker:
         self.max_realtime_age_seconds = max_realtime_age_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
 
+    @classmethod
+    def pending_entries_for_scheduled_batch(
+        cls,
+        batch: CandidateBatch,
+        *,
+        snapshot_id: int,
+        alert_id: int,
+        trigger_type: str,
+        recorded_at: datetime,
+    ) -> list[dict[str, Any]]:
+        """Build the three durable obligations without network/calendar I/O.
+
+        The service uses these entries inside the same SQLite transaction as
+        the scheduled alert.  Calendar resolution remains in the sidecar, but
+        an abrupt process stop cannot lose the six daily rows between the
+        alert commit and the sidecar executor.
+        """
+        slot = cls.scheduled_triggers.get(trigger_type)
+        now = _shanghai(recorded_at)
+        reason = _scheduled_batch_rejection(
+            batch,
+            slot=slot,
+            recorded_at=now,
+            max_entry_age_seconds=120.0,
+            max_future_skew_seconds=10.0,
+        )
+        if reason is not None or slot is None:
+            return []
+        return cls._build_entries(
+            batch,
+            snapshot_id=snapshot_id,
+            alert_id=alert_id,
+            slot=slot,
+            recorded_at=now,
+            target_date=None,
+            calendar_reason="calendar_pending",
+        )
+
+    @staticmethod
+    def _build_entries(
+        batch: CandidateBatch,
+        *,
+        snapshot_id: int,
+        alert_id: int,
+        slot: OutcomeSlot,
+        recorded_at: datetime,
+        target_date: date | None,
+        calendar_reason: str | None,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "entry_snapshot_id": snapshot_id,
+                "entry_alert_id": alert_id,
+                "entry_trade_date": batch.source_ts.date().isoformat(),
+                "slot": slot.value,
+                "rank": rank,
+                "code": candidate.code,
+                "name": candidate.name,
+                "entry_price": candidate.price,
+                "entry_source_ts": candidate.source_ts.isoformat(),
+                "target_trade_date": target_date.isoformat() if target_date else None,
+                "target_slot": slot.value,
+                "quality": "GOOD",
+                "provider_version": candidate.provider_version,
+                "config_version": candidate.config_version,
+                "app_version": candidate.app_version,
+                "created_at": recorded_at.isoformat(),
+                "updated_at": recorded_at.isoformat(),
+                "safe_reason": calendar_reason,
+                "next_retry_at": (
+                    _initial_retry_at(target_date, slot).isoformat()
+                    if target_date
+                    else None
+                ),
+            }
+            for rank, candidate in enumerate(batch.candidates, start=1)
+        ]
+
     def record_scheduled_batch(
         self,
         batch: CandidateBatch,
@@ -112,33 +190,27 @@ class CandidateOutcomeTracker:
                 calendar_reason = _safe_failure("calendar", error)
         else:
             calendar_reason = "calendar_pending"
-        entries = [
-            {
-                "entry_snapshot_id": snapshot_id,
-                "entry_alert_id": alert_id,
-                "entry_trade_date": batch.source_ts.date().isoformat(),
-                "slot": slot.value,
-                "rank": rank,
-                "code": candidate.code,
-                "name": candidate.name,
-                "entry_price": candidate.price,
-                "entry_source_ts": candidate.source_ts.isoformat(),
-                "target_trade_date": target_date.isoformat() if target_date else None,
-                "target_slot": slot.value,
-                "quality": "GOOD",
-                "provider_version": candidate.provider_version,
-                "config_version": candidate.config_version,
-                "app_version": candidate.app_version,
-                "created_at": now.isoformat(),
-                "updated_at": now.isoformat(),
-                "safe_reason": calendar_reason,
-                "next_retry_at": (
-                    _initial_retry_at(target_date, slot).isoformat() if target_date else None
-                ),
-            }
-            for rank, candidate in enumerate(batch.candidates, start=1)
-        ]
+        entries = self._build_entries(
+            batch,
+            snapshot_id=snapshot_id,
+            alert_id=alert_id,
+            slot=slot,
+            recorded_at=now,
+            target_date=target_date,
+            calendar_reason=calendar_reason,
+        )
         inserted = self.store.create_candidate_outcomes(entries)
+        if target_date is not None:
+            for row in self.store.list_pending_candidate_outcomes(
+                entry_snapshot_id=snapshot_id,
+                limit=None,
+            ):
+                self.store.assign_candidate_outcome_target(
+                    int(row["id"]),
+                    target_trade_date=target_date.isoformat(),
+                    next_retry_at=_initial_retry_at(target_date, slot).isoformat(),
+                    updated_at=now.isoformat(),
+                )
         return OutcomeActionReport(
             created=inserted,
             pending=3,

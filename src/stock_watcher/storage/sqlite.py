@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -12,6 +13,12 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+try:
+    _fcntl: Any
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows uses one writer lease path.
+    _fcntl = None
+
 if TYPE_CHECKING:
     from stock_watcher.engine.candidates import CandidateBatch
 
@@ -20,6 +27,7 @@ if TYPE_CHECKING:
 class SQLiteStore:
     path: Path
     read_only: bool = False
+    recovery_backup_dirs: tuple[Path, ...] = ()
 
     CURRENT_SCHEMA_VERSION: ClassVar[int] = 9
 
@@ -88,7 +96,12 @@ class SQLiteStore:
                 if not self._wal_configured:
                     connection.execute("PRAGMA journal_mode=WAL")
                     self._wal_configured = True
-        connection.execute("PRAGMA synchronous=NORMAL")
+        # NORMAL can acknowledge a committed WAL transaction before the WAL
+        # pages are durable.  A forced restart/power loss can then leave a
+        # valid SQLite header pointing at malformed pages.  This store is a
+        # small, audit-oriented database: prefer FULL durability over the
+        # marginal throughput gain of NORMAL.
+        connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=5000")
         connection.execute("PRAGMA foreign_keys=ON")
         self._thread_local.connection = connection
@@ -128,37 +141,72 @@ class SQLiteStore:
     def initialize(self) -> None:
         self.last_recovery = None
         if not self.read_only and self.path.exists() and not self._looks_like_sqlite():
-            self._restore_from_backup()
+            try:
+                self._restore_from_backup()
+                self._initialize_database()
+                return
+            except (sqlite3.DatabaseError, RuntimeError):
+                if self.path.exists():
+                    self.read_only = True
+                raise
         try:
-            with self.connect() as connection:
-                has_schema_table = connection.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type = 'table' AND name = 'schema_version'"
-                ).fetchone() is not None
-                if not has_schema_table:
-                    # CREATE TABLE writes the schema cookie in the database
-                    # header; with multiple writer processes it must happen
-                    # exactly once, never on every connection.
-                    connection.execute(
-                        "CREATE TABLE IF NOT EXISTS schema_version "
-                        "(version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
-                    )
-                version = self._schema_version(connection)
-                if version < self.CURRENT_SCHEMA_VERSION:
-                    self._backup_before_migration(version)
-                    self._migrate_to_current(connection, version)
-                if self._integrity_verified_version != self.CURRENT_SCHEMA_VERSION:
-                    # Full-database integrity scans are expensive and lock
-                    # sensitive on shared filesystems; verify once per process
-                    # after reaching the current schema instead of on every
-                    # store call. SQLite still protects every transaction.
-                    self._assert_integrity(connection)
-                    self._integrity_verified_version = self.CURRENT_SCHEMA_VERSION
-                self._assert_current_schema(connection)
-        except (sqlite3.DatabaseError, RuntimeError):
+            self._initialize_database()
+        except (sqlite3.DatabaseError, RuntimeError) as error:
+            self._close_thread_connection()
+            if not self.read_only and self._is_recoverable_database_error(error):
+                try:
+                    self._restore_from_backup()
+                    self._initialize_database()
+                    return
+                except (sqlite3.DatabaseError, RuntimeError):
+                    if self.path.exists():
+                        self.read_only = True
+                    raise
             if self.path.exists():
                 self.read_only = True
             raise
+
+    def _initialize_database(self) -> None:
+        with self.connect() as connection:
+            has_schema_table = connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'schema_version'"
+            ).fetchone() is not None
+            if not has_schema_table:
+                # CREATE TABLE writes the schema cookie in the database
+                # header; with multiple writer processes it must happen
+                # exactly once, never on every connection.
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS schema_version "
+                    "(version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+                )
+            version = self._schema_version(connection)
+            if version < self.CURRENT_SCHEMA_VERSION:
+                self._backup_before_migration(version)
+                self._migrate_to_current(connection, version)
+            if self._integrity_verified_version != self.CURRENT_SCHEMA_VERSION:
+                # Full-database integrity scans are expensive and lock
+                # sensitive on shared filesystems; verify once per process
+                # after reaching the current schema instead of on every
+                # store call. SQLite still protects every transaction.
+                self._assert_integrity(connection)
+                self._integrity_verified_version = self.CURRENT_SCHEMA_VERSION
+            self._assert_current_schema(connection)
+
+    @staticmethod
+    def _is_recoverable_database_error(error: BaseException) -> bool:
+        message = str(error).casefold()
+        return any(
+            marker in message
+            for marker in (
+                "database disk image is malformed",
+                "file is not a database",
+                "file is encrypted or is not a database",
+                "database schema is corrupt",
+                "database integrity check failed",
+                "malformed",
+            )
+        )
 
     def _looks_like_sqlite(self) -> bool:
         try:
@@ -209,41 +257,138 @@ class SQLiteStore:
         self._wal_configured = False
         self._integrity_verified_version = None
 
-    def _restore_from_backup(self) -> None:
-        """Recover a damaged database file from the newest valid pre-migration backup.
-
-        The damaged file is preserved as <name>.corrupt for forensics instead of
-        being overwritten, and every recovery attempt is recorded on
-        ``self.last_recovery`` so callers can surface it in logs and the UI.
-        """
-        candidates = sorted(
-            self.path.parent.glob(f"{self.path.name}.pre-v*.bak"), reverse=True
-        )
-        for backup in candidates:
+    @contextmanager
+    def _recovery_file_lock(self) -> Iterator[None]:
+        """Serialize recovery across the Web and Worker processes."""
+        lock_path = self.path.with_name(f"{self.path.name}.recovery.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as handle:
+            if _fcntl is not None:
+                _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX)
             try:
-                with backup.open("rb") as handle:
-                    if handle.read(16) != self._SQLITE_MAGIC:
-                        continue
-            except OSError:
+                yield
+            finally:
+                if _fcntl is not None:
+                    _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
+
+    def _backup_candidates(self) -> tuple[Path, ...]:
+        candidates: set[Path] = set(
+            self.path.parent.glob(f"{self.path.name}.pre-v*.bak")
+        )
+        for root in self.recovery_backup_dirs:
+            if root.is_file():
+                candidates.add(root)
                 continue
-            corrupt = self.path.with_suffix(f"{self.path.suffix}.corrupt")
-            corrupt.unlink(missing_ok=True)
-            self.path.replace(corrupt)
-            shutil.copy2(backup, self.path)
-            match = re.search(r"pre-v(\d+)\.bak$", backup.name)
-            self.last_recovery = {
-                "restored_at": datetime.now().isoformat(),
-                "source_backup": backup.name,
-                "restored_schema_version": int(match.group(1)) if match else None,
-                "preserved_corrupt_file": corrupt.name,
-            }
+            if not root.is_dir():
+                continue
+            candidates.update(root.glob(self.path.name))
+            candidates.update(root.glob(f"*/{self.path.name}"))
+        return tuple(
+            sorted(
+                candidates,
+                key=lambda candidate: candidate.stat().st_mtime
+                if candidate.exists()
+                else 0.0,
+                reverse=True,
+            )
+        )
+
+    @staticmethod
+    def _fsync_file(path: Path) -> None:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        try:
+            descriptor = os.open(path, os.O_RDONLY)
+        except OSError:
             return
-        self.read_only = True
-        self.last_recovery = {
-            "restored": False,
-            "reason": "database file is not SQLite and no valid backup exists",
-        }
-        raise sqlite3.DatabaseError(self.last_recovery["reason"])
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _schema_version_from_file(path: Path) -> int | None:
+        try:
+            with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
+                row = connection.execute(
+                    "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+        except sqlite3.DatabaseError:
+            return None
+        return int(row[0]) if row is not None else None
+
+    def _restore_from_backup(self) -> None:
+        """Recover a damaged database file from the newest verified backup.
+
+        The damaged database family, including stale WAL/SHM sidecars, is
+        preserved for forensics instead of being overwritten.  Recovery is
+        serialized across the Web and Worker so a second process never copies
+        a second backup over the first process's restored database.
+        """
+        with self._recovery_file_lock():
+            # Another process may have repaired the file while this process
+            # waited for the lock.  Re-check before quarantining anything.
+            if self.path.exists() and self._looks_like_sqlite():
+                try:
+                    self._validate_database_file(self.path)
+                except (sqlite3.DatabaseError, RuntimeError):
+                    pass
+                else:
+                    return
+
+            staging = self.path.with_name(f"{self.path.name}.recovery-tmp")
+            for backup in self._backup_candidates():
+                try:
+                    with backup.open("rb") as handle:
+                        if handle.read(16) != self._SQLITE_MAGIC:
+                            continue
+                    self._validate_database_file(backup)
+                    self._remove_database_family(staging)
+                    shutil.copy2(backup, staging)
+                    self._validate_database_file(staging)
+                    self._fsync_file(staging)
+                except (OSError, sqlite3.DatabaseError, RuntimeError):
+                    self._remove_database_family(staging)
+                    continue
+
+                corrupt = self.path.with_suffix(f"{self.path.suffix}.corrupt")
+                if corrupt.exists() or any(
+                    sidecar.exists() for sidecar in self._database_sidecars(corrupt)
+                ):
+                    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+                    corrupt = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+                self._move_database_family(self.path, corrupt)
+                self._remove_database_sidecars(self.path)
+                staging.replace(self.path)
+                self._fsync_directory(self.path.parent)
+                match = re.search(r"pre-v(\d+)\.bak$", backup.name)
+                source_backup = (
+                    backup.name
+                    if backup.parent == self.path.parent
+                    else str(backup)
+                )
+                self.last_recovery = {
+                    "restored_at": datetime.now().isoformat(),
+                    "source_backup": source_backup,
+                    "restored_schema_version": (
+                        int(match.group(1))
+                        if match
+                        else self._schema_version_from_file(backup)
+                    ),
+                    "preserved_corrupt_file": corrupt.name,
+                }
+                return
+
+            self._remove_database_family(staging)
+            self.read_only = True
+            self.last_recovery = {
+                "restored": False,
+                "reason": "database is corrupt and no valid backup exists",
+            }
+            raise sqlite3.DatabaseError(self.last_recovery["reason"])
 
     def _schema_version(self, connection: sqlite3.Connection) -> int:
         row = connection.execute(
@@ -1550,10 +1695,47 @@ class SQLiteStore:
                     connection.execute(statement, values)
 
     def backup(self, destination: Path) -> Path:
+        """Create a validated, atomically replaced, durable SQLite snapshot."""
         self.initialize()
-        with self.connect() as source, sqlite3.connect(destination) as target:
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.resolve() == self.path.resolve():
+            raise ValueError("backup destination must differ from the live database")
+        staging = destination.with_name(f".{destination.name}.tmp")
+        self._remove_database_family(staging)
+        with self.connect() as source, closing(sqlite3.connect(staging)) as target:
+            target.execute("PRAGMA journal_mode=DELETE")
+            target.execute("PRAGMA synchronous=FULL")
             source.backup(target)
+            target.commit()
+        self._validate_database_file(staging)
+        self._fsync_file(staging)
+        self._remove_database_sidecars(destination)
+        staging.replace(destination)
+        self._fsync_directory(destination.parent)
         return destination
+
+    def close(self, *, checkpoint: bool = True) -> None:
+        """Flush and close this process's persistent SQLite connection."""
+        if self.read_only:
+            return
+        connection = getattr(self._thread_local, "connection", None)
+        if connection is None:
+            return
+        try:
+            if checkpoint:
+                try:
+                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.DatabaseError:
+                    # Another process may be using the WAL.  Closing the
+                    # durable connection still releases this process cleanly;
+                    # the next startup will validate the database family.
+                    pass
+        finally:
+            connection.close()
+            del self._thread_local.connection
+            self._wal_configured = False
+            self._integrity_verified_version = None
 
     def rollback(self, backup: Path) -> None:
         if not backup.exists():
@@ -1651,6 +1833,12 @@ class SQLiteStore:
         """Insert outcome rows idempotently in one short transaction."""
         if not entries:
             return 0
+        self._validate_candidate_outcome_entries(entries)
+        with self.transaction() as connection:
+            return self.create_candidate_outcomes_in(connection, entries)
+
+    @staticmethod
+    def _validate_candidate_outcome_entries(entries: list[dict[str, Any]]) -> None:
         required = {
             "entry_snapshot_id",
             "entry_alert_id",
@@ -1678,31 +1866,40 @@ class SQLiteStore:
                 raise ValueError("candidate outcome rank is invalid")
             if float(entry["entry_price"]) <= 0:
                 raise ValueError("candidate outcome entry price must be positive")
+
+    def create_candidate_outcomes_in(
+        self,
+        connection: sqlite3.Connection,
+        entries: list[dict[str, Any]],
+    ) -> int:
+        """Insert outcome rows inside an existing business transaction."""
+        if not entries:
+            return 0
+        self._validate_candidate_outcome_entries(entries)
         inserted = 0
-        with self.transaction() as connection:
-            for entry in entries:
-                cursor = connection.execute(
-                    "INSERT OR IGNORE INTO candidate_outcomes "
-                    "(entry_snapshot_id, entry_alert_id, entry_trade_date, slot, rank, "
-                    "code, name, entry_price, entry_source_ts, target_trade_date, "
-                    "target_slot, exit_price, exit_source_ts, return_pct, status, outcome, "
-                    "settlement_method, quality, provider_version, config_version, "
-                    "app_version, created_at, updated_at, safe_reason, settlement_attempts, "
-                    "last_attempt_at, next_retry_at) "
-                    "VALUES (:entry_snapshot_id, :entry_alert_id, :entry_trade_date, "
-                    ":slot, :rank, :code, :name, :entry_price, :entry_source_ts, "
-                    ":target_trade_date, :target_slot, NULL, NULL, NULL, :status, NULL, "
-                    "NULL, :quality, :provider_version, :config_version, :app_version, "
-                    ":created_at, :updated_at, :safe_reason, 0, NULL, :next_retry_at)",
-                    {
-                        **entry,
-                        "target_trade_date": entry.get("target_trade_date"),
-                        "status": entry.get("status", "pending"),
-                        "safe_reason": entry.get("safe_reason"),
-                        "next_retry_at": entry.get("next_retry_at"),
-                    },
-                )
-                inserted += max(0, cursor.rowcount)
+        for entry in entries:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO candidate_outcomes "
+                "(entry_snapshot_id, entry_alert_id, entry_trade_date, slot, rank, "
+                "code, name, entry_price, entry_source_ts, target_trade_date, "
+                "target_slot, exit_price, exit_source_ts, return_pct, status, outcome, "
+                "settlement_method, quality, provider_version, config_version, "
+                "app_version, created_at, updated_at, safe_reason, settlement_attempts, "
+                "last_attempt_at, next_retry_at) "
+                "VALUES (:entry_snapshot_id, :entry_alert_id, :entry_trade_date, "
+                ":slot, :rank, :code, :name, :entry_price, :entry_source_ts, "
+                ":target_trade_date, :target_slot, NULL, NULL, NULL, :status, NULL, "
+                "NULL, :quality, :provider_version, :config_version, :app_version, "
+                ":created_at, :updated_at, :safe_reason, 0, NULL, :next_retry_at)",
+                {
+                    **entry,
+                    "target_trade_date": entry.get("target_trade_date"),
+                    "status": entry.get("status", "pending"),
+                    "safe_reason": entry.get("safe_reason"),
+                    "next_retry_at": entry.get("next_retry_at"),
+                },
+            )
+            inserted += max(0, cursor.rowcount)
         return inserted
 
     def assign_candidate_outcome_target(

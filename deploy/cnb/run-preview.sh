@@ -21,7 +21,14 @@ if [[ ! -s "$SW_CNB_DB" ]]; then
   fi
 fi
 
-python -m stock_watcher.server.admin_cli migrate >/dev/null
+if ! python -m stock_watcher.server.admin_cli migrate >/dev/null; then
+  echo "CNB database validation failed; restoring the last verified result snapshot" >&2
+  if ! "$script_dir/registry-snapshot.sh" restore; then
+    echo "CNB database is corrupt and no verified result snapshot is available" >&2
+    exit 1
+  fi
+  python -m stock_watcher.server.admin_cli migrate >/dev/null
+fi
 
 run_stamp=$(date +%Y%m%dT%H%M%S)
 web_log="$SW_CNB_LOGS/web-$run_stamp.log"

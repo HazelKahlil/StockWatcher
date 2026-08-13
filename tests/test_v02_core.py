@@ -873,6 +873,40 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
         assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'probe'"
-        ).fetchone() == ("kept",)
+        ).fetchone() is None
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert path.with_suffix(".sqlite3.corrupt").exists()
+
+
+def test_sqlite_auto_recovers_valid_header_page_corruption_from_configured_backup(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "watcher.sqlite3"
+    store = SQLiteStore(path)
+    store.initialize()
+    for index in range(100):
+        store.put_note(f"durable-{index}", "x" * 80)
+    backup = tmp_path / "backups" / "stockwatcher-20260813" / path.name
+    store.backup(backup)
+    store.close()
+
+    # Keep the SQLite header magic but damage a data page.  This is the shape
+    # of corruption that a magic-byte-only recovery check cannot detect.
+    with path.open("r+b") as handle:
+        handle.seek(4096)
+        handle.write(b"\x00" * 4096)
+
+    recovered = SQLiteStore(
+        path,
+        recovery_backup_dirs=(backup.parent.parent,),
+    )
+    recovered.initialize()
+
+    assert recovered.last_recovery is not None
+    assert recovered.last_recovery["source_backup"] == str(backup)
+    with recovered.connect() as connection:
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'durable-99'"
+        ).fetchone() == ("x" * 80,)
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     assert path.with_suffix(".sqlite3.corrupt").exists()

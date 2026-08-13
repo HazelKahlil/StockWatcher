@@ -38,6 +38,11 @@ class ServerSettings:
             os.environ.get("STOCKWATCHER_REPORT_DIR", "state/reports")
         )
     )
+    backup_dir: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("STOCKWATCHER_BACKUP_DIR", "/backups")
+        )
+    )
     master_key_file: Path | None = field(
         default_factory=lambda: (
             Path(os.environ["STOCKWATCHER_MASTER_KEY_FILE"])

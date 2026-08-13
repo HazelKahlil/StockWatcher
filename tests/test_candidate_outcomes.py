@@ -309,6 +309,39 @@ def test_scheduled_slots_use_verified_calendar_and_are_idempotent(tmp_path: Path
     assert provider.calendar_calls == 3
 
 
+def test_scheduled_outcome_obligations_can_commit_with_the_alert(tmp_path: Path) -> None:
+    entry_date = date(2026, 8, 13)
+    at = stamp(entry_date, 9, 45)
+    store = SQLiteStore(tmp_path / "atomic-outcomes.sqlite3")
+    store.initialize()
+    batch = candidate_batch(at)
+
+    with store.transaction() as connection:
+        snapshot_id = store.record_batch_in(connection, batch)
+        alert_id = store.record_alert_event_in(
+            connection,
+            snapshot_id=snapshot_id,
+            displayed_at=at.isoformat(),
+            decision="scheduled-09:45",
+            channel="web-worker",
+            trigger_type="scheduled-09:45",
+            detail={},
+        )
+        entries = CandidateOutcomeTracker.pending_entries_for_scheduled_batch(
+            batch,
+            snapshot_id=snapshot_id,
+            alert_id=alert_id,
+            trigger_type="scheduled-09:45",
+            recorded_at=at,
+        )
+        assert store.create_candidate_outcomes_in(connection, entries) == 3
+
+    rows = store.list_candidate_outcomes(trading_days=None)
+    assert len(rows) == 3
+    assert {row["status"] for row in rows} == {"pending"}
+    assert {row["target_trade_date"] for row in rows} == {None}
+
+
 def test_real_degraded_trade_calendar_contract_resolves_next_open_date(tmp_path: Path) -> None:
     friday = date(2026, 8, 7)
     tuesday = date(2026, 8, 11)
@@ -1391,6 +1424,73 @@ def test_statistics_exclude_pending_and_require_all_six_for_portfolio() -> None:
     assert review.portfolio_win_rate == 1.0
     assert review.portfolios[0].complete is False
     assert review.portfolios[1].average_return_pct == pytest.approx(0.5)
+
+
+def test_outcome_result_uses_realized_return_not_change_between_days() -> None:
+    record = outcome_record(
+        record_id=1,
+        entry_date=date(2026, 8, 10),
+        slot=OutcomeSlot.MORNING,
+        rank=1,
+        return_value=8.0,
+        outcome=OutcomeResult.LOSS,
+        status=OutcomeStatus.SETTLED,
+    )
+
+    review = build_outcome_review((record,))
+
+    assert review.overall.win_count == 1
+    assert review.overall.loss_count == 0
+    assert review.overall.win_rate == 1.0
+
+
+def test_persisted_wrong_outcome_label_is_recomputed_from_return() -> None:
+    record = outcome_record(
+        record_id=1,
+        entry_date=date(2026, 8, 10),
+        slot=OutcomeSlot.MORNING,
+        rank=1,
+        return_value=8.0,
+        outcome=OutcomeResult.LOSS,
+        status=OutcomeStatus.SETTLED,
+    )
+    row = {
+        "id": record.id,
+        "entry_snapshot_id": record.entry_snapshot_id,
+        "entry_alert_id": record.entry_alert_id,
+        "entry_trade_date": record.entry_trade_date.isoformat(),
+        "slot": record.slot.value,
+        "rank": record.rank,
+        "code": record.code,
+        "name": record.name,
+        "entry_price": record.entry_price,
+        "entry_source_ts": record.entry_source_ts.isoformat(),
+        "target_trade_date": record.target_trade_date.isoformat()
+        if record.target_trade_date
+        else None,
+        "target_slot": record.target_slot.value,
+        "exit_price": record.exit_price,
+        "exit_source_ts": record.exit_source_ts.isoformat()
+        if record.exit_source_ts
+        else None,
+        "return_pct": record.return_pct,
+        "status": record.status.value,
+        "outcome": "loss",
+        "settlement_method": record.settlement_method.value
+        if record.settlement_method
+        else None,
+        "quality": record.quality,
+        "provider_version": record.provider_version,
+        "config_version": record.config_version,
+        "app_version": record.app_version,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+        "safe_reason": record.safe_reason,
+    }
+
+    parsed = CandidateOutcome.from_mapping(row)
+
+    assert parsed.outcome is OutcomeResult.WIN
 
 
 def test_historical_backfill_accepts_only_real_scheduled_three(tmp_path: Path) -> None:

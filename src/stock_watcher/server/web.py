@@ -48,7 +48,10 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 def _build_services(settings: ServerSettings) -> dict[str, Any]:
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     settings.report_dir.mkdir(parents=True, exist_ok=True)
-    store = SQLiteStore(settings.db_path)
+    store = SQLiteStore(
+        settings.db_path,
+        recovery_backup_dirs=(settings.backup_dir,),
+    )
     store.initialize()
     # Worker-owned rows must be read through short-lived read-only connections.
     # A long-lived Web connection can retain an obsolete WAL view across a
@@ -105,8 +108,11 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> Any:
-        yield
-        store.initialize()
+        try:
+            yield
+        finally:
+            store.close()
+            read_store.close()
 
     app = FastAPI(
         title="StockWatcher Web Internal Test",

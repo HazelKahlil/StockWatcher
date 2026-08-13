@@ -205,3 +205,18 @@
   事件限制。随后手动 API 构建 `cnb-pco-1jvs8bn88` 已通过 Prepare、创建运行中的
   only-preview 开发空间并到达 StockWatcher 登录页，事件路径现场验证通过；管理员登录和
   Token 激活仍待 Owner 在新空间完成。
+
+## 2026-08-13 重启恢复与候选胜率修复
+
+- SQLite 写连接改为 `synchronous=FULL`；Web 与 Worker 的正常退出会等待 outcome sidecar
+  写入、执行 WAL checkpoint 并关闭持久连接，Compose Web/Worker 均保留 120 秒停止宽限期。
+- 启动时不再只看 SQLite 文件头：完整性检查发现 `database disk image is malformed` 等损坏时，
+  会在跨进程恢复锁内从已验证的迁移备份或 `/backups` 备份恢复，先隔离主库及其 WAL/SHM，
+  再原子替换并重新校验；没有可靠备份则保持只读失败关闭。CNB 已增加“已有数据库校验失败→
+  上一次私有结果快照恢复”的启动兜底。
+- Web 的 09:45 与 14:45 提醒会在同一 SQLite 事务中把各自 3 只候选写成 pending outcome，
+  日历解析和结算仍在旁路线程执行；重启不会丢失当天 6 条胜率样本。下次启动会重新解析尚未
+  完成的目标交易日。
+- 胜负统一按入选价到目标时点价的真实 `return_pct` 判定：例如从 +10% 回落到 +8% 仍是正收益，
+  计为赢；历史记录若保留了错误标签，复盘读取时也会按真实收益纠正。以上为离线代码与回归
+  证据，未替代下一真实交易日的 09:45/14:45 同点行情验收，状态继续 `BLOCKED / NOT_ACCEPTED`。
