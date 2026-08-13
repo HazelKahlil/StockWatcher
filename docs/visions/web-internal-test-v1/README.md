@@ -242,3 +242,4 @@
   竞态；测试现用临时 marker 同步到实际慢 tick/runtime heartbeat 后再量测独立 lease heartbeat，
   不放宽 12 秒阻塞窗口，也未改 Worker 产品逻辑。最终完整回归为 `509 passed, 26 skipped`、
   零告警。
+- 实现提交 `53501ad` 已快进合入本地 `cnb/main`；未 push、未构建或替换线上镜像。

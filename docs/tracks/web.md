@@ -2,7 +2,8 @@
 
 ## 唯一事实源
 
-- 当前返修分支：`fix/web-desktop-ui-alert-lifecycle`，基于 Web 可恢复节点 `b061269`。
+- 当前本地 Web 主线：`cnb/main`；实现提交 `53501ad` 已由返修分支
+  `fix/web-desktop-ui-alert-lifecycle` 快进合入。
 - 当前代码未部署；上一轮已验证的 Mac Docker 实现提交仍为
   `cfc6cd66be3edcf5468840c29b509eae643896b5`。
 - Web 基线：`502a447d7e593d638ea45518f2a5e4d4827f683f`（Mac RC3 tag 基线）。

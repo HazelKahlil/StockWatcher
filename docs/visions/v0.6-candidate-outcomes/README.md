@@ -134,8 +134,8 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
   `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
 - alpha.4 Shared Core 已合入本地 `main@b00221f`；Web 部署实现为
   `fix/web-top3-gain-emphasis@cfc6cd6`。
-- 2026-08-13 Web 桌面视觉与提醒生命周期返修位于独立分支
-  `fix/web-desktop-ui-alert-lifecycle`，基于 Web 可恢复节点 `b061269`；本轮未部署。
+- 2026-08-13 Web 桌面视觉与提醒生命周期返修实现提交为 `53501ad`，已由独立分支
+  `fix/web-desktop-ui-alert-lifecycle` 快进合入本地 `cnb/main`；本轮未 push、未部署。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界
