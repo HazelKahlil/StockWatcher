@@ -1,4 +1,4 @@
-import { api, apiJson, esc, fmtTime } from './app.js';
+import { api, apiJson, esc, fmtTime } from './app.js?v=6';
 
 async function loadDiagnostics() {
   const wrap = document.getElementById('diagnostics');

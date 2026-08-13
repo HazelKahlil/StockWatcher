@@ -38,7 +38,7 @@ export async function apiJson(path, options = {}) {
 }
 
 let ws = null;
-let lastEventId = 0;
+let lastEventId = null;
 const listeners = new Set();
 
 export function onEvent(fn) {
@@ -61,7 +61,8 @@ export function connectEvents() {
     return ws;
   }
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${protocol}://${window.location.host}/ws/v1/events?after_id=${lastEventId}`);
+  const cursor = lastEventId == null ? '' : `?after_id=${lastEventId}`;
+  ws = new WebSocket(`${protocol}://${window.location.host}/ws/v1/events${cursor}`);
   const stateEl = document.getElementById('ws-state');
   const setState = (label, cls) => {
     if (!stateEl) return;
@@ -80,7 +81,9 @@ export function connectEvents() {
   ws.addEventListener('message', (message) => {
     let event;
     try { event = JSON.parse(message.data); } catch { return; }
-    if (event.event_type === 'server.resync_required') {
+    if (event.event_type === 'server.hello' && lastEventId == null) {
+      lastEventId = Number(event.payload?.latest_event_id || 0);
+    } else if (event.event_type === 'server.resync_required') {
       lastEventId = Number(event.payload?.latest_event_id || 0);
     } else if (event.event_type !== 'server.hello' && event.event_id > lastEventId) {
       lastEventId = event.event_id;
@@ -137,8 +140,5 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.assign('/');
       }
     });
-  }
-  if (csrfToken) {
-    connectEvents();
   }
 });

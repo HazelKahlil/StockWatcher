@@ -78,6 +78,30 @@ def test_ws_hello_snapshot_and_replay(app_env: tuple[Any, SQLiteStore]) -> None:
         assert [e["event_id"] for e in events] == [1, 2, 3, 4, 5]
 
 
+def test_ws_fresh_page_without_cursor_starts_at_current_watermark(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, store = app_env
+    latest = seed_events(app, store, 5)
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events") as websocket:
+        hello = json.loads(websocket.receive_text())
+        snapshot = json.loads(websocket.receive_text())
+        assert hello["event_type"] == "server.hello"
+        assert hello["payload"]["latest_event_id"] == latest
+        assert snapshot["event_type"] == "state.snapshot"
+
+        new_event_id = app.state.outbox.append_own(
+            event_type="alert.created",
+            payload={"alert_id": 6, "trigger_type": "intraday"},
+            source_kind="alert",
+            source_id="6",
+        )
+        event = json.loads(websocket.receive_text())
+        assert event["event_type"] == "alert.created"
+        assert event["event_id"] == new_event_id == latest + 1
+
+
 def test_ws_reconnect_with_after_id(app_env: tuple[Any, SQLiteStore]) -> None:
     app, store = app_env
     seed_events(app, store, 3)
@@ -157,7 +181,7 @@ def test_ws_unauthorized_rejected(app_env: tuple[Any, SQLiteStore]) -> None:
             websocket.receive_text()
 
 
-def test_browser_does_not_advance_cursor_from_hello() -> None:
+def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally() -> None:
     script = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -166,6 +190,9 @@ def test_browser_does_not_advance_cursor_from_hello() -> None:
         / "static"
         / "app.js"
     ).read_text(encoding="utf-8")
-    assert "event.event_type !== 'server.hello'" in script
+    assert "let lastEventId = null;" in script
+    assert "lastEventId == null ? ''" in script
+    assert "event.event_type === 'server.hello' && lastEventId == null" in script
+    assert "lastEventId = Number(event.payload?.latest_event_id || 0);" in script
     assert "event.event_type === 'server.resync_required'" in script
-    assert "lastEventId = event.payload.latest_event_id" not in script
+    assert "if (csrfToken)" not in script

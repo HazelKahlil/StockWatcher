@@ -1,4 +1,4 @@
-import { apiJson, esc } from './app.js?v=5';
+import { apiJson, esc } from './app.js?v=6';
 
 const rangeLabels = { week: '近 1 周', month: '近 1 月', all: '全部' };
 

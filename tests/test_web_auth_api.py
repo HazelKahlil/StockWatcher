@@ -307,13 +307,18 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
         encoding="utf-8"
     )
     assert 'id="strong-alerts"' in dashboard_template
+    assert 'class="cards dashboard-cards"' in dashboard_template
     assert 'role="alertdialog"' in dashboard_script
+    assert 'aria-modal="false"' in dashboard_script
     assert "showAutomaticAlert" in dashboard_script
     assert "'scheduled-09:45', 'scheduled-14:45'" in dashboard_script
     assert "setTimeout(() => toast.remove(), 220)" not in dashboard_script
     assert "15000" not in dashboard_script
-    assert "alertRestoreTarget.focus()" in dashboard_script
-    assert "keepAlertFocus(event)" in dashboard_script
+    assert "automaticAlertQueue.length = 0" in dashboard_script
+    assert "keepAlertFocus(event)" not in dashboard_script
+    assert dashboard_script.index("onEvent(async (event)") < dashboard_script.index(
+        "connectEvents();"
+    )
     for relative in (
         "src/stock_watcher/server/templates/dashboard.html",
         "src/stock_watcher/server/static/dashboard.js",
@@ -322,7 +327,7 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
         assert 'style="' not in content
 
 
-def test_morandi_theme_outcome_page_and_blue_notification_contract() -> None:
+def test_desktop_app_theme_outcome_page_and_bottom_right_alert_contract() -> None:
     root = Path(__file__).resolve().parents[1]
     css = (root / "src/stock_watcher/server/static/app.css").read_text(encoding="utf-8")
     base = (root / "src/stock_watcher/server/templates/base.html").read_text(
@@ -335,24 +340,27 @@ def test_morandi_theme_outcome_page_and_blue_notification_contract() -> None:
         encoding="utf-8"
     )
     for token in (
-        "--bg: #EDE8DF",
-        "--card: #F7F3EC",
-        "--fg: #32383A",
-        "--line: #C9C2B7",
-        "--mist-blue: #627F92",
-        "--ashare-red: #A75F5A",
-        "--ashare-green: #66806B",
-        "--ashare-gold: #A68A58",
-        "--top3-gain-red: #dc2626",
-        "--top3-gain-red: #ef4444",
+        "--bg: #f5f7fb",
+        "--card: #ffffff",
+        "--fg: #172231",
+        "--line: #e1e7ef",
+        "--mist-blue: #1679ed",
+        "--ashare-red: #df3c3c",
+        "--ashare-green: #17814f",
+        "--ashare-gold: #b87700",
+        "--top3-gain-red: #df3c3c",
     ):
         assert token in css
-    assert "font-size: clamp(1.85rem, 2.4vw, 2rem)" in css
+    assert "font-size: clamp(1.4rem, 2.5vw, 1.85rem)" in css
     assert '.cards .ashare-pct[data-direction="up"]' in css
     assert "color: var(--top3-gain-red) !important" in css
-    assert 'href="/static/app.css?v=13"' in base
+    assert 'href="/static/app.css?v=14"' in base
+    assert 'src="/static/app.js?v=6"' in base
     assert ".hero-action-button.btn-notify" in css
-    assert "background: var(--mist-blue)" in css
+    assert ".dashboard-cards > .card {" in css
+    assert "pointer-events: none" in css
+    assert "inset: auto clamp(0.8rem, 2.4vw, 1.8rem)" in css
+    assert ".strong-alert-open" in css
     assert 'href="/outcomes"' in base
     assert 'data-outcome-range="week"' in outcomes
     assert 'data-outcome-range="month"' in outcomes

@@ -163,9 +163,14 @@ def test_worker_lease_heartbeat_refreshes(tmp_path: Path) -> None:
 def test_worker_lease_heartbeat_survives_slow_business_tick(tmp_path: Path) -> None:
     """A slow automatic tick must not let the unique-worker lease expire."""
     db, _, env = _prepare(tmp_path)
+    tick_started = tmp_path / "slow-tick-started"
+    env = {**env, "STOCKWATCHER_TEST_SLOW_TICK_MARKER": str(tick_started)}
     code = (
-        "import time; import stock_watcher.server.worker as worker; "
-        "worker.WorkerRuntime._tick = lambda self: time.sleep(12); "
+        "import os, time; from pathlib import Path; "
+        "import stock_watcher.server.worker as worker; "
+        "worker.WorkerRuntime._tick = lambda self: "
+        "(Path(os.environ['STOCKWATCHER_TEST_SLOW_TICK_MARKER']).touch(), "
+        "time.sleep(12))[-1]; "
         "import sys; sys.exit(worker.main())"
     )
     process = subprocess.Popen(
@@ -177,10 +182,10 @@ def test_worker_lease_heartbeat_survives_slow_business_tick(tmp_path: Path) -> N
     )
     try:
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if _lease_holder(db):
-                break
-            time.sleep(0.5)
+        while time.monotonic() < deadline and not tick_started.exists():
+            assert process.poll() is None, "worker exited before the slow tick started"
+            time.sleep(0.1)
+        assert tick_started.exists(), "worker never entered the slow business tick"
         with sqlite3.connect(db) as connection:
             heartbeat_a = connection.execute(
                 "SELECT heartbeat_at FROM service_leases "
@@ -201,9 +206,19 @@ def test_worker_lease_heartbeat_survives_slow_business_tick(tmp_path: Path) -> N
 def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
     """A blocked runtime evidence write must not stop lease renewal."""
     db, _, env = _prepare(tmp_path)
+    runtime_heartbeat_started = tmp_path / "slow-runtime-heartbeat-started"
+    env = {
+        **env,
+        "STOCKWATCHER_TEST_SLOW_RUNTIME_HEARTBEAT_MARKER": str(
+            runtime_heartbeat_started
+        ),
+    }
     code = (
-        "import time; import stock_watcher.server.worker as worker; "
-        "worker.StockWatcherService.heartbeat = lambda self: time.sleep(12); "
+        "import os, time; from pathlib import Path; "
+        "import stock_watcher.server.worker as worker; "
+        "worker.StockWatcherService.heartbeat = lambda self: "
+        "(Path(os.environ['STOCKWATCHER_TEST_SLOW_RUNTIME_HEARTBEAT_MARKER']).touch(), "
+        "time.sleep(12))[-1]; "
         "import sys; sys.exit(worker.main())"
     )
     process = subprocess.Popen(
@@ -215,10 +230,10 @@ def test_worker_lease_survives_slow_runtime_heartbeat(tmp_path: Path) -> None:
     )
     try:
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if _lease_holder(db):
-                break
-            time.sleep(0.5)
+        while time.monotonic() < deadline and not runtime_heartbeat_started.exists():
+            assert process.poll() is None, "worker exited before runtime heartbeat started"
+            time.sleep(0.1)
+        assert runtime_heartbeat_started.exists(), "runtime heartbeat never started"
         with sqlite3.connect(db) as connection:
             heartbeat_a = connection.execute(
                 "SELECT heartbeat_at FROM service_leases "

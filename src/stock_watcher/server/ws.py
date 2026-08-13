@@ -72,9 +72,18 @@ class WebSocketManager:
             self._connections.discard(websocket)
 
     async def _serve(self, websocket: WebSocket, session: dict[str, Any]) -> None:
-        after_id = int(websocket.query_params.get("after_id", "0") or 0)
         minimum = self.outbox.minimum_available_id()
         latest = self.outbox.latest_id()
+        requested_after_id = websocket.query_params.get("after_id")
+        # A fresh page load starts at the current server watermark. Explicit
+        # cursors still replay missed events, including after_id=0 for tests and
+        # diagnostics. This keeps browser reopen/refresh from presenting the
+        # durable 30-day history as new pop-up alerts.
+        after_id = (
+            latest
+            if requested_after_id in {None, ""}
+            else int(requested_after_id)
+        )
         hello = _envelope(
             0,
             "server.hello",

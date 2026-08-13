@@ -78,8 +78,10 @@ Top3、提醒或弹窗。
 近 1 月、全部，展示总体与 09:45/14:45 分档统计、价格、收益、状态和结算方式。上涨红、
 下跌绿、待结算或不可用灰；数据库读取继续在工作线程执行。
 
-Web 保留杂志排版并使用莫兰迪低饱和色；强异动与固定 09:45/14:45 自动提醒统一为需手动
-关闭的中央 `alertdialog`，手动抓取不触发，WebSocket 重连不重放旧弹窗。
+Web 首页按桌面 App 的浅色状态总览、三行候选卡与底部操作区组织；强异动与固定
+09:45/14:45 自动提醒统一为右下角、非模态、可手动或按 Esc 关闭的 `alertdialog`。
+首次登录、刷新和关闭页面后重开不重放持久化旧提醒；同一页面真实断线重连仍按显式游标
+补发遗漏事件。手动抓取不触发自动提醒。
 
 旧 `docs/process/rules/ui.md` 禁止普通候选页使用“买入/卖出/胜率”避免收益承诺；本版本由
 Human Owner 明确授权一个有边界的复盘例外，只在“理论复盘”页面展示历史统计，并固定显示
@@ -95,7 +97,7 @@ Human Owner 明确授权一个有边界的复盘例外，只在“理论复盘�
 - [x] 复盘故障或慢请求不影响原 Top3/提醒的旁路回归。
 - [x] 全量 pytest、Ruff、Mypy、workspace validator、Windows package contract、lock 与 diff 门。
 - [x] 仓库外脱敏交接 ZIP 与三态 UI 截图。
-- [x] Web Schema v9、认证只读 API、月度摘要/完整页、中央提醒与莫兰迪视觉回归。
+- [x] Web Schema v9、认证只读 API、月度摘要/完整页、桌面 App 视觉与右下角提醒回归。
 - [ ] 下一真实交易日 09:45/14:45 的现场同点结算与错过时点回补验收。
 
 真实生产链回归使用 fake `requests.Session` 和内存测试凭据，不联网、不读取真实 Token，并
@@ -120,8 +122,9 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 | `git diff --check` | exit 0 |
 | `python3 -m json.tool CURRENT_RELEASES.json` | exit 0 |
 
-确定性 Web UI 已覆盖桌面首页、完整复盘、WebSocket 中央提醒与 390px 移动端；实拍同时验证
-Esc 关闭、焦点恢复、Top3 上涨旧版红与放大字号。未覆盖现有已安装 Mac/Windows App。
+确定性 Web UI 已覆盖桌面首页、完整复盘、WebSocket 右下角提醒与 390px 移动端；本地浏览器
+实拍同时验证按钮/Esc 关闭、无页面锁定、首次/刷新不重放旧提醒及 Top3 高对比上涨值。
+未覆盖现有已安装 Mac/Windows App。
 
 ## 本地提交与同步
 
@@ -131,6 +134,8 @@ Esc 关闭、焦点恢复、Top3 上涨旧版红与放大字号。未覆盖现�
   `e85faf2d83b2a8877a6320dfd4b60ae9e780486d`。
 - alpha.4 Shared Core 已合入本地 `main@b00221f`；Web 部署实现为
   `fix/web-top3-gain-emphasis@cfc6cd6`。
+- 2026-08-13 Web 桌面视觉与提醒生命周期返修位于独立分支
+  `fix/web-desktop-ui-alert-lifecycle`，基于 Web 可恢复节点 `b061269`；本轮未部署。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

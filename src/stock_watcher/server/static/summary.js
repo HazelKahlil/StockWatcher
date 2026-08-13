@@ -1,4 +1,4 @@
-import { apiJson, esc, fmtTime } from './app.js';
+import { apiJson, esc, fmtTime } from './app.js?v=6';
 
 function render(items) {
   const wrap = document.getElementById('summaries');

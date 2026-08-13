@@ -1,4 +1,4 @@
-import { apiJson, connectEvents, esc, fmtTime, onEvent } from './app.js';
+import { apiJson, connectEvents, esc, fmtTime, onEvent } from './app.js?v=6';
 
 const triggerLabels = {
   'scheduled-09:45': '09:45 观察',
@@ -41,8 +41,6 @@ async function loadHistory(append = false) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadHistory();
-  connectEvents();
   const live = document.getElementById('alerts-live');
   onEvent((event) => {
     if (event.event_type === 'alert.created') {
@@ -51,8 +49,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         <article class="card">
           <h3>${esc(triggerLabels[payload.trigger_type] || payload.trigger_type)} @ ${fmtTime(payload.displayed_at)}</h3>
           <p>alert #${payload.alert_id} · snapshot #${payload.snapshot_id} · ${esc((payload.triggering_codes || []).join('、') || '—')}</p>
-        </article>`;
+      </article>`;
     }
   });
+  connectEvents();
+  await loadHistory();
   document.getElementById('load-more').addEventListener('click', () => loadHistory(true));
 });

@@ -1,7 +1,7 @@
-import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=5';
+import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=6';
 
-const stateLabels = { starting: '启动中', warming: '预热', healthy: '健康', stale: '陈旧', stopped: '停止' };
-const marketLabels = { preopen: '盘前', morning: '上午盘', lunch: '午休', afternoon: '下午盘', closed: '休市' };
+const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
+const marketLabels = { preopen: '盘前', morning: '上午盘', lunch: '午休', afternoon: '下午盘', closed: '休市', unknown: '待确认' };
 const refreshStages = [
   { maxSeconds: 2, label: '连接行情数据' },
   { maxSeconds: 6, label: '扫描全市场候选' },
@@ -19,10 +19,8 @@ const refreshFailureLabels = {
 let refreshProgressTimer = null;
 let refreshProgressHideTimer = null;
 const handledAlertIds = new Set();
-let connectionWatermark = null;
 const automaticAlertQueue = [];
 let activeAutomaticAlert = null;
-let alertRestoreTarget = null;
 
 function clearRefreshProgressTimers() {
   if (refreshProgressTimer) {
@@ -86,87 +84,56 @@ function levelMeta(candidate) {
 }
 
 function placeholderCard(rank) {
-  const rankStr = String(rank).padStart(2, '0');
   return `
   <article class="card placeholder-card" aria-label="等待抓取第 ${rank} 只候选">
-    <div class="card-top-tag">
-      <span class="rank rank-${rank}-badge">${rankStr}</span>
-      <span class="level-tag level-placeholder">待抓取</span>
-    <span class="placeholder-state">
-      <span class="placeholder-state-label">等待数据</span>
-      <span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span>
-    </span>
+    <span class="rank rank-${rank}-badge">${rank}</span>
+    <div class="candidate-identity">
+      <h3 class="display-name placeholder-text">等待候选</h3>
+      <span class="display-code placeholder-text">------</span>
     </div>
-
-    <div class="card-stock-hero">
-      <div class="stock-display">
-        <div class="stock-name-row">
-          <h2 class="display-name placeholder-text">····</h2>
-          <span class="sector-tag placeholder-text">板块待抓取</span>
-        </div>
-        <div class="display-code-row">
-          <span class="display-code placeholder-text">······</span>
-        </div>
-      </div>
+    <div class="candidate-quote">
+      <span class="ashare-pct placeholder-text">--.--%</span>
+      <span class="ashare-price placeholder-text">¥--.--</span>
     </div>
-
-    <div class="price-fund-block">
-      <div class="price-main">
-        <span class="ashare-price placeholder-text">--.--</span>
-        <span class="ashare-pct placeholder-text">--.--%</span>
-      </div>
+    <span class="level-tag level-placeholder">待</span>
+    <div class="candidate-sector">
+      <span class="candidate-meta-label">最强板块</span>
+      <strong class="placeholder-text">板块待抓取</strong>
+      <small class="placeholder-card-status">正在抓取<span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span></small>
     </div>
-
-    <div class="card-footer">
-      <span class="placeholder-card-status">正在抓取</span>
-    </div>
+    <span class="card-arrow" aria-hidden="true">›</span>
   </article>`;
 }
 
 function cardFor(candidate, state) {
-  const isRank1 = candidate.rank === 1;
   const level = levelMeta(candidate);
-  const formal = candidate.is_formal ? '<span class="formal-pill">正式候选</span>' : '<span class="weak-note">补位</span>';
   const price = Number(candidate.price).toFixed(2);
   const changePct = Number(candidate.change_pct);
   const pctStr = (changePct > 0 ? '+' : '') + changePct.toFixed(2) + '%';
   const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
-  const rankStr = String(candidate.rank).padStart(2, '0');
+  const fundLabel = state?.fund_module && state.fund_module !== 'unavailable'
+    ? '资金增强可用'
+    : '资金未确认';
+  const observationLabel = candidate.is_formal ? fundLabel : `补位观察 · ${fundLabel}`;
 
   return `
-  <article class="card ${isRank1 ? 'rank-1-card' : ''}">
-    <div class="card-top-tag">
-      <span class="rank rank-${candidate.rank}-badge">${rankStr}</span>
-      <span class="level-tag level-${level.tone}">${esc(level.label)}</span>
-      ${formal}
+  <article class="card ${candidate.rank === 1 ? 'rank-1-card' : ''}">
+    <span class="rank rank-${candidate.rank}-badge">${candidate.rank}</span>
+    <div class="candidate-identity">
+      <h3 class="display-name">${esc(candidate.name)}</h3>
+      <span class="display-code">${esc(candidate.code)}</span>
     </div>
-
-    <div class="card-stock-hero">
-      <div class="stock-display">
-        <div class="stock-name-row">
-          <h2 class="display-name">${esc(candidate.name)}</h2>
-          ${candidate.sector_name ? `<span class="sector-tag">${esc(candidate.sector_name)}</span>` : ''}
-        </div>
-        <div class="display-code-row">
-          <span class="display-code">${esc(candidate.code)}</span>
-        </div>
-      </div>
+    <div class="candidate-quote">
+      <span class="ashare-pct" data-direction="${direction}">${pctStr}</span>
+      <span class="ashare-price">¥${price}</span>
     </div>
-
-    <div class="price-fund-block">
-      <div class="price-main">
-        <span class="ashare-price">¥${price}</span>
-        <span class="ashare-pct" data-direction="${direction}">${pctStr}</span>
-      </div>
+    <span class="level-tag level-${level.tone}">${esc(level.label.replace('级', ''))}</span>
+    <div class="candidate-sector">
+      <span class="candidate-meta-label">最强板块</span>
+      <strong>${esc(candidate.sector_name || '板块待确认')}</strong>
+      <small>${esc(observationLabel)}</small>
     </div>
-
-    <div class="card-footer">
-      <div class="metric-row">
-        <span>得分 <strong>${Number(candidate.total_score).toFixed(1)}</strong></span>
-        <span>阶段 <strong>${esc(level.label)}</strong></span>
-      </div>
-      <button type="button" class="btn-detail" data-detail="${esc(candidate.code)}">因子审计</button>
-    </div>
+    <button type="button" class="card-open-detail" data-detail="${esc(candidate.code)}" aria-label="查看 ${esc(candidate.name)} 因子审计"><span aria-hidden="true">›</span></button>
   </article>`;
 }
 
@@ -185,21 +152,18 @@ function compactAlertCard(candidate, triggeringCodes) {
   const rank = Math.min(3, Math.max(1, Number(candidate.rank) || 1));
   const level = levelMeta(candidate);
   const isTrigger = triggeringCodes.has(String(candidate.code));
-  const rankStr = String(rank).padStart(2, '0');
   const changePct = Number(candidate.change_pct);
   const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
   return `
     <article class="strong-alert-mini-card ${isTrigger ? 'is-trigger' : ''}">
-      <div class="strong-alert-mini-top">
-        <span class="rank rank-${rank}-badge">${rankStr}</span>
-        <span class="level-tag level-${level.tone}">${esc(level.label)}</span>
+      <span class="rank rank-${rank}-badge">${rank}</span>
+      <div class="strong-alert-mini-identity">
+        <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}</strong>
+        <span class="strong-alert-mini-code">${esc(candidate.code || '—')}</span>
       </div>
-      <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}</strong>
-      <span class="strong-alert-mini-code">${esc(candidate.code || '—')}</span>
-      <div class="strong-alert-mini-market">
-        <span class="strong-alert-mini-price">${compactPrice(candidate.price)}</span>
-        <span class="strong-alert-mini-pct" data-direction="${direction}">${compactPct(candidate.change_pct)}</span>
-      </div>
+      <span class="strong-alert-mini-pct" data-direction="${direction}">${compactPct(candidate.change_pct)}</span>
+      <span class="strong-alert-mini-price">${compactPrice(candidate.price)}</span>
+      <span class="level-tag level-${level.tone}">${esc(level.label.replace('级', ''))}</span>
     </article>`;
 }
 
@@ -210,28 +174,21 @@ function alertMeta(triggerType) {
   if (triggerType === 'scheduled-14:45') {
     return { kicker: '下午固定提醒 · 14:45', title: '下午候选已到达固定观察时点' };
   }
-  return { kicker: '盘中强异动', title: '发现强异动信号' };
+  return { kicker: '实时观察提醒', title: '盘中强异动' };
 }
 
 function closeAutomaticAlert() {
   const overlay = document.getElementById('strong-alerts');
   if (!overlay || !activeAutomaticAlert) return;
   overlay.classList.add('is-leaving');
-  const closing = activeAutomaticAlert;
   activeAutomaticAlert = null;
+  automaticAlertQueue.length = 0;
   setTimeout(() => {
     if (activeAutomaticAlert) return;
     overlay.replaceChildren();
     overlay.hidden = true;
     overlay.classList.remove('is-leaving');
-    document.body.classList.remove('alert-open');
-    if (automaticAlertQueue.length) {
-      renderNextAutomaticAlert();
-      return;
-    }
-    if (alertRestoreTarget?.isConnected) alertRestoreTarget.focus();
-    alertRestoreTarget = null;
-  }, closing ? 180 : 0);
+  }, 180);
 }
 
 function renderNextAutomaticAlert() {
@@ -249,12 +206,10 @@ function renderNextAutomaticAlert() {
   const cards = candidates.length
     ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes)).join('')
     : `<div class="strong-alert-syncing">${esc([...triggeringCodes].join('、') || '触发股票')} · 实时卡片同步中</div>`;
-  if (!alertRestoreTarget) alertRestoreTarget = document.activeElement;
   overlay.hidden = false;
   overlay.classList.remove('is-leaving');
-  document.body.classList.add('alert-open');
   overlay.innerHTML = `
-  <section class="strong-alert-dialog" data-alert-id="${alertId}" role="alertdialog" aria-modal="true" aria-labelledby="automatic-alert-title" aria-describedby="automatic-alert-summary">
+  <section class="strong-alert-dialog" data-alert-id="${alertId}" role="alertdialog" aria-modal="false" aria-labelledby="automatic-alert-title" aria-describedby="automatic-alert-summary">
     <div class="strong-alert-header">
       <div>
         <span class="strong-alert-kicker">${esc(meta.kicker)}</span>
@@ -266,35 +221,17 @@ function renderNextAutomaticAlert() {
     <p id="automatic-alert-summary" class="strong-alert-summary">${esc(triggerName)}${sectorName ? ` · ${esc(sectorName)}` : ''} · 请及时查看</p>
     <div class="strong-alert-mini-grid">${cards}</div>
     <div class="strong-alert-footer">
-      <a href="/alerts">查看提醒中心</a>
-      <span>此提醒需要手动关闭</span>
+      <span>只读观察提醒</span>
+      <a class="strong-alert-open" href="/alerts">打开列表</a>
     </div>
   </section>`;
   overlay.querySelector('[data-dismiss-alert]')?.addEventListener('click', closeAutomaticAlert);
-  overlay.querySelector('[data-dismiss-alert]')?.focus();
 }
 
 function showAutomaticAlert(payload, state) {
   if (!['intraday', 'scheduled-09:45', 'scheduled-14:45'].includes(payload.trigger_type)) return;
   automaticAlertQueue.push({ payload, state });
   renderNextAutomaticAlert();
-}
-
-function keepAlertFocus(event) {
-  if (event.key !== 'Tab' || !activeAutomaticAlert) return;
-  const dialog = document.querySelector('.strong-alert-dialog');
-  if (!dialog) return;
-  const focusable = [...dialog.querySelectorAll('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-  if (!focusable.length) return;
-  const first = focusable[0];
-  const last = focusable.at(-1);
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
 }
 
 function formatRate(value) {
@@ -343,18 +280,12 @@ function liveDateTimeLabel() {
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
   const date = `${values.year}年${values.month}月${values.day}日`;
-  return {
-    titleDate: `${date}（${values.weekday}）`,
-    dateTime: `${date} ${values.hour}:${values.minute}:${values.second}`,
-  };
+  return `${date}（${values.weekday}） ${values.hour}:${values.minute}:${values.second}`;
 }
 
 function updateLiveClock() {
-  const { titleDate, dateTime } = liveDateTimeLabel();
-  const title = document.getElementById('top3-title');
-  if (title) title.textContent = `${titleDate} 实时Top3`;
   const clock = document.getElementById('live-clock');
-  if (clock) clock.textContent = `当前时间 ${dateTime}`;
+  if (clock) clock.textContent = `当前时间 ${liveDateTimeLabel()}`;
 }
 
 function renderState(state) {
@@ -362,21 +293,26 @@ function renderState(state) {
   if (svc) {
     const cls = ({ healthy: 'healthy', warming: 'warming', stale: 'stale', stopped: 'stopped' })[state.service_state] || 'warming';
     svc.textContent = stateLabels[state.service_state] || state.service_state || '启动中';
-    svc.className = `pill pill-${cls}`;
+    svc.className = `status-item-value pill-${cls}`;
   }
   const market = document.getElementById('market-state');
-  if (market) market.textContent = `市场：${marketLabels[state.market_state] || state.market_state || '—'}`;
+  if (market) market.textContent = marketLabels[state.market_state] || state.market_state || '—';
   const lastScan = document.getElementById('last-scan');
   if (lastScan && state.last_scan) {
-    lastScan.textContent = `最后扫描 ${fmtTime(state.last_scan.completed_at)} · 覆盖 ${(state.last_scan.coverage_ratio * 100).toFixed(1)}% · 耗时 ${Number(state.last_scan.elapsed_seconds).toFixed(1)}s`;
+    lastScan.textContent = fmtTime(state.last_scan.completed_at);
+    lastScan.title = `覆盖 ${(state.last_scan.coverage_ratio * 100).toFixed(1)}% · 耗时 ${Number(state.last_scan.elapsed_seconds).toFixed(1)}s`;
   } else if (lastScan && state.source_ts) {
-    lastScan.textContent = `最后扫描 ${fmtTime(state.source_ts)} · 使用上一份实时结果`;
+    lastScan.textContent = fmtTime(state.source_ts);
+    lastScan.title = '使用上一份实时结果';
   } else if (lastScan) {
     lastScan.textContent = '尚未完成实时扫描';
+    lastScan.removeAttribute('title');
   }
   const workerAge = document.getElementById('worker-age');
   if (workerAge && state.worker_heartbeat_age_seconds != null) {
-    workerAge.textContent = `Worker心跳 ${Math.round(state.worker_heartbeat_age_seconds)}s 前`;
+    workerAge.textContent = `最近检测 ${Math.round(state.worker_heartbeat_age_seconds)} 秒前`;
+  } else if (workerAge) {
+    workerAge.textContent = '';
   }
   updateLiveClock();
   const tasks = document.getElementById('tasks');
@@ -387,8 +323,15 @@ function renderState(state) {
       : '<span class="task muted">今日暂无自动任务</span>';
   }
   const cards = document.getElementById('cards');
+  const candidates = Array.isArray(state.candidates) ? state.candidates : [];
+  const candidateState = document.getElementById('candidate-state');
+  if (candidateState) candidateState.textContent = candidates.length ? `${candidates.length}只观察` : '等待数据';
+  const top3Title = document.getElementById('top3-title');
+  if (top3Title) {
+    const runLabel = state.service_state === 'healthy' ? '运行正常' : (stateLabels[state.service_state] || '同步中');
+    top3Title.textContent = `当前${candidates.length}只观察｜${runLabel}`;
+  }
   if (cards) {
-    const candidates = Array.isArray(state.candidates) ? state.candidates : [];
     const candidatesByRank = new Map(candidates.map((candidate) => [Number(candidate.rank), candidate]));
     const cardsMarkup = [1, 2, 3].map((rank) => {
       const candidate = candidatesByRank.get(rank);
@@ -452,19 +395,11 @@ async function loadState() {
 document.addEventListener('DOMContentLoaded', async () => {
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
-  await loadState();
-  await loadOutcomeSummary();
   onEvent(async (event) => {
-    if (event.event_type === 'server.hello') {
-      connectionWatermark = Number(event.payload?.latest_event_id || 0);
-      return;
-    }
     if (event.event_type === 'state.snapshot' || event.event_type === 'state.changed' || event.event_type === 'candidates.updated') {
       loadState();
     }
     if (event.event_type === 'alert.created') {
-      const eventId = Number(event.event_id || 0);
-      if (connectionWatermark != null && eventId <= connectionWatermark) return;
       const alertId = Number(event.payload?.alert_id || 0);
       if (alertId && handledAlertIds.has(alertId)) return;
       if (alertId) handledAlertIds.add(alertId);
@@ -480,6 +415,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (event.event_type === 'outcomes.updated') loadOutcomeSummary();
   });
   connectEvents();
+  await Promise.all([loadState(), loadOutcomeSummary()]);
   const refreshButton = document.getElementById('manual-refresh');
   refreshButton.addEventListener('click', async () => {
     const startedAt = beginRefreshProgress();
@@ -586,7 +522,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && activeAutomaticAlert) closeAutomaticAlert();
-    keepAlertFocus(event);
   });
   document.getElementById('cards').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-detail]');
