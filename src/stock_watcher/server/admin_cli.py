@@ -170,7 +170,11 @@ def cmd_backup(settings: ServerSettings, args: argparse.Namespace) -> int:
     .db/.wal/.shm), reports are copied as files, and a SHA-256 manifest is
     written for restore verification.
     """
-    store = _store(settings)
+    # A backup is read-only with respect to the live database.  Do not create
+    # a third WAL writer merely to copy a snapshot while Web and Worker are
+    # active; the source connection can validate and use SQLite's online
+    # backup API in read-only mode.
+    store = SQLiteStore(settings.db_path, read_only=True)
     output = Path(args.output) if args.output else settings.report_dir.parent / "backups"
     output.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%dT%H%M%SZ")

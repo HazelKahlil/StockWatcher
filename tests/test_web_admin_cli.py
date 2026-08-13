@@ -9,6 +9,7 @@ import pytest
 from stock_watcher.server.admin_cli import (
     _parse_preflight_scales,
     _replace_report_directory,
+    cmd_backup,
     cmd_create_user,
     cmd_reset_password,
     parse_args,
@@ -16,6 +17,41 @@ from stock_watcher.server.admin_cli import (
 from stock_watcher.server.auth import AuthError, AuthService
 from stock_watcher.server.config import ServerSettings
 from stock_watcher.storage import SQLiteStore
+
+
+def test_online_backup_opens_live_database_read_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = ServerSettings(
+        db_path=tmp_path / "db" / "test.db",
+        report_dir=tmp_path / "reports",
+    )
+    settings.db_path.parent.mkdir()
+    store = SQLiteStore(settings.db_path)
+    store.initialize()
+    store.put_note("probe", "preserved")
+    store.close()
+
+    observed_read_only: list[bool] = []
+    original_backup = SQLiteStore.backup
+
+    def record_backup_mode(self: SQLiteStore, destination: Path) -> Path:
+        observed_read_only.append(self.read_only)
+        return original_backup(self, destination)
+
+    monkeypatch.setattr(SQLiteStore, "backup", record_backup_mode)
+    output = tmp_path / "backups"
+    args = parse_args().parse_args(["backup", "--output", str(output)])
+
+    assert cmd_backup(settings, args) == 0
+    assert observed_read_only == [True]
+    backup_dir = next(output.glob("stockwatcher-*"))
+    backup_store = SQLiteStore(backup_dir / "stockwatcher.sqlite3", read_only=True)
+    with backup_store.connect() as connection:
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'probe'"
+        ).fetchone() == ("preserved",)
 
 
 def test_restore_replaces_reports_without_leaving_stale_files(tmp_path: Path) -> None:
