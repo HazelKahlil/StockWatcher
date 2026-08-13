@@ -910,3 +910,24 @@ def test_sqlite_auto_recovers_valid_header_page_corruption_from_configured_backu
         ).fetchone() == ("x" * 80,)
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     assert path.with_suffix(".sqlite3.corrupt").exists()
+
+
+def test_sqlite_recovery_closes_existing_connection_before_replacing_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "watcher.sqlite3"
+    store = SQLiteStore(path)
+    store.initialize()
+    store.put_note("durable", "from-backup")
+    backup = tmp_path / "backups" / "stockwatcher" / path.name
+    store.backup(backup)
+
+    # Keep the store's thread-local connection alive while replacing the file;
+    # recovery must not continue using the quarantined inode.
+    path.write_bytes(b"not a sqlite database")
+    store.initialize()
+
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'durable'"
+        ).fetchone() == ("from-backup",)

@@ -142,6 +142,12 @@ class SQLiteStore:
         self.last_recovery = None
         if not self.read_only and self.path.exists() and not self._looks_like_sqlite():
             try:
+                # A live connection may still point at the inode that is about
+                # to be quarantined.  Close it before replacing the database,
+                # otherwise _initialize_database() would keep using that stale
+                # connection and the restored file would not become visible to
+                # this process.
+                self._close_thread_connection()
                 self._restore_from_backup()
                 self._initialize_database()
                 return
