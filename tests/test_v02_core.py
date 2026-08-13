@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -910,6 +911,48 @@ def test_sqlite_auto_recovers_valid_header_page_corruption_from_configured_backu
         ).fetchone() == ("x" * 80,)
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     assert path.with_suffix(".sqlite3.corrupt").exists()
+
+
+def test_sqlite_auto_recovery_prefers_nested_admin_backup_over_migration_backup(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state" / "stockwatcher.db"
+    path.parent.mkdir()
+    store = SQLiteStore(path)
+    store.initialize()
+    store.put_note("generation", "migration-backup")
+    migration_backup = path.with_suffix(".db.pre-v9.bak")
+    store.backup(migration_backup)
+
+    store.put_note("generation", "admin-backup")
+    admin_backup = (
+        tmp_path
+        / "backups"
+        / "predeploy-20260813"
+        / "stockwatcher-20260813T190010Z"
+        / "stockwatcher.sqlite3"
+    )
+    store.backup(admin_backup)
+    store.close()
+
+    # Make the older migration backup appear newer than the live database but
+    # keep the admin snapshot newest, matching the production directory shape.
+    migration_mtime = admin_backup.stat().st_mtime - 10
+    os.utime(migration_backup, (migration_mtime, migration_mtime))
+    path.write_bytes(b"not a sqlite database")
+
+    recovered = SQLiteStore(
+        path,
+        recovery_backup_dirs=(tmp_path / "backups",),
+    )
+    recovered.initialize()
+
+    assert recovered.last_recovery is not None
+    assert recovered.last_recovery["source_backup"] == str(admin_backup)
+    with recovered.connect() as connection:
+        assert connection.execute(
+            "SELECT value FROM notes WHERE key = 'generation'"
+        ).fetchone() == ("admin-backup",)
 
 
 def test_sqlite_recovery_closes_existing_connection_before_replacing_file(

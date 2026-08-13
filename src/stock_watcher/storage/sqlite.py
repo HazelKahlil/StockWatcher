@@ -287,8 +287,19 @@ class SQLiteStore:
                 continue
             if not root.is_dir():
                 continue
-            candidates.update(root.glob(self.path.name))
-            candidates.update(root.glob(f"*/{self.path.name}"))
+            # Admin backups intentionally use a portable database filename and
+            # may sit below an operator-created grouping directory, for
+            # example ``/backups/predeploy-.../stockwatcher-.../``.  Recovery
+            # must discover that contract instead of silently falling back to
+            # an older migration backup beside the live database.
+            for name in {self.path.name, "stockwatcher.sqlite3"}:
+                candidates.update(root.rglob(name))
+        live_path = self.path.resolve()
+        candidates = {
+            candidate
+            for candidate in candidates
+            if candidate.resolve() != live_path
+        }
         return tuple(
             sorted(
                 candidates,
