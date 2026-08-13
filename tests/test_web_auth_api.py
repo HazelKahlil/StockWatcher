@@ -315,8 +315,18 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
     assert "setTimeout(() => toast.remove(), 220)" not in dashboard_script
     assert "15000" not in dashboard_script
     assert "automaticAlertQueue.length = 0" in dashboard_script
+    assert "dismissedThroughAlertSequence = receivedAlertSequence" in dashboard_script
+    assert "if (alertSequence <= dismissedThroughAlertSequence) return" in dashboard_script
     assert "keepAlertFocus(event)" not in dashboard_script
-    assert dashboard_script.index("onEvent(async (event)") < dashboard_script.index(
+    assert "onEvent(async (event)" not in dashboard_script
+    assert (
+        "showAutomaticAlert(event.payload, latestDashboardState, alertSequence)"
+        in dashboard_script
+    )
+    assert "const state = await loadState();\n      showAutomaticAlert" not in dashboard_script
+    assert "handledAlertIds.clear()" in dashboard_script
+    assert "event.event_type === 'server.resync_required'" in dashboard_script
+    assert dashboard_script.index("onEvent((event)") < dashboard_script.index(
         "connectEvents();"
     )
     for relative in (

@@ -133,6 +133,37 @@ def test_ws_resync_required_on_expired_cursor(app_env: tuple[Any, SQLiteStore]) 
         assert messages[1]["payload"]["minimum_event_id"] == 3
 
 
+def test_ws_resync_required_when_cursor_is_ahead_after_restore(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, store = app_env
+    latest = seed_events(app, store, 3)
+    client = login(app)
+    with client.websocket_connect("/ws/v1/events?after_id=99") as websocket:
+        hello = json.loads(websocket.receive_text())
+        resync = json.loads(websocket.receive_text())
+        assert hello["event_type"] == "server.hello"
+        assert resync["event_type"] == "server.resync_required"
+        assert resync["payload"]["reason"] == "cursor_ahead"
+        assert resync["payload"]["latest_event_id"] == latest == 3
+
+
+@pytest.mark.parametrize("cursor", ["not-a-number", "-1"])
+def test_ws_resync_required_on_invalid_cursor(
+    app_env: tuple[Any, SQLiteStore], cursor: str
+) -> None:
+    app, store = app_env
+    latest = seed_events(app, store, 2)
+    client = login(app)
+    with client.websocket_connect(f"/ws/v1/events?after_id={cursor}") as websocket:
+        hello = json.loads(websocket.receive_text())
+        resync = json.loads(websocket.receive_text())
+        assert hello["event_type"] == "server.hello"
+        assert resync["event_type"] == "server.resync_required"
+        assert resync["payload"]["reason"] == "cursor_invalid"
+        assert resync["payload"]["latest_event_id"] == latest == 2
+
+
 def test_ws_hides_admin_events_and_advances_with_safe_cursor(
     app_env: tuple[Any, SQLiteStore],
 ) -> None:

@@ -21,6 +21,9 @@ let refreshProgressHideTimer = null;
 const handledAlertIds = new Set();
 const automaticAlertQueue = [];
 let activeAutomaticAlert = null;
+let latestDashboardState = null;
+let receivedAlertSequence = 0;
+let dismissedThroughAlertSequence = 0;
 
 function clearRefreshProgressTimers() {
   if (refreshProgressTimer) {
@@ -179,6 +182,7 @@ function alertMeta(triggerType) {
 
 function closeAutomaticAlert() {
   const overlay = document.getElementById('strong-alerts');
+  dismissedThroughAlertSequence = receivedAlertSequence;
   if (!overlay || !activeAutomaticAlert) return;
   overlay.classList.add('is-leaving');
   activeAutomaticAlert = null;
@@ -228,9 +232,10 @@ function renderNextAutomaticAlert() {
   overlay.querySelector('[data-dismiss-alert]')?.addEventListener('click', closeAutomaticAlert);
 }
 
-function showAutomaticAlert(payload, state) {
+function showAutomaticAlert(payload, state, alertSequence) {
   if (!['intraday', 'scheduled-09:45', 'scheduled-14:45'].includes(payload.trigger_type)) return;
-  automaticAlertQueue.push({ payload, state });
+  if (alertSequence <= dismissedThroughAlertSequence) return;
+  automaticAlertQueue.push({ payload, state, alertSequence });
   renderNextAutomaticAlert();
 }
 
@@ -289,6 +294,7 @@ function updateLiveClock() {
 }
 
 function renderState(state) {
+  latestDashboardState = state;
   const svc = document.getElementById('svc-state');
   if (svc) {
     const cls = ({ healthy: 'healthy', warming: 'warming', stale: 'stale', stopped: 'stopped' })[state.service_state] || 'warming';
@@ -395,16 +401,25 @@ async function loadState() {
 document.addEventListener('DOMContentLoaded', async () => {
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
-  onEvent(async (event) => {
+  onEvent((event) => {
+    if (event.event_type === 'server.resync_required') {
+      handledAlertIds.clear();
+      closeAutomaticAlert();
+      void loadState();
+      return;
+    }
     if (event.event_type === 'state.snapshot' || event.event_type === 'state.changed' || event.event_type === 'candidates.updated') {
-      loadState();
+      if (event.event_type === 'state.snapshot') latestDashboardState = event.payload;
+      void loadState();
     }
     if (event.event_type === 'alert.created') {
       const alertId = Number(event.payload?.alert_id || 0);
       if (alertId && handledAlertIds.has(alertId)) return;
       if (alertId) handledAlertIds.add(alertId);
-      const state = await loadState();
-      showAutomaticAlert(event.payload, state);
+      receivedAlertSequence += 1;
+      const alertSequence = receivedAlertSequence;
+      showAutomaticAlert(event.payload, latestDashboardState, alertSequence);
+      void loadState();
       if (event.payload.trigger_type === 'intraday') {
         const code = event.payload.triggering_codes?.[0] || '候选股票';
         notify('盘中强异动', `${code} 触发强异动提醒，请及时查看`);
@@ -412,7 +427,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         notify('StockWatcher 提醒', `触发：${event.payload.trigger_type}`);
       }
     }
-    if (event.event_type === 'outcomes.updated') loadOutcomeSummary();
+    if (event.event_type === 'outcomes.updated') void loadOutcomeSummary();
   });
   connectEvents();
   await Promise.all([loadState(), loadOutcomeSummary()]);

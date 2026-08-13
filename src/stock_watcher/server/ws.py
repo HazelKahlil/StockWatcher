@@ -79,11 +79,24 @@ class WebSocketManager:
         # cursors still replay missed events, including after_id=0 for tests and
         # diagnostics. This keeps browser reopen/refresh from presenting the
         # durable 30-day history as new pop-up alerts.
-        after_id = (
-            latest
-            if requested_after_id in {None, ""}
-            else int(requested_after_id)
-        )
+        after_id = latest
+        cursor_issue: str | None = None
+        if requested_after_id not in {None, ""}:
+            try:
+                after_id = int(requested_after_id)
+            except ValueError:
+                cursor_issue = "cursor_invalid"
+            else:
+                if after_id < 0:
+                    cursor_issue = "cursor_invalid"
+                elif after_id > latest:
+                    # A browser tab can survive a database restore whose event
+                    # ids move backwards. Waiting on the old high watermark
+                    # would otherwise suppress every new event until ids catch
+                    # up again.
+                    cursor_issue = "cursor_ahead"
+                elif after_id > 0 and (after_id + 1) < minimum:
+                    cursor_issue = "cursor_expired"
         hello = _envelope(
             0,
             "server.hello",
@@ -99,20 +112,20 @@ class WebSocketManager:
             },
         )
         await _send(websocket, hello)
-        if after_id > 0 and (after_id + 1) < minimum:
+        if cursor_issue is not None:
             await _send(
                 websocket,
                 _envelope(
-                        0,
-                        "server.resync_required",
-                        _now_iso(),
-                        self.source_commit,
-                        {
-                            "reason": "cursor_expired",
-                            "minimum_event_id": minimum,
-                            "latest_event_id": latest,
-                        },
-                    ),
+                    0,
+                    "server.resync_required",
+                    _now_iso(),
+                    self.source_commit,
+                    {
+                        "reason": cursor_issue,
+                        "minimum_event_id": minimum,
+                        "latest_event_id": latest,
+                    },
+                ),
             )
             return
         state = self.public_state.build(

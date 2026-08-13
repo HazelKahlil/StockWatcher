@@ -52,7 +52,12 @@ export function wsState() {
 
 function notifyListeners(event) {
   for (const fn of listeners) {
-    try { fn(event); } catch { /* per-listener isolation */ }
+    try {
+      const result = fn(event);
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => { /* async per-listener isolation */ });
+      }
+    } catch { /* synchronous per-listener isolation */ }
   }
 }
 
