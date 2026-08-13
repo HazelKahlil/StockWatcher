@@ -135,7 +135,8 @@ ProviderProvenance → CandidateOutcomeTracker`。测试同时断言逻辑 endpo
 - alpha.4 Shared Core 已合入本地 `main@b00221f`；Web 部署实现为
   `fix/web-top3-gain-emphasis@cfc6cd6`。
 - 2026-08-13 Web 桌面视觉与提醒生命周期返修实现提交为 `53501ad`，已由独立分支
-  `fix/web-desktop-ui-alert-lifecycle` 快进合入本地 `cnb/main`；本轮未 push、未部署。
+  `fix/web-desktop-ui-alert-lifecycle` 快进合入本地 `cnb/main`；Murphy Review 返修提交为
+  `214563c`，处理数据库恢复后的游标回退和弹窗关闭竞态；本轮未 push、未部署。
 - GitHub：未 push、未创建 PR、未发布 Release；`origin/main` 仍是 `v0.4.0-alpha.2` 节点。
 
 ## 证据边界

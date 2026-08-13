@@ -2,8 +2,9 @@
 
 ## 唯一事实源
 
-- 当前本地 Web 主线：`cnb/main`；实现提交 `53501ad` 已由返修分支
-  `fix/web-desktop-ui-alert-lifecycle` 快进合入。
+- 当前本地 Web 主线：`cnb/main`；桌面提醒实现 `53501ad` 已由返修分支
+  `fix/web-desktop-ui-alert-lifecycle` 快进合入，随后 Murphy Review 代码 `214563c` 直接提交到
+  本地主线。
 - 当前代码未部署；上一轮已验证的 Mac Docker 实现提交仍为
   `cfc6cd66be3edcf5468840c29b509eae643896b5`。
 - Web 基线：`502a447d7e593d638ea45518f2a5e4d4827f683f`（Mac RC3 tag 基线）。
@@ -18,14 +19,14 @@
 
 原因：
 
-1. 当前 macOS worktree 的完整 pytest 为 `509 passed, 26 skipped`；定向 Web 契约为
-   `35 passed`，完整门在 `-W error` 下零告警。Ruff、Mypy（142 source files）、workspace validator
+1. 当前 macOS worktree 的完整 pytest 为 `512 passed, 26 skipped`；Murphy 定向回归为
+   `32 passed`，完整门在 `-W error` 下零告警。Ruff、Mypy（142 source files）、workspace validator
    （29 个必需文件）、JavaScript syntax check 全部通过，生产与全锁定依赖
    审计沿用上一轮无已知漏洞证据。
 2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；镜像
    `stockwatcher-web:web-alpha4-cfc6cd6`、Schema v9、公网 `app.css?v=13`、部署前后备份与
    公网入口均已验证。
-3. 当前桌面视觉与提醒生命周期结构化代码 Review 为 `P0=0 / P1=0 / P2=0`。以上仍是
+3. 当前桌面视觉与提醒生命周期 Murphy Review 返修后为 `P0=0 / P1=0 / P2=0`。以上仍是
    Mac 本地代码与浏览器证据，不等于部署完成，也不等于真实交易日的固定提醒、同点结算/
    重试和全日运行验收。
 4. 当前部署依赖 Mac 开机、联网及 Docker Desktop；VPS 已由 Human Owner 明确后置，本基准
@@ -39,6 +40,8 @@
 - SQLite WAL v9、备份/恢复 CLI、Compose/Caddy 及运维脚本。
 - 认证只读 outcomes API、近一月摘要/完整页、桌面 App 浅色视觉与右下角非模态自动提醒。
 - 首次登录、刷新或重开页面从当前服务端水位开始；同页断线重连按显式游标补发遗漏事件。
+- 数据库恢复导致事件 ID 回退、游标过期或格式非法时强制重同步并清理旧提醒状态；关闭弹窗不再
+  被尚未完成的 REST 状态请求重新入队。
 - Top3 上涨百分比使用鲜明红并响应式放大；下跌保持绿色。
 
 ## 部署资产边界
