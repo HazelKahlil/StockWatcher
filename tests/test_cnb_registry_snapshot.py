@@ -153,3 +153,6 @@ def test_cnb_preview_fails_closed_and_snapshots_while_running() -> None:
     pipeline = (PROJECT_ROOT / ".cnb.yml").read_text(encoding="utf-8")
     assert 'STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "900"' in pipeline
     assert 'STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "60"' in pipeline
+    assert "type: cnb:apply" in pipeline
+    assert "event: api_trigger_cnb_preview" in pipeline
+    assert "services:\n        - name: vscode" in pipeline

@@ -2,38 +2,13 @@ main:
   "crontab: 25 8 * * 1-5":
     - name: StockWatcher Web 交易日预览
       runner:
-        cpus: 2
-      docker:
-        build:
-          dockerfile: deploy/cnb/Dockerfile
-          by:
-            - pyproject.toml
-            - uv.lock
-            - README.md
-            - src
-            - deploy/cnb/Dockerfile
-          versionBy:
-            - pyproject.toml
-            - uv.lock
-            - README.md
-            - src
-            - deploy/cnb/Dockerfile
-      services:
-        - name: vscode
-          options:
-            onlyPreview: true
-            launch: bash deploy/cnb/run-preview.sh
-            daemon: true
-            keepAliveTimeout: 8h
-            backup: true
-        - docker
-      env:
-        STOCKWATCHER_CNB_END_TIME: "16:15"
-        STOCKWATCHER_CNB_BACKUP_TIMES: "11:35,15:55,16:10"
-        STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "900"
+        cpus: 1
       stages:
-        - name: 确认 Web 预览服务已声明
-          script: echo "CNB only-preview service attached"
+        - name: 触发 Web 开发空间子流水线
+          type: cnb:apply
+          options:
+            event: api_trigger_cnb_preview
+            sync: false
 
 $:
   web_trigger_cnb_preview:
@@ -70,6 +45,42 @@ $:
       stages:
         - name: 确认 Web 预览服务已声明
           script: echo "CNB manual only-preview service attached"
+
+  api_trigger_cnb_preview:
+    - name: StockWatcher Web 定时预览实例
+      runner:
+        cpus: 2
+      docker:
+        build:
+          dockerfile: deploy/cnb/Dockerfile
+          by:
+            - pyproject.toml
+            - uv.lock
+            - README.md
+            - src
+            - deploy/cnb/Dockerfile
+          versionBy:
+            - pyproject.toml
+            - uv.lock
+            - README.md
+            - src
+            - deploy/cnb/Dockerfile
+      services:
+        - name: vscode
+          options:
+            onlyPreview: true
+            launch: bash deploy/cnb/run-preview.sh
+            daemon: true
+            keepAliveTimeout: 8h
+            backup: true
+        - docker
+      env:
+        STOCKWATCHER_CNB_END_TIME: "16:15"
+        STOCKWATCHER_CNB_BACKUP_TIMES: "11:35,15:55,16:10"
+        STOCKWATCHER_CNB_BACKUP_INTERVAL_SECONDS: "900"
+      stages:
+        - name: 确认 Web 预览服务已声明
+          script: echo "CNB scheduled only-preview service attached"
 
   web_trigger_cnb_setup:
     - name: StockWatcher Web 首次设置
