@@ -1,11 +1,17 @@
 services:
   web:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1g
     volumes: !override
       - stockwatcher_tunnel_db:/var/lib/stockwatcher/db
       - stockwatcher_tunnel_reports:/var/lib/stockwatcher/reports
       - stockwatcher_tunnel_backups:/backups
 
   worker:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 2g
     volumes: !override
       - stockwatcher_tunnel_db:/var/lib/stockwatcher/db
       - stockwatcher_tunnel_reports:/var/lib/stockwatcher/reports
@@ -14,6 +20,8 @@ services:
   tunnel-gateway:
     image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     restart: unless-stopped
+    stop_grace_period: 10s
+    mem_limit: 256m
     user: "10001:10001"
     environment:
       XDG_CONFIG_HOME: /tmp/caddy/config
@@ -51,6 +59,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
     restart: unless-stopped
+    stop_grace_period: 10s
+    mem_limit: 256m
     depends_on:
       tunnel-gateway:
         condition: service_healthy

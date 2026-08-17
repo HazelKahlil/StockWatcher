@@ -326,3 +326,27 @@
   `34ce825014692aef01ae397499dd7604c67273ef`。独立二次复审、远端 CI、仓库保护、共享/边缘限流、
   CVE/镜像扫描、SBOM/provenance、动态压测、渗透测试和下一真实交易日验收仍是阻断项，状态保持
   `BLOCKED / NOT_ACCEPTED`。
+
+## 2026-08-17 WAL disk I/O 事故与运维加固
+
+- 事故：Docker Desktop 更新/异常后，SQLite WAL 出现 `disk I/O error`，web/worker 起不来，
+  公网站点停了数小时。主库 `integrity_check=ok`；坏 WAL/SHM 已隔离到数据卷内
+  `corrupt-20260817T151850Z/`，未删除任何数据库文件，站点随后恢复。
+- 加固：Compose 为 web/worker/gateway/cloudflared 补齐 `restart: unless-stopped`、
+  `stop_grace_period`（30s/30s/10s/10s）和内存上限（1g/2g/256m/256m）；`tunnel-up.sh`
+  在启动前跑 `db-preflight.sh`（只读 `quick_check` + sidecar 可读性，失败则隔离 WAL/SHM，
+  主库仍坏则停止启动并要求人工 `admin_cli restore`）；`tunnel-down.sh` 停机后做
+  `PRAGMA wal_checkpoint(TRUNCATE)`；每小时 `auto-*` 备份到 backups 卷和
+  `~/StockWatcherBackups`（各保留 48 份自动备份）；每 5 分钟看门狗检查 origin，
+  连续两次失败则 down+up，30 分钟冷却。
+- 运维入口（本机 macOS launchd）：
+  - `com.stockwatcher.backup`（StartInterval 3600）
+  - `com.stockwatcher.watchdog`（StartInterval 300）
+  - 日志：`~/Library/Logs/stockwatcher-backup.log`、`~/Library/Logs/stockwatcher-watchdog.log`
+  - 宿主备份：`~/StockWatcherBackups`（避开 Documents iCloud）
+  - launchd 实际执行的是 `~/Library/Application Support/StockWatcher/` 下的脚本副本
+    （`/bin/bash` 不能直接执行 Documents 里的脚本）；更新 `$DEPLOY/scripts/` 后跑
+    `deploy/scripts/install-launchd.sh`。
+- 电源：当前 `pmset` 为 `SleepDisabled=0`、`sleep=1`。无人值守交易日建议保持 Mac 不睡
+  （例如 `caffeinate -s` 或系统“防止自动睡眠”），本次未改系统电源设置。
+- 状态继续 `BLOCKED / NOT_ACCEPTED`：本次只做运维加固，不替代下一真实交易日验收。
