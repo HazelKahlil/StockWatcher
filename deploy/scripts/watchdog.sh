@@ -4,6 +4,7 @@
 set -Eeuo pipefail
 
 DOCKER=/usr/local/bin/docker
+PYTHON=/usr/bin/python3
 CURL=/usr/bin/curl
 OPEN=/usr/bin/open
 OSASCRIPT=/usr/bin/osascript
@@ -75,11 +76,32 @@ mark_restart() {
   now_epoch > "$state_file"
 }
 
+docker_ok() {
+  "$PYTHON" - "$DOCKER" <<'PY'
+import subprocess
+import sys
+
+docker = sys.argv[1]
+try:
+    result = subprocess.run(
+        [docker, "info"],
+        timeout=8,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+except subprocess.TimeoutExpired:
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if result.returncode == 0 else 1)
+PY
+}
+
 wait_for_docker() {
   local i
   i=0
   while [[ "$i" -lt 24 ]]; do
-    if "$DOCKER" info >/dev/null 2>&1; then
+    if docker_ok; then
       return 0
     fi
     "$SLEEP" 5
@@ -92,6 +114,12 @@ origin_ready() {
   "$CURL" --fail --silent --show-error --max-time 10 "$origin_url" >/dev/null
 }
 
+if origin_ready; then
+  log "heartbeat origin ready"
+  trim_log
+  exit 0
+fi
+
 if [[ ! -x "$DOCKER" ]]; then
   log "docker not found at $DOCKER"
   notify "docker 可执行文件不存在，无法检查隧道。"
@@ -99,8 +127,8 @@ if [[ ! -x "$DOCKER" ]]; then
   exit 2
 fi
 
-if ! "$DOCKER" info >/dev/null 2>&1; then
-  log "docker info failed; opening Docker Desktop"
+if ! docker_ok; then
+  log "docker info failed or timed out; opening Docker Desktop"
   "$OPEN" -ga Docker || true
   if wait_for_docker; then
     log "docker engine became ready"
@@ -110,12 +138,6 @@ if ! "$DOCKER" info >/dev/null 2>&1; then
     trim_log
     exit 1
   fi
-fi
-
-if origin_ready; then
-  log "heartbeat origin ready"
-  trim_log
-  exit 0
 fi
 
 log "origin ready failed; confirming in 15s"

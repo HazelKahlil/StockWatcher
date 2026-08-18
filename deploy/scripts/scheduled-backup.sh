@@ -4,6 +4,7 @@
 set -Eeuo pipefail
 
 DOCKER=/usr/local/bin/docker
+PYTHON=/usr/bin/python3
 DATE=/bin/date
 MKDIR=/bin/mkdir
 TEE=/usr/bin/tee
@@ -37,8 +38,26 @@ if [[ ! -f "$env_file" ]]; then
   exit 2
 fi
 
-if ! "$DOCKER" info >/dev/null 2>&1; then
-  log "docker info failed; skip backup"
+if ! "$PYTHON" - "$DOCKER" <<'PY'
+import subprocess
+import sys
+
+docker = sys.argv[1]
+try:
+    result = subprocess.run(
+        [docker, "info"],
+        timeout=8,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+except subprocess.TimeoutExpired:
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if result.returncode == 0 else 1)
+PY
+then
+  log "docker info failed or timed out; skip backup"
   exit 1
 fi
 

@@ -350,3 +350,14 @@
 - 电源：当前 `pmset` 为 `SleepDisabled=0`、`sleep=1`。无人值守交易日建议保持 Mac 不睡
   （例如 `caffeinate -s` 或系统“防止自动睡眠”），本次未改系统电源设置。
 - 状态继续 `BLOCKED / NOT_ACCEPTED`：本次只做运维加固，不替代下一真实交易日验收。
+
+## 2026-08-18 Docker 引擎停摆与看门狗卡住
+
+- 事故：约 04:12 Docker 引擎进入 stopping 后未恢复，本机 origin 断开，公网 530。
+  看门狗在 04:10 仍报 heartbeat，下一轮卡在无超时的 `docker info` 上约 5.5 小时，
+  launchd 因此无法再调度。同期 Data 卷一度写满（只剩约 4.2GB），backend 日志出现
+  `no space left on device`。
+- 恢复：重启 Docker Desktop，重建 `tunnel-gateway`/`cloudflared`（gateway 再次撞上
+  containerd `mkdir ... file exists`），`tunnel-healthcheck` 与公网 live/ready 200。
+- 补丁：看门狗改为先探 origin，再对 `docker info` 加 8 秒超时；小时备份同样超时，
+  避免 Docker 卡死时 launchd 任务永远不退出。更新脚本后需再跑 `install-launchd.sh`。
