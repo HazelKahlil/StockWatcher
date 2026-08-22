@@ -54,3 +54,33 @@ class OutcomeReviewWorker(QThread):
 class OutcomeReviewPanel(QWidget):
 ''',
 )
+replace_once(
+    "src/stock_watcher/ui/tushare_v1_session.py",
+    '''            try:
+                self.store.record_daily_summary(summary)
+                self._write_local_summary_report(summary)
+            except Exception:
+                self._set_summary_retry(now)
+                return False
+''',
+    '''            try:
+                self.store.record_daily_summary(summary)
+                self._write_local_summary_report(summary)
+            except Exception as error:
+                self._set_summary_retry(now)
+                self._summary_issue = (
+                    f"盘后回顾暂未生成（{type(error).__name__}），将在60秒后自动重试。"
+                )
+                return False
+''',
+)
+replace_once(
+    "tests/test_automation_reliability.py",
+    '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value
+''',
+    '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value, (
+        task,
+        session._summary_issue,
+    )
+''',
+)
