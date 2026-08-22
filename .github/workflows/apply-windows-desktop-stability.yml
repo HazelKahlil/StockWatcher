@@ -29,6 +29,15 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install Qt headless runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libegl1 \
+            libgl1 \
+            libopengl0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0
       - name: Apply source patch when needed
         shell: bash
         run: |
