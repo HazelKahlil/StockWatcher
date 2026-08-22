@@ -72,6 +72,8 @@ jobs:
         run: choco install innosetup --no-progress --yes
       - name: Build PyInstaller folder and Inno Setup installer
         shell: pwsh
+        env:
+          STOCKWATCHER_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pwsh -NoProfile -File .\scripts\windows\stockwatcher.ps1 -Action Build
       - name: Upload no-terminal build artifacts
         uses: actions/upload-artifact@v4
