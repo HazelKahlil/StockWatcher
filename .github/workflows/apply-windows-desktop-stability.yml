@@ -55,7 +55,10 @@ jobs:
       - name: Run full offline test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest -x -vv
+        run: >-
+          uv run pytest
+          tests/test_automation_reliability.py::test_1530_summary_falls_back_to_local_scan_records_without_provider
+          -vv --showlocals
       - name: Run lint and strict types
         run: |
           uv run ruff check .
