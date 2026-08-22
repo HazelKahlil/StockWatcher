@@ -18,6 +18,17 @@ def replace_if_present(relative: str, old: str, new: str) -> None:
     path.write_text(content.replace(old, new, 1), encoding="utf-8")
 
 
+def replace_exact_if_present(relative: str, old: str, new: str) -> None:
+    path = ROOT / relative
+    content = path.read_text(encoding="utf-8")
+    if old not in content:
+        return
+    count = content.count(old)
+    if count != 1:
+        raise RuntimeError(f"{relative}: expected one match, found {count}: {old!r}")
+    path.write_text(content.replace(old, new, 1), encoding="utf-8")
+
+
 replace_if_present(
     "src/stock_watcher/ui/data_source_settings.py",
     "from PySide6.QtGui import QCloseEvent\n",
@@ -52,7 +63,7 @@ def sleep_seconds(seconds: float) -> None:
 
 @dataclass''',
 )
-replace_if_present(
+replace_exact_if_present(
     "src/stock_watcher/ui/tushare_v1_session.py",
     '''            except Exception as error:
                 self._set_summary_retry(now)
@@ -66,7 +77,7 @@ replace_if_present(
                 return False
 ''',
 )
-replace_if_present(
+replace_exact_if_present(
     "tests/test_automation_reliability.py",
     '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value, (
         task,
@@ -87,5 +98,43 @@ replace_if_present(
     app = existing if isinstance(existing, QApplication) else QApplication([])
     app.setQuitOnLastWindowClosed(False)
     return app
+''',
+)
+replace_if_present(
+    "src/stock_watcher/ui/history.py",
+    "from PySide6.QtCore import QTimer\n",
+    "from PySide6.QtCore import QThread, QTimer, Signal\n",
+)
+replace_if_present(
+    "src/stock_watcher/ui/history.py",
+    "\n\nclass HistoryDialog(QDialog):\n",
+    '''
+
+class HistoryWorker(QThread):
+    """Backward-compatible one-shot history reader.
+
+    HistoryDialog itself uses a daemon Python worker so its close path remains
+    nonblocking; this class is retained for existing imports and deterministic tests.
+    """
+
+    loaded = Signal(object, str)
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self._path = path
+
+    def run(self) -> None:
+        try:
+            store = SQLiteStore(self._path, read_only=True)
+            rows = store.list_alert_history(
+                now=datetime.now(SHANGHAI),
+                days=30,
+            )
+            self.loaded.emit(rows, "")
+        except Exception as error:  # noqa: BLE001 - expose only the safe class name
+            self.loaded.emit([], f"历史暂不可读：{type(error).__name__}")
+
+
+class HistoryDialog(QDialog):
 ''',
 )
