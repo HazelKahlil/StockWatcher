@@ -127,6 +127,17 @@ Replay 验证，未覆盖现有 App；Windows 只形成同提交 fresh-build 源
 - GitHub：本地 main 通过 `publish/v0.6.0-alpha.4` / PR #6 同步；Web 独立实现保存在
   `publish/web-v0.6.0-alpha.4@9411cd8`。真实交易日未验收，因此未创建 tag 或 Release。
 
+## Windows 桌面稳定性返修（0.6.0-alpha.5 候选）
+
+本轮在不改变候选评分、StableTop3、固定提醒或次日复盘口径的前提下，集中修复 Windows
+桌面生命周期和跨 DPI UI：关闭扫描中的主窗口不再阻塞 GUI；Tushare 原生实时 SDK 有硬超时；
+Token 测试、历史和复盘读取可安全后台执行；Windows 中文字体、状态卡裁切、页面滚动、禁用
+按钮对比度、多屏弹窗位置和“打开列表”行为均有回归覆盖。Windows Credential Manager
+backend 现在按安全规则强制验证。
+
+离线测试、Linux/macOS 回放与 Windows GitHub runner 均不能替代目标 Windows 的标题栏关闭、
+100%—175% 缩放、1366×768、小屏滚动、双屏拔插、覆盖安装、卸载和真实 Token/交易时段验收。
+
 ## 证据边界
 
 本轮不读取 Token、Keychain、Credential Manager、用户真实数据库、运行日志或交易账户，

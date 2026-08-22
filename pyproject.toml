@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stock-watcher"
-version = "0.6.0a4"
+version = "0.6.0a5"
 description = "Windows A-share market scanner with stable real-time Top3 candidates"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"

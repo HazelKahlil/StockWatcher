@@ -9,7 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from threading import Lock, Thread, current_thread
+from threading import Event, Lock, Thread, current_thread
 from time import monotonic as monotonic_time
 from time import sleep as sleep_seconds
 from typing import cast
@@ -142,6 +142,9 @@ class TushareV1Session:
         self._primary_secret_snapshot: str | None = None
         self._legacy_credential_present = False
         self._credential_refresh_lock = Lock()
+        self._shutdown_event = Event()
+        self._shutdown_lock = Lock()
+        self._shutdown_complete = False
         self._credential_refresh_in_flight = False
         self._credential_refresh_generation = 0
         self._credential_state_result: tuple[int, str, bool, bool, str | None] | None = None
@@ -235,6 +238,10 @@ class TushareV1Session:
         self._recovery_round = 0
         self._stall_threshold_seconds = 90.0
         self.app_badge = "Mac V1" if sys.platform == "darwin" else "Windows V1"
+        storage_label = getattr(self.credential_store, "storage_label", "系统安全存储")
+        self._credential_storage_label = (
+            storage_label if isinstance(storage_label, str) and storage_label else "系统安全存储"
+        )
         self._alert_client_platform = (
             "macos-desktop" if sys.platform == "darwin" else "windows-desktop"
         )
@@ -246,6 +253,8 @@ class TushareV1Session:
             self._refresh_credential_state()
 
     def provider_changed(self, mode: DataSourceMode) -> None:
+        if self._shutdown_event.is_set():
+            return
         self.settings = self.settings.model_copy(update={"mode": mode})
         if self._universe_future is not None:
             self._universe_future.cancel()
@@ -295,7 +304,9 @@ class TushareV1Session:
         return self._credential_error
 
     def refresh_credential_state_async(self, callback: Callable[[], None] | None = None) -> None:
-        """Read native Keychain off the GUI thread and publish a memory snapshot."""
+        """Read the native credential backend off the GUI thread."""
+        if self._shutdown_event.is_set():
+            return
         if not isinstance(self.credential_store, KeyringCredentialStore):
             self._refresh_credential_state()
             if callback is not None:
@@ -348,9 +359,13 @@ class TushareV1Session:
                     error_name,
                 )
 
-        Thread(target=read, name="stockwatcher-keychain", daemon=True).start()
+        Thread(target=read, name="stockwatcher-credentials", daemon=True).start()
 
     def _poll_credential_state(self) -> None:
+        if self._shutdown_event.is_set():
+            if self._credential_poll_timer is not None:
+                self._credential_poll_timer.stop()
+            return
         with self._credential_refresh_lock:
             result = self._credential_state_result
             if result is None:
@@ -367,6 +382,24 @@ class TushareV1Session:
             legacy_present=legacy_present,
             error_name=error_name,
         )
+
+    @property
+    def shutdown_requested(self) -> bool:
+        return self._shutdown_event.is_set()
+
+    def request_shutdown(self) -> None:
+        """Request cooperative cancellation without waiting on the GUI thread."""
+
+        if self._shutdown_event.is_set():
+            return
+        self._shutdown_event.set()
+        self._cancel_in_flight_scan()
+        future = self._universe_future
+        if future is not None:
+            future.cancel()
+        with self._outcome_future_lock:
+            for outcome_future in self._outcome_futures:
+                outcome_future.cancel()
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
@@ -426,9 +459,13 @@ class TushareV1Session:
         self.status_issues = ("网络恢复后将清理旧基线并重新预热。",)
 
     def recover(self) -> None:
+        if self._shutdown_event.is_set():
+            return
         self._run(force=False, manual_request=False)
 
     def begin_manual_fetch(self) -> None:
+        if self._shutdown_event.is_set():
+            return
         now = _shanghai(self._clock())
         required_cycles = self._manual_required_scan_cycles()
         self.warm_and_recover()
@@ -445,12 +482,14 @@ class TushareV1Session:
         )
 
     def manual_fetch(self) -> None:
+        if self._shutdown_event.is_set():
+            return
         started = monotonic_time()
         deadline = started + self.manual_fetch_timeout_seconds
         self._manual_started_monotonic = started
         self._manual_scan_round = 0
         try:
-            while True:
+            while not self._shutdown_event.is_set():
                 scan_ready = self._manual_scan_is_ready()
                 if scan_ready:
                     self._set_manual_scan_progress(
@@ -458,6 +497,8 @@ class TushareV1Session:
                         deadline=deadline,
                     )
                 outcome = self._run(force=True, manual_request=True)
+                if self._shutdown_event.is_set():
+                    return
                 if outcome is not None:
                     self._manual_scan_round += 1
                 if (
@@ -476,7 +517,8 @@ class TushareV1Session:
                 if monotonic_time() >= deadline:
                     self._set_manual_timeout()
                     return
-                sleep_seconds(0.2)
+                if self._shutdown_event.wait(0.2):
+                    return
         finally:
             self._manual_started_monotonic = None
 
@@ -531,6 +573,8 @@ class TushareV1Session:
         force: bool,
         manual_request: bool,
     ) -> ScanOutcome | None:
+        if self._shutdown_event.is_set():
+            return None
         now = _shanghai(self._clock())
         self._submit_due_outcome_fallbacks(now)
         self._prune_history_if_due(now)
@@ -729,6 +773,14 @@ class TushareV1Session:
         )
         attempt_id = self._begin_scan_attempt(now=now, operation=scan_trigger)
         outcome = self._runtime.scan_once()
+        if self._shutdown_event.is_set():
+            self._finish_scan_attempt(
+                attempt_id,
+                completed_at=_shanghai(self._clock()),
+                state="cancelled",
+                detail="application-shutdown",
+            )
+            return None
         if self._is_network_interrupted():
             # An interruption landed while the request was in flight.  Its
             # cancellation outcome must not overwrite the fail-closed state.
@@ -1569,8 +1621,11 @@ class TushareV1Session:
             try:
                 self.store.record_daily_summary(summary)
                 self._write_local_summary_report(summary)
-            except Exception:
+            except Exception as error:
                 self._set_summary_retry(now)
+                self._summary_issue = (
+                    f"盘后回顾暂未生成（{type(error).__name__}），将在60秒后自动重试。"
+                )
                 return False
 
         self.store.prune_daily_summaries(before=now.date() - timedelta(days=30))
@@ -1790,20 +1845,26 @@ class TushareV1Session:
     def _set_credential_pending(self) -> None:
         self.state = HealthState.WARMING
         self.connection_state = TqConnectionState.CHECKING
-        self.connection_detail = "正在读取系统钥匙串；读取完成前不会发起实时请求。"
+        self.connection_detail = (
+            f"正在读取{self._credential_storage_label}；读取完成前不会发起实时请求。"
+        )
         self.data_gate_label = "正在读取凭据"
         self.candidate_gate_label = "等待凭据检测"
         self.health_detail = self.connection_detail
-        self.status_issues = ("Keychain 检查在后台执行，窗口保持可用。",)
+        self.status_issues = ("系统凭据检查在后台执行，窗口保持可用。",)
 
     def _set_credential_error(self) -> None:
         self.state = HealthState.WARMING
         self.connection_state = TqConnectionState.DISCONNECTED
-        self.connection_detail = "系统钥匙串暂时不可用；未发起实时请求。"
-        self.data_gate_label = "钥匙串不可用"
-        self.candidate_gate_label = "等待钥匙串恢复"
+        self.connection_detail = (
+            f"{self._credential_storage_label}暂时不可用；未发起实时请求。"
+        )
+        self.data_gate_label = "安全存储不可用"
+        self.candidate_gate_label = "等待安全存储恢复"
         self.health_detail = self.connection_detail
-        self.status_issues = ("请解锁 macOS 钥匙串或处理系统安全存储提示后重试。",)
+        self.status_issues = (
+            "请处理系统凭据提示或修复安全存储后重新检测。",
+        )
 
     def _publish_credential_state(
         self,
@@ -1814,6 +1875,8 @@ class TushareV1Session:
         legacy_present: bool,
         error_name: str | None,
     ) -> None:
+        if self._shutdown_event.is_set():
+            return
         with self._credential_refresh_lock:
             if generation != self._credential_refresh_generation:
                 return
@@ -1929,6 +1992,8 @@ class TushareV1Session:
         return _required_capabilities_ready(self.capability_checks.statuses())
 
     def _start_universe_refresh(self, now: datetime) -> bool:
+        if self._shutdown_event.is_set():
+            return False
         if self._runtime is None:
             return False
         if self._universe_future is not None:
@@ -2350,6 +2415,11 @@ class TushareV1Session:
                 self._active_scan_attempt_id = None
 
     def shutdown(self, *, exit_reason: str = "menu_quit") -> None:
+        self.request_shutdown()
+        with self._shutdown_lock:
+            if self._shutdown_complete:
+                return
+            self._shutdown_complete = True
         with self._credential_refresh_lock:
             self._credential_refresh_generation += 1
             self._credential_refresh_in_flight = False

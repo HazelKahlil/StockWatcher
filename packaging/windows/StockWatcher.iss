@@ -1,5 +1,5 @@
 #define MyAppName "StockWatcher"
-#define MyAppVersion "0.6.0-alpha.4"
+#define MyAppVersion "0.6.0-alpha.5"
 #define MyAppPublisher "StockWatcher"
 #define MyAppExeName "StockWatcher.exe"
 #define MyAppIcon "..\..\src\stock_watcher\ui\assets\stockwatcher.ico"
@@ -18,8 +18,10 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
+CloseApplications=yes
+RestartApplications=no
 OutputDir={#StockWatcherOutputDir}
-OutputBaseFilename=StockWatcher-0.6.0-alpha.4-setup
+OutputBaseFilename=StockWatcher-0.6.0-alpha.5-setup
 Compression=lzma2
 SolidCompression=yes
 SetupIconFile={#MyAppIcon}

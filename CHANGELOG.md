@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.0-alpha.5] - 2026-08-23
+
+### Fixed
+
+- Windows 主窗口关闭不再在 GUI 线程等待扫描线程：点击标题栏 X 或“退出 StockWatcher”会
+  立即隐藏窗口、协作取消扫描，并在线程结束后幂等释放 Session；同时为原生实时 SDK 调用
+  增加硬超时，避免供应商调用无限挂起。
+- Windows 使用 Microsoft YaHei UI / Microsoft YaHei / Segoe UI 的已安装字体优先级，
+  修复中文回退为衬线字体；状态卡改为两行自适应布局，并通过页面级滚动适配高 DPI 和小屏。
+- Token 测试、历史提醒和次日复盘读取改为非阻塞后台任务；关闭窗口会立即失效未确认 Token，
+  不再同步等待 QThread。
+- 提醒弹窗会按完整矩形夹紧到当前显示器工作区；“打开列表”现在真正恢复主窗口，且已关闭的
+  WA_DeleteOnClose 弹窗不会留下悬空 PySide 引用。
+- Windows 正式凭据存储只接受原生 Credential Manager backend，不再把任意 keyring fallback
+  冒充系统安全存储。
+
+### Packaging
+
+- Windows 安装器候选提升为 `0.6.0-alpha.5`；覆盖安装会关闭锁定的应用文件且不会自动重启。
+
+### Evidence boundary
+
+- 本轮自动化与 CI 只证明离线逻辑、Windows runner 构建和回归门；DPI、多屏、标题栏关闭、
+  覆盖安装、卸载和真实交易时段仍必须由目标 Windows 实机逐项验收。
+
 ## [0.6.0-alpha.4] - 2026-08-12
 
 ### Fixed

@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 
 from stock_watcher.build_info import source_commit
@@ -23,7 +23,7 @@ from .tushare_session import TushareDiagnosticSession
 from .tushare_v1_session import TushareV1Session
 
 STYLE_SHEET = """
-QWidget { font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #172231; }
+QWidget { color: #172231; }
 QMainWindow, QDialog { background: #f5f7fb; }
 QMenuBar { background: #f5f7fb; color: #667487; border: none; }
 QMenuBar::item:selected, QMenu::item:selected { background: #e8f1ff; color: #1670df; }
@@ -43,6 +43,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #summaryValue[state="not_applicable"] { color: #667487; }
 #candidateCard { min-height: 96px; }
 #candidateCard:hover { background: #fbfdff; border-color: #b8d4f8; }
+#pageScroll, #pageScroll > QWidget > QWidget, #pageHost,
 #cardsScroll, #cardsScroll > QWidget > QWidget, #cardsHost {
     background: transparent; border: none;
 }
@@ -80,7 +81,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #primaryButton:disabled { background: #9cbfe6; border-color: #9cbfe6; }
 #secondaryButton { background: #ffffff; border: 1px solid #d3dce8; color: #33445a; }
 #secondaryButton:hover { background: #eef5ff; border-color: #a8c7ee; }
-#secondaryButton:disabled { color: #a2acb9; background: #f5f7fa; }
+#secondaryButton:disabled { color: #6f7d91; background: #edf1f6; border-color: #cfd8e4; }
 #dangerButton { background: #ffffff; border: 1px solid #e2b8b8; color: #b64242; }
 #dangerButton:hover { background: #fff2f2; border-color: #d77878; }
 #dangerButton:disabled { color: #b4a3a3; background: #f7f7f7; border-color: #e4e4e4; }
@@ -162,6 +163,34 @@ QTabBar::tab:selected { background: #dfeeff; color: #126bd5; font-weight: 700; }
 }
 QPushButton { border-radius: 9px; padding: 9px 14px; }
 """
+
+
+def application_font_candidates(platform: str = sys.platform) -> tuple[str, ...]:
+    """Return installed-family preferences for each supported desktop platform."""
+
+    if platform == "win32":
+        return ("Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI")
+    if platform == "darwin":
+        return ("PingFang SC", "Helvetica Neue")
+    return ("Noto Sans CJK SC", "Noto Sans", "DejaVu Sans")
+
+
+def configure_application_font(
+    app: QApplication,
+    *,
+    platform: str = sys.platform,
+) -> str:
+    """Select an installed native UI font without forcing a missing macOS family."""
+
+    installed = {family.casefold(): family for family in QFontDatabase.families()}
+    font = app.font()
+    for candidate in application_font_candidates(platform):
+        selected = installed.get(candidate.casefold())
+        if selected is not None:
+            font.setFamily(selected)
+            break
+    app.setFont(font)
+    return font.family()
 
 
 def application_icon_path() -> Path:
@@ -273,6 +302,7 @@ def run(
         app = QApplication(sys.argv)
         app.setApplicationName("StockWatcher")
         app.setOrganizationName("StockWatcher")
+        configure_application_font(app)
         icon_path = application_icon_path()
         if icon_path.is_file():
             app.setWindowIcon(QIcon(str(icon_path)))

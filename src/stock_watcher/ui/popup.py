@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, QSettings, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSettings, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QMouseEvent, QScreen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -65,6 +65,8 @@ class AlertPopup(QWidget):
         subtitle: str,
         details_callback: Callable[[str], None],
         parent: QWidget | None = None,
+        *,
+        open_list_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -77,8 +79,9 @@ class AlertPopup(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setObjectName("alertPopup")
-        self.setFixedWidth(460)
+        self.setMinimumWidth(320)
         self._title = title
+        self._open_list_callback = open_list_callback
         self._settings = QSettings("StockWatcher", "StockWatcher")
         self._build(rows, title, subtitle, details_callback)
 
@@ -117,26 +120,75 @@ class AlertPopup(QWidget):
         bottom.addStretch()
         open_list = QPushButton("打开列表")
         open_list.setObjectName("primaryButton")
-        open_list.clicked.connect(self.close)
+        open_list.clicked.connect(self._open_list)
         bottom.addWidget(open_list)
         root.addLayout(bottom)
 
+    def _open_list(self) -> None:
+        if self._open_list_callback is not None:
+            self._open_list_callback()
+        self.close()
+
+    @staticmethod
+    def _clamp_point(
+        area: QRect,
+        desired: QPoint,
+        *,
+        width: int,
+        height: int,
+    ) -> QPoint:
+        maximum_x = max(area.left(), area.right() - width + 1)
+        maximum_y = max(area.top(), area.bottom() - height + 1)
+        return QPoint(
+            min(max(desired.x(), area.left()), maximum_x),
+            min(max(desired.y(), area.top()), maximum_y),
+        )
+
     def show_at_bottom_right(self, *, preferred_screen: QScreen | None = None) -> None:
+        screens = QGuiApplication.screens()
         stored = self._settings.value("alert/position")
-        if isinstance(stored, QPoint) and any(
-            screen.availableGeometry().contains(stored)
-            for screen in QGuiApplication.screens()
-        ):
-            self.move(stored)
+        stored_screen = (
+            next(
+                (
+                    candidate
+                    for candidate in screens
+                    if isinstance(stored, QPoint)
+                    and candidate.availableGeometry().contains(stored)
+                ),
+                None,
+            )
+            if isinstance(stored, QPoint)
+            else None
+        )
+        screen = (
+            stored_screen
+            or preferred_screen
+            or self.screen()
+            or QGuiApplication.primaryScreen()
+        )
+        if screen is None:
             self.show()
             return
-        # A popup created as a Tool window does not reliably inherit its
-        # parent's display on macOS.  Prefer the main window's current screen
-        # so a multi-monitor user sees all three candidates beside the app.
-        screen = preferred_screen or self.screen() or QGuiApplication.primaryScreen()
-        if screen is not None:
-            area = screen.availableGeometry()
-            self.move(area.right() - self.width() - 18, area.bottom() - self.height() - 18)
+        area = screen.availableGeometry()
+        target_width = max(280, min(460, area.width() - 36))
+        self.setFixedWidth(target_width)
+        self.adjustSize()
+        desired = (
+            stored
+            if isinstance(stored, QPoint)
+            else QPoint(
+                area.right() - self.width() - 17,
+                area.bottom() - self.height() - 17,
+            )
+        )
+        self.move(
+            self._clamp_point(
+                area,
+                desired,
+                width=self.width(),
+                height=self.height(),
+            )
+        )
         self.show()
 
     def closeEvent(self, event: QCloseEvent) -> None:
