@@ -11,7 +11,6 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import Event, Lock, Thread, current_thread
 from time import monotonic as monotonic_time
-from time import sleep as sleep_seconds
 from typing import cast
 
 from PySide6.QtCore import QTimer
