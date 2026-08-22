@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from threading import Event, Lock, Thread, current_thread
 from time import monotonic as monotonic_time
+from time import sleep as _sleep
 from typing import cast
 
 from PySide6.QtCore import QTimer
@@ -89,6 +90,12 @@ from stock_watcher.security import (
 from stock_watcher.storage import SQLiteStore
 
 from .connection_state import ConnectionState as TqConnectionState
+
+
+def sleep_seconds(seconds: float) -> None:
+    """Compatibility hook retained for deterministic tests and integrations."""
+
+    _sleep(seconds)
 
 
 @dataclass(frozen=True, slots=True)
