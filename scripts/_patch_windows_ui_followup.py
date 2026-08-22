@@ -76,11 +76,19 @@ replace_once(
 )
 replace_once(
     "tests/test_automation_reliability.py",
-    '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value
-''',
-    '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value, (
+    '''    task = store.get_automation_task("2026-08-03:summary-15:30")
+    assert task is not None
+    assert task["state"] == AutomationTaskState.SUCCEEDED.value
+
+
+def test_history_prune_keeps_recent_unreferenced_observations''',
+    '''    task = store.get_automation_task("2026-08-03:summary-15:30")
+    assert task is not None
+    assert task["state"] == AutomationTaskState.SUCCEEDED.value, (
         task,
         session._summary_issue,
     )
-''',
+
+
+def test_history_prune_keeps_recent_unreferenced_observations''',
 )
