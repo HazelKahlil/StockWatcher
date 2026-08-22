@@ -48,6 +48,9 @@ jobs:
       - name: Commit materialized source patch
         shell: pwsh
         run: |
+          # GITHUB_TOKEN cannot update workflow files. The connector updates the
+          # normal Governance artifact version separately after source materializes.
+          git restore .github/workflows/governance.yml
           git diff --quiet
           if ($LASTEXITCODE -eq 0) {
             Write-Host "No generated source changes to commit."
