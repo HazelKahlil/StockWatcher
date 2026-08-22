@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -727,7 +728,7 @@ class DataSourceSettingsDialog(QDialog):
         super().__init__(parent)
         self.controller = controller or DataSourceSettingsController()
         self.setWindowTitle("数据接口")
-        self.setMinimumSize(620, 460)
+        self.setMinimumSize(680, 460)
         self.resize(760, 640)
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 26, 28, 24)
