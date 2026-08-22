@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def replace_if_present(relative: str, old: str, new: str) -> None:
     path = ROOT / relative
     content = path.read_text(encoding="utf-8")
-    if new in content:
+    if new and new in content:
+        return
+    if old not in content:
         return
     count = content.count(old)
     if count != 1:
