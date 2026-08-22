@@ -7,6 +7,8 @@ on:
       - scripts/_patch_windows_ui.py
       - scripts/_patch_windows_ui_followup.py
       - scripts/_patch_windows_ui_fixup.py
+      - tests/test_windows_desktop_stability.py
+      - tests/windows_ui_probe.py
       - .github/workflows/apply-windows-desktop-stability.yml
 
 permissions:
