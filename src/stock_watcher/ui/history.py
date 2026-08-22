@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -22,6 +22,31 @@ from stock_watcher.domain import SHANGHAI
 from stock_watcher.storage import SQLiteStore
 
 from .outcome_review import OutcomeReviewPanel
+
+
+class HistoryWorker(QThread):
+    """Backward-compatible one-shot history reader.
+
+    HistoryDialog itself uses a daemon Python worker so its close path remains
+    nonblocking; this class is retained for existing imports and deterministic tests.
+    """
+
+    loaded = Signal(object, str)
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self._path = path
+
+    def run(self) -> None:
+        try:
+            store = SQLiteStore(self._path, read_only=True)
+            rows = store.list_alert_history(
+                now=datetime.now(SHANGHAI),
+                days=30,
+            )
+            self.loaded.emit(rows, "")
+        except Exception as error:  # noqa: BLE001 - expose only the safe class name
+            self.loaded.emit([], f"历史暂不可读：{type(error).__name__}")
 
 
 class HistoryDialog(QDialog):

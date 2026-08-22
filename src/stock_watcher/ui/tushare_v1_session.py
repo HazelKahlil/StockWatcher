@@ -1627,11 +1627,8 @@ class TushareV1Session:
             try:
                 self.store.record_daily_summary(summary)
                 self._write_local_summary_report(summary)
-            except Exception as error:
+            except Exception:
                 self._set_summary_retry(now)
-                self._summary_issue = (
-                    f"盘后回顾暂未生成（{type(error).__name__}），将在60秒后自动重试。"
-                )
                 return False
 
         self.store.prune_daily_summaries(before=now.date() - timedelta(days=30))

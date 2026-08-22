@@ -327,10 +327,7 @@ def test_1530_summary_falls_back_to_local_scan_records_without_provider(
     assert summary["alert_count"] == 0
     task = store.get_automation_task("2026-08-03:summary-15:30")
     assert task is not None
-    assert task["state"] == AutomationTaskState.SUCCEEDED.value, (
-        task,
-        session._summary_issue,
-    )
+    assert task["state"] == AutomationTaskState.SUCCEEDED.value
 
 
 def test_history_prune_keeps_recent_unreferenced_observations(tmp_path: Path) -> None:
