@@ -1,8 +1,8 @@
 name: Apply Windows desktop stability patch
 
 on:
-  push:
-    branches: [fix/windows-desktop-stability]
+  pull_request:
+    branches: [main]
     paths:
       - scripts/_patch_windows_ui.py
       - scripts/_patch_windows_ui_followup.py
