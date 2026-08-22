@@ -46,7 +46,9 @@ from stock_watcher.ui.tushare_v1_session import TushareV1Session  # noqa: E402
 
 def application() -> QApplication:
     existing = QApplication.instance()
-    return existing if isinstance(existing, QApplication) else QApplication([])
+    app = existing if isinstance(existing, QApplication) else QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+    return app
 
 
 def test_windows_font_preferences_do_not_force_macos_families() -> None:
