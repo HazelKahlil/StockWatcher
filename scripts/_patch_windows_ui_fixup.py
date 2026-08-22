@@ -35,8 +35,46 @@ replace_if_present(
 )
 replace_if_present(
     "src/stock_watcher/ui/tushare_v1_session.py",
-    "from time import sleep as sleep_seconds\n",
-    "",
+    "from time import monotonic as monotonic_time\n",
+    "from time import monotonic as monotonic_time\nfrom time import sleep as _sleep\n",
+)
+replace_if_present(
+    "src/stock_watcher/ui/tushare_v1_session.py",
+    "from .connection_state import ConnectionState as TqConnectionState\n\n\n@dataclass",
+    '''from .connection_state import ConnectionState as TqConnectionState
+
+
+def sleep_seconds(seconds: float) -> None:
+    """Compatibility hook retained for deterministic tests and integrations."""
+
+    _sleep(seconds)
+
+
+@dataclass''',
+)
+replace_if_present(
+    "src/stock_watcher/ui/tushare_v1_session.py",
+    '''            except Exception as error:
+                self._set_summary_retry(now)
+                self._summary_issue = (
+                    f"盘后回顾暂未生成（{type(error).__name__}），将在60秒后自动重试。"
+                )
+                return False
+''',
+    '''            except Exception:
+                self._set_summary_retry(now)
+                return False
+''',
+)
+replace_if_present(
+    "tests/test_automation_reliability.py",
+    '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value, (
+        task,
+        session._summary_issue,
+    )
+''',
+    '''    assert task["state"] == AutomationTaskState.SUCCEEDED.value
+''',
 )
 replace_if_present(
     "tests/test_windows_desktop_stability.py",
