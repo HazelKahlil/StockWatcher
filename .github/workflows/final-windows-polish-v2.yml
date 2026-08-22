@@ -1,0 +1,342 @@
+name: Apply final Windows UI and provenance polish v2
+
+on:
+  push:
+    branches: [fix/windows-desktop-stability]
+    paths:
+      - .github/workflows/final-windows-polish-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-desktop-stability
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Remove failed temporary workflow and apply final changes
+        run: |
+          rm -f .github/workflows/final-windows-polish.yml
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              ".github/workflows/governance.yml",
+              """      - name: Build PyInstaller folder and Inno Setup installer
+                shell: pwsh
+                run: pwsh -NoProfile -File .\\scripts\\windows\\stockwatcher.ps1 -Action Build
+          """,
+              """      - name: Build PyInstaller folder and Inno Setup installer
+                shell: pwsh
+                env:
+                  STOCKWATCHER_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+                run: pwsh -NoProfile -File .\\scripts\\windows\\stockwatcher.ps1 -Action Build
+          """,
+          )
+
+          settings_path = Path("src/stock_watcher/ui/data_source_settings.py")
+          settings = settings_path.read_text(encoding="utf-8")
+          old_migration = """    def migrate_legacy_fast(self, *, confirmed: bool) -> bool:
+              \"\"\"Explicitly copy the old Fast Token to Primary after testing it.\"\"\"
+              if not confirmed or self.credential_present(\"primary\"):
+                  return False
+              try:
+                  legacy = self.store.get(FAST_CREDENTIAL)
+              except Exception:
+                  return False
+              if not legacy:
+                  return False
+              profile = self.settings.primary_profile
+              result = self.test_candidate(
+                  \"primary\",
+                  legacy,
+                  base_url=str(profile.base_url).rstrip(\"/\"),
+                  use_system_proxy=profile.use_system_proxy,
+              )
+              return result.success and self.commit_candidate(\"primary\", confirmed=True)
+          """
+          new_migration = """    def test_legacy_fast_candidate(self) -> CredentialTestResult:
+              \"\"\"Test the old Fast credential without committing from a worker thread.\"\"\"
+              if self.credential_present(\"primary\"):
+                  return CredentialTestResult(
+                      success=False,
+                      tested_at=datetime.now().astimezone(),
+                      status_text=\"统一 Token 已存在，无需迁移旧 Token。\",
+                      permission_summary=\"当前凭据保持不变。\",
+                      expires_at=\"未知\",
+                      safe_reason=\"credential_present\",
+                  )
+              try:
+                  legacy = self.store.get(FAST_CREDENTIAL)
+              except Exception as error:
+                  return CredentialTestResult(
+                      success=False,
+                      tested_at=datetime.now().astimezone(),
+                      status_text=\"旧 Token 暂时无法读取。\",
+                      permission_summary=f\"系统安全存储检查失败：{type(error).__name__}\",
+                      expires_at=\"未知\",
+                      safe_reason=\"credential_store_unavailable\",
+                  )
+              if not legacy:
+                  return CredentialTestResult(
+                      success=False,
+                      tested_at=datetime.now().astimezone(),
+                      status_text=\"未找到可迁移的旧 Token。\",
+                      permission_summary=\"当前凭据保持不变。\",
+                      expires_at=\"未知\",
+                      safe_reason=\"credential_missing\",
+                  )
+              profile = self.settings.primary_profile
+              return self.test_candidate(
+                  \"primary\",
+                  legacy,
+                  base_url=str(profile.base_url).rstrip(\"/\"),
+                  use_system_proxy=profile.use_system_proxy,
+              )
+
+              
+          def migrate_legacy_fast(self, *, confirmed: bool) -> bool:
+              \"\"\"Compatibility wrapper; the UI uses the non-blocking test path.\"\"\"
+              if not confirmed:
+                  return False
+              result = self.test_legacy_fast_candidate()
+              return result.success and self.commit_candidate(\"primary\", confirmed=True)
+          """
+          if settings.count(old_migration) != 1:
+              raise SystemExit("unexpected legacy migration controller block")
+          settings = settings.replace(old_migration, new_migration, 1)
+
+          worker_anchor = """    def _run_candidate_test(
+              self,
+              generation: int,
+              secret: str,
+              base_url: str,
+              use_system_proxy: bool,
+          ) -> None:
+          """
+          legacy_worker = """    def start_legacy_migration(self) -> None:
+              \"\"\"Test a legacy credential off the GUI thread.\"\"\"
+              self._test_generation += 1
+              generation = self._test_generation
+              with self._test_result_lock:
+                  self._test_result = None
+              self._set_test_busy(True)
+              self.status.setText(\"正在后台测试旧 Token；窗口仍可关闭。\")
+              Thread(
+                  target=self._run_legacy_candidate_test,
+                  args=(generation,),
+                  name=\"stockwatcher-legacy-token-test\",
+                  daemon=True,
+              ).start()
+              self._test_poll_timer.start()
+
+              
+          def _run_legacy_candidate_test(self, generation: int) -> None:
+              try:
+                  result = self.controller.test_legacy_fast_candidate()
+              except Exception as error:  # noqa: BLE001 - publish only the safe class name
+                  result = CredentialTestResult(
+                      success=False,
+                      tested_at=datetime.now().astimezone(),
+                      status_text=\"旧 Token 测试异常，当前凭据未被替换。\",
+                      permission_summary=f\"安全存储或网络检查失败：{type(error).__name__}\",
+                      expires_at=\"未知\",
+                      safe_reason=\"business_error\",
+                  )
+              with self._test_result_lock:
+                  if generation == self._test_generation:
+                      self._test_result = (generation, result)
+
+              
+          """ + worker_anchor
+          if settings.count(worker_anchor) != 1:
+              raise SystemExit("unexpected candidate worker anchor")
+          settings = settings.replace(worker_anchor, legacy_worker, 1)
+
+          old_cancel = """    def cancel_pending_test(self) -> None:
+              self._test_generation += 1
+              self._test_poll_timer.stop()
+              with self._test_result_lock:
+                  self._test_result = None
+              self._set_test_busy(False)
+          """
+          new_cancel = """    def cancel_pending_test(self) -> None:
+              self._test_generation += 1
+              self._test_poll_timer.stop()
+              self._capability_timer.stop()
+              with self._test_result_lock:
+                  self._test_result = None
+          """
+          if settings.count(old_cancel) != 1:
+              raise SystemExit("unexpected cancel_pending_test block")
+          settings = settings.replace(old_cancel, new_cancel, 1)
+
+          if settings.count("        self.setMinimumSize(680, 460)\n") != 1:
+              raise SystemExit("unexpected settings minimum size")
+          settings = settings.replace(
+              "        self.setMinimumSize(680, 460)\n",
+              "        self.setMinimumSize(620, 400)\n",
+              1,
+          )
+
+          old_ui_migration = """        if answer == QMessageBox.StandardButton.Yes:
+              ok = self.controller.migrate_legacy_fast(confirmed=True)
+              QMessageBox.information(
+                  self,
+                  \"迁移结果\",
+                  \"迁移成功，正在重新预热数据。\" if ok else \"迁移未完成，旧 Token 未被删除。\",
+              )
+          """
+          new_ui_migration = """        if answer == QMessageBox.StandardButton.Yes:
+              self._primary_editor.start_legacy_migration()
+          """
+          if settings.count(old_ui_migration) != 1:
+              raise SystemExit("unexpected blocking legacy migration UI block")
+          settings_path.write_text(
+              settings.replace(old_ui_migration, new_ui_migration, 1),
+              encoding="utf-8",
+          )
+
+          replace_once(
+              "tests/test_data_source_settings.py",
+              "    assert dialog.minimumWidth() >= 680\n",
+              "    assert dialog.minimumWidth() >= 620\n    assert dialog.minimumHeight() <= 400\n",
+          )
+
+          replace_once(
+              "tests/test_windows_desktop_stability.py",
+              '@pytest.mark.parametrize("scenario", ("layout", "close", "popup", "settings", "history"))\n',
+              '@pytest.mark.parametrize(\n    "scenario", ("layout", "close", "popup", "settings", "legacy", "history")\n)\n',
+          )
+
+          probe_path = Path("tests/windows_ui_probe.py")
+          probe = probe_path.read_text(encoding="utf-8")
+          probe = probe.replace(
+              "from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QScrollArea\n",
+              "from PySide6.QtWidgets import (\n    QApplication,\n    QLabel,\n    QLineEdit,\n    QMessageBox,\n    QPushButton,\n    QScrollArea,\n)\n",
+              1,
+          )
+          probe = probe.replace(
+              "from stock_watcher.security import PRIMARY_CREDENTIAL, MemoryCredentialStore\n",
+              "from stock_watcher.security import (\n    FAST_CREDENTIAL,\n    PRIMARY_CREDENTIAL,\n    MemoryCredentialStore,\n)\n",
+              1,
+          )
+          history_anchor = "\n\ndef _history_close(root: Path) -> None:\n"
+          legacy_probe = """
+
+          def _legacy_migration_close(_root: Path) -> None:
+              app = _application()
+              entered = threading.Event()
+              release = threading.Event()
+
+              class BlockingTester:
+                  def test(self, _profile: object, _secret: str) -> CredentialTestResult:
+                      entered.set()
+                      release.wait(2.0)
+                      return CredentialTestResult(
+                          success=True,
+                          tested_at=datetime.now().astimezone(),
+                          status_text=\"通过\",
+                          permission_summary=\"通过\",
+                          expires_at=\"未知\",
+                      )
+
+              store = MemoryCredentialStore()
+              store.set(FAST_CREDENTIAL, \"legacy-test-token\")
+              controller = DataSourceSettingsController(store=store, tester=BlockingTester())
+              dialog = DataSourceSettingsDialog(controller, platform=\"win32\")
+              editor = dialog._primary_editor
+              migrate = next(
+                  button
+                  for button in dialog.findChildren(QPushButton)
+                  if button.text() == \"迁移本机旧 Token\"
+              )
+              original_question = QMessageBox.question
+              QMessageBox.question = staticmethod(
+                  lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes
+              )
+              try:
+                  assert editor._capability_timer.isActive()
+                  started = time.monotonic()
+                  migrate.click()
+                  assert time.monotonic() - started < 0.2
+                  assert entered.wait(1.0)
+                  dialog.reject()
+                  assert not editor._capability_timer.isActive()
+                  release.set()
+                  deadline = time.monotonic() + 1.0
+                  while time.monotonic() < deadline:
+                      app.processEvents()
+                      time.sleep(0.01)
+                  assert store.get(PRIMARY_CREDENTIAL) is None
+                  assert not controller.commit_candidate(\"primary\", confirmed=True)
+              finally:
+                  QMessageBox.question = original_question
+                  release.set()
+          """
+          if probe.count(history_anchor) != 1:
+              raise SystemExit("unexpected history probe anchor")
+          probe = probe.replace(history_anchor, legacy_probe + history_anchor, 1)
+          probe = probe.replace(
+              '    "settings": _settings_close,\n    "history": _history_close,\n',
+              '    "settings": _settings_close,\n    "legacy": _legacy_migration_close,\n    "history": _history_close,\n',
+              1,
+          )
+          probe = probe.replace(
+              "usage: windows_ui_probe.py <layout|close|popup|settings|history> <tmp-dir>",
+              "usage: windows_ui_probe.py <layout|close|popup|settings|legacy|history> <tmp-dir>",
+              1,
+          )
+          probe_path.write_text(probe, encoding="utf-8")
+
+          replace_once(
+              "tests/test_windows_package.py",
+              """    assert \"dist/StockWatcher-0.6.0-alpha.5-portable.zip\" in workflow
+              assert \"dist/StockWatcher-0.3.0-alpha-portable.zip\" not in workflow
+          """,
+              """    assert \"dist/StockWatcher-0.6.0-alpha.5-portable.zip\" in workflow
+              assert (
+                  \"STOCKWATCHER_SOURCE_COMMIT: \"
+                  \"${{ github.event.pull_request.head.sha || github.sha }}\"
+              ) in workflow
+              assert \"dist/StockWatcher-0.3.0-alpha-portable.zip\" not in workflow
+          """,
+          )
+          PY
+      - name: Run complete offline gate
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv sync --all-groups --frozen
+          uv run pytest
+          uv run ruff check .
+          uv run mypy src tests
+          python scripts/validate_workspace.py
+          uv run python scripts/check_windows_package.py
+          python -m json.tool CURRENT_RELEASES.json > /dev/null
+          git diff --check
+      - name: Commit verified changes and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/final-windows-polish-v2.yml
+          git add -A
+          git commit -m "fix: finish Windows settings and package provenance hardening"
+          git push origin HEAD:fix/windows-desktop-stability
