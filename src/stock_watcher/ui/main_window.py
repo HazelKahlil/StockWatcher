@@ -654,7 +654,9 @@ class MainWindow(QMainWindow):
         if sys.platform != "darwin":
             settings.addSeparator()
             quit_action = QAction("退出 StockWatcher", self)
-            quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+            quit_action.setShortcut(
+                QKeySequence(QKeySequence.StandardKey.Quit)
+            )
             quit_action.triggered.connect(self._quit_application)
             settings.addAction(quit_action)
 
