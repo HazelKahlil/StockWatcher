@@ -8,16 +8,13 @@ on:
       - scripts/_patch_windows_ui_followup.py
       - scripts/_patch_windows_ui_fixup.py
       - .github/workflows/apply-windows-desktop-stability.yml
-  pull_request:
-    branches: [main]
-    paths:
-      - scripts/_patch_windows_ui.py
-      - scripts/_patch_windows_ui_followup.py
-      - scripts/_patch_windows_ui_fixup.py
-      - .github/workflows/apply-windows-desktop-stability.yml
 
 permissions:
   contents: write
+
+concurrency:
+  group: windows-desktop-stability-materialize
+  cancel-in-progress: true
 
 jobs:
   apply-and-verify:
