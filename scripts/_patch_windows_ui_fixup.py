@@ -38,3 +38,16 @@ replace_if_present(
     "from time import sleep as sleep_seconds\n",
     "",
 )
+replace_if_present(
+    "tests/test_windows_desktop_stability.py",
+    '''def application() -> QApplication:
+    existing = QApplication.instance()
+    return existing if isinstance(existing, QApplication) else QApplication([])
+''',
+    '''def application() -> QApplication:
+    existing = QApplication.instance()
+    app = existing if isinstance(existing, QApplication) else QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+    return app
+''',
+)
