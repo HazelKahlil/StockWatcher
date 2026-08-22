@@ -6,12 +6,14 @@ on:
     paths:
       - scripts/_patch_windows_ui.py
       - scripts/_patch_windows_ui_followup.py
+      - scripts/_patch_windows_ui_fixup.py
       - .github/workflows/apply-windows-desktop-stability.yml
   pull_request:
     branches: [main]
     paths:
       - scripts/_patch_windows_ui.py
       - scripts/_patch_windows_ui_followup.py
+      - scripts/_patch_windows_ui_fixup.py
       - .github/workflows/apply-windows-desktop-stability.yml
 
 permissions:
@@ -43,8 +45,10 @@ jobs:
             uv lock
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
-            Write-Host "Patch is already applied at alpha.5; verification only."
+            Write-Host "Base patch is already applied at alpha.5."
           }
+          python scripts/_patch_windows_ui_fixup.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Commit materialized source patch
         shell: pwsh
         run: |
@@ -59,7 +63,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix: stabilize Windows desktop lifecycle and UI"
+          git commit -m "fix: complete Windows desktop stability follow-ups"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git push origin HEAD:fix/windows-desktop-stability
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
