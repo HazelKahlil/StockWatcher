@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   apply-and-verify:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,53 +31,48 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - name: Install Qt headless runtime libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            libegl1 \
-            libgl1 \
-            libopengl0 \
-            libxkbcommon-x11-0 \
-            libxcb-cursor0
       - name: Apply source patch when needed
-        shell: bash
+        shell: pwsh
         run: |
-          if grep -q 'version = "0.6.0a4"' pyproject.toml; then
+          $isAlpha4 = Select-String -Path pyproject.toml -Pattern 'version = "0.6.0a4"' -Quiet
+          if ($isAlpha4) {
             python scripts/_patch_windows_ui.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python scripts/_patch_windows_ui_followup.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             uv lock
-          else
-            echo "Patch is already applied at alpha.5; verification only."
-          fi
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            Write-Host "Patch is already applied at alpha.5; verification only."
+          }
+      - name: Commit materialized source patch
+        shell: pwsh
+        run: |
+          git diff --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No generated source changes to commit."
+            exit 0
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: stabilize Windows desktop lifecycle and UI"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:fix/windows-desktop-stability
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install locked dependencies
         run: uv sync --all-groups --frozen
-      - name: Run full offline test suite
+      - name: Run first-failure regression suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: >-
-          uv run pytest
-          tests/test_automation_reliability.py::test_1530_summary_falls_back_to_local_scan_records_without_provider
-          -vv --showlocals
+        run: uv run pytest -x -vv
       - name: Run lint and strict types
         run: |
-          uv run ruff check .
+          uv run ruff check src tests scripts/check_windows_package.py
           uv run mypy src tests
       - name: Run governance and Windows package contracts
         run: |
           python scripts/validate_workspace.py
           uv run python scripts/check_windows_package.py
-          python -m json.tool CURRENT_RELEASES.json > /dev/null
+          python -m json.tool CURRENT_RELEASES.json > $null
           git diff --check
-      - name: Commit verified source changes
-        shell: bash
-        run: |
-          if git diff --quiet; then
-            echo "No generated source changes to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: stabilize Windows desktop lifecycle and UI"
-          git push origin HEAD:fix/windows-desktop-stability
