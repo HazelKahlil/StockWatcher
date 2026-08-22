@@ -5,11 +5,13 @@ on:
     branches: [fix/windows-desktop-stability]
     paths:
       - scripts/_patch_windows_ui.py
+      - scripts/_patch_windows_ui_followup.py
       - .github/workflows/apply-windows-desktop-stability.yml
   pull_request:
     branches: [main]
     paths:
       - scripts/_patch_windows_ui.py
+      - scripts/_patch_windows_ui_followup.py
       - .github/workflows/apply-windows-desktop-stability.yml
 
 permissions:
@@ -43,6 +45,7 @@ jobs:
         run: |
           if grep -q 'version = "0.6.0a4"' pyproject.toml; then
             python scripts/_patch_windows_ui.py
+            python scripts/_patch_windows_ui_followup.py
             uv lock
           else
             echo "Patch is already applied at alpha.5; verification only."
