@@ -57,7 +57,7 @@
 | 2026-08-26 | `uv run pytest`、`ruff check .`、`mypy src tests`、`python3 scripts/validate_workspace.py` | 通过 |
 | 2026-08-26 | 备份 Schema v9 → 镜像 `stockwatcher-web:web-repeat-4b1e79e` → live 迁到 v10 → 公网静态验证 | 完成 |
 | 2026-08-26 | 零回归终验包 `docs/visions/v0.7-web-candidate-repeat/audit/`；旁路数据/算法门通过；现网 `/health/ready` 503 使整包签收门未齐 | 记录 |
-| 2026-08-26 | 独立分支 `fix/web-readiness-503`：公开 503 仍为 `{"status":"not_ready"}`，服务器记录分阶段脱敏日志；HTTP readiness 使用短生命周期只读连接 | 进行中 |
+| 2026-08-26 | 独立分支 `fix/web-readiness-503`：公开 503 仍为 `{"status":"not_ready"}`，服务器记录分阶段脱敏日志；HTTP readiness 使用短生命周期只读连接；镜像 `web-repeat-ready-db10869` 已替换 live Web | 完成 |
 
 ## 实现要点
 
@@ -72,19 +72,27 @@
 
 | 项 | 值 |
 | --- | --- |
-| 本地分支 | `feat/web-candidate-repeat` |
+| 本地分支 | `fix/web-readiness-503`（repeat 实现仍在 `4b1e79e`） |
 | 实现提交 | `4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997` |
-| 镜像标签 | `stockwatcher-web:web-repeat-4b1e79e` |
-| 镜像 Id | `sha256:cbee6514797747197ba3744e03a3e46ddce6455956a9bd169191b55ad3a34c39` |
+| 镜像标签 | `stockwatcher-web:web-repeat-ready-db10869`（Web）；Worker 仍为 `web-repeat-4b1e79e` |
+| 镜像 Id | `sha256:1fdcf4f420d8097fb3e14ad4ab2053e7c2c3850c5964bbd7cfe97717889803d5` |
 | 部署环境 | macOS Docker Desktop + Cloudflare Tunnel，`stock.hazelkahlil.com` |
 | 迁移前备份 | `~/StockWatcherBackups/auto-20260826T040404Z`（Schema v9 / `34ce825`） |
 | 容器内备份 | `/backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z` |
 | live Schema | v10，`integrity_check=ok` |
 | 回算 | `status=completed version=1 snapshots=5278 occurrences=1618 activated=90 skipped=0` |
-| 公网验证 | `/health/ready`、`app.css?v=15`、`dashboard.js?v=12`、`history.js?v=2`；未登录首页无紫色 markup |
+| 公网验证 | `/health/ready` 200 `{"status":"ready"}`；登录页 200；Web Docker healthy |
 | GitHub | 未 push；远端未包含本提交 |
 
 ## 回滚
+
+Web readiness 镜像回退（保留 v10 数据）：
+
+1. `.env.tunnel` 的 `IMAGE_TAG` / `BUILD_VERSION` 改回 `web-repeat-4b1e79e`，`SOURCE_COMMIT` 改回 `4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997`。
+2. `docker compose -f docker-compose.yml -f docker-compose.tunnel.yml --env-file .env.tunnel up -d --no-deps web`
+3. 跑 `deploy/scripts/tunnel-healthcheck.sh`。
+
+灾难回退到 Schema v9：
 
 1. 停止 `web` / `worker`。
 2. `python -m stock_watcher.server.admin_cli restore --input /backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z`
