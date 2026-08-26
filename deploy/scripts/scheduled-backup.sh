@@ -16,7 +16,7 @@ env_file=${1:-.env.tunnel}
 log_file=${STOCKWATCHER_BACKUP_LOG:-$HOME/Library/Logs/stockwatcher-backup.log}
 host_root=${STOCKWATCHER_HOST_BACKUP_DIR:-$HOME/StockWatcherBackups}
 keep=${STOCKWATCHER_BACKUP_KEEP:-48}
-image=${STOCKWATCHER_BACKUP_IMAGE:-stockwatcher-web:web-alpha4-34ce825}
+image=${STOCKWATCHER_BACKUP_IMAGE:-stockwatcher-web:web-repeat-4b1e79e}
 backup_volume=${STOCKWATCHER_BACKUP_VOLUME:-stockwatcher_stockwatcher_tunnel_backups}
 
 "$MKDIR" -p "$(dirname "$log_file")" "$host_root"

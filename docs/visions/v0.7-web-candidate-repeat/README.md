@@ -1,7 +1,7 @@
 # v0.7-web-candidate-repeat：Web「近期多次出现」紫色观察提示
 
-> 状态: 进行中
-> 交付层级: 本地实现与离线验证已完成；受控部署 / 公网页面验证待执行
+> 状态: 本地实现已部署到 Mac 内测隧道；Web 继续 `BLOCKED / NOT_ACCEPTED`
+> 交付层级: 代码、迁移、回算、测试、Docker 构建、受控部署与公网静态验证已完成
 > 任务锚点: Web 独立线 `feat/web-candidate-repeat`
 > 创建: 2026-08-26 ｜ 封版:
 
@@ -13,7 +13,7 @@
 本功能只做观察提示。模型评分、候选排名、Stable Top3、「强 / 中 / 近」和盘中强异动
 判断继续走原路径。它也不构成买入、卖出或收益预测。
 
-客户确认来源：`StockWatcher2.docx` 问卷；工程规则见本目录交付 brief。
+客户确认来源：`StockWatcher2.docx` 问卷。
 
 明确不在本版：
 
@@ -46,16 +46,16 @@
 - [x] 固定提醒弹窗和首页不显示紫色
 - [x] 没有新增重复出现专属声音、通知或弹窗（`dashboard.js` 仍只有原有两处 `notify(`）
 - [x] 模型分数、排名、Stable Top3 和强异动逻辑不变（`engine/{candidates,stable_top3,alerts}.py` 未引入 repeat）
-- [x] 数据库迁移、完整性检查和回滚备份通过（v9→v10 前置 `.pre-v10.bak` + `integrity_check`）
-- [ ] Docker 构建、受控部署、公网页面验证
+- [x] 数据库迁移、完整性检查和回滚备份通过（v9→v10 前置备份 + live `integrity_check=ok`）
+- [x] Docker 构建、受控部署、公网静态页面验证
 
 ## 进度
 
 | 日期 | 进展 | 状态 |
 | --- | --- | --- |
-| 2026-08-26 | 登记版本并实现 Web Schema v10 / CandidateRepeatTracker / API / 弹窗与历史 UI | 本地完成 |
-| 2026-08-26 | `uv run pytest`、`ruff check .`、`mypy src tests`、`python3 scripts/validate_workspace.py` 通过 | 本地完成 |
-| 2026-08-26 | Docker 构建、live 备份、Schema v10 受控部署与公网页面验证 | 待执行 |
+| 2026-08-26 | Schema v10 / CandidateRepeatTracker / API / 弹窗与历史 UI | 本地完成 |
+| 2026-08-26 | `uv run pytest`、`ruff check .`、`mypy src tests`、`python3 scripts/validate_workspace.py` | 通过 |
+| 2026-08-26 | 备份 Schema v9 → 镜像 `stockwatcher-web:web-repeat-4b1e79e` → live 迁到 v10 → 公网静态验证 | 完成 |
 
 ## 实现要点
 
@@ -66,13 +66,37 @@
 - 当前 REST / `candidates.updated` / `alert.created` 带 repeat 字段；强异动弹窗优先用该提醒 payload 中的候选
 - Worker 首次 tick 对已有健康快照做幂等回算，结果写入 `app_settings.candidate_repeat_backfill_status`
 
+## 交付节点
+
+| 项 | 值 |
+| --- | --- |
+| 本地分支 | `feat/web-candidate-repeat` |
+| 实现提交 | `4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997` |
+| 镜像标签 | `stockwatcher-web:web-repeat-4b1e79e` |
+| 镜像 Id | `sha256:cbee6514797747197ba3744e03a3e46ddce6455956a9bd169191b55ad3a34c39` |
+| 部署环境 | macOS Docker Desktop + Cloudflare Tunnel，`stock.hazelkahlil.com` |
+| 迁移前备份 | `~/StockWatcherBackups/auto-20260826T040404Z`（Schema v9 / `34ce825`） |
+| 容器内备份 | `/backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z` |
+| live Schema | v10，`integrity_check=ok` |
+| 回算 | `status=completed version=1 snapshots=5278 occurrences=1618 activated=90 skipped=0` |
+| 公网验证 | `/health/ready`、`app.css?v=15`、`dashboard.js?v=12`、`history.js?v=2`；未登录首页无紫色 markup |
+| GitHub | 未 push；远端未包含本提交 |
+
+## 回滚
+
+1. 停止 `web` / `worker`。
+2. `python -m stock_watcher.server.admin_cli restore --input /backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z`
+3. 将 `.env.tunnel` 的 `IMAGE_TAG` / `BUILD_VERSION` 改回 `web-alpha4-34ce825`，`SOURCE_COMMIT` 改回 `34ce825014692aef01ae397499dd7604c67273ef`。
+4. `docker compose -f docker-compose.yml -f docker-compose.tunnel.yml --env-file .env.tunnel up -d web worker tunnel-gateway cloudflared`
+5. 跑 `deploy/scripts/tunnel-healthcheck.sh`。
+
 ## 生命周期三账对账
 
 | 检查点 | 任务载体 | `docs/visions/README.md` | 本 README | 结果 |
 | --- | --- | --- | --- | --- |
-| 开工 | `feat/web-candidate-repeat` / in_progress | 活跃登记 v0.7-web-candidate-repeat | 范围已写入 | 一致 |
-| 重要集成 | 本地 pytest / ruff / mypy 已通过 | 待部署后更新 | 本表已更新 | 部分 |
-| 封版 | 待完成 | 待完成 | 待完成 | 待核 |
+| 开工 | `feat/web-candidate-repeat` | 活跃登记 v0.7-web-candidate-repeat | 范围已写入 | 一致 |
+| 重要集成 | 本地验证 + Mac 内测部署 | 见本表 | 交付节点已写 | 一致 |
+| 封版 | Web 仍为内部测试 | 待封 | 待封 | Web 继续 `BLOCKED / NOT_ACCEPTED` |
 
 ## 决策与风险
 
@@ -81,7 +105,7 @@
 | 滚动 14 日窗口 | 客户未定义首窗未达标处理；用仍有效日期作为新起点，避免长期漏判 |
 | 计数发生在健康快照写入事务 | 提醒只补充当天来源，不能反向驱动次数 |
 | Web 继续 `BLOCKED / NOT_ACCEPTED` | 本功能上线后仍为内部测试，不宣称生产稳定 |
-| live Schema v10 | 仅新增两张表；部署前必须走现有 backup → migrate → healthcheck，回滚用该次备份 |
+| Worker `secret-prune` FOREIGN KEY 告警 | 启动日志可见，与重复出现表无关；未在本版处理 |
 
 ## Session Handoff 索引
 
@@ -89,7 +113,7 @@
 
 ## 封版记录
 
-- 验证结果：
-- 遗留问题：受控部署与公网页面验证尚未执行
-- 三账终态：
-- 同步债 / successor：
+- 验证结果：离线工程门通过；Mac 内测隧道已部署 Schema v10。等待真实交易日看盘中强异动弹窗与历史紫色。
+- 遗留问题：GitHub 未同步；真实交易日页面交互验收未做；Worker `secret-prune` 外键告警仍在。
+- 三账终态：实施完成，版本未封。
+- 同步债 / successor：需要时从本分支出 `publish/` 同步 PR。

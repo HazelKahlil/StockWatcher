@@ -4,8 +4,9 @@
 
 - 当前独立 Web 主线：`cnb/main`；桌面提醒实现 `53501ad`、Murphy Review `214563c`、
   恢复备份发现修复 `33bc3ea` 与只读在线备份修复 `34ce825` 均已同步。
-- 当前 Mac Docker 运行源码为 `34ce825014692aef01ae397499dd7604c67273ef`，镜像为
-  `stockwatcher-web:web-alpha4-34ce825`。
+- 当前 Mac Docker 运行源码为 `4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997`，镜像为
+  `stockwatcher-web:web-repeat-4b1e79e`（Schema v10）。上一运行点 `34ce825` /
+  `stockwatcher-web:web-alpha4-34ce825` 保留为回滚镜像。
 - Web 基线：`502a447d7e593d638ea45518f2a5e4d4827f683f`（Mac RC3 tag 基线）。
 - Web 与 main 的共同基线是 `502a447...`；Web 有独有实现提交，不能把它当作 main 的祖先。
 - 当前 worktree：`~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e`。
@@ -20,8 +21,8 @@
 
 1. 当前 macOS worktree 的完整 pytest、Ruff、Mypy 与 workspace validator 在
    `feat/web-candidate-repeat` 上已通过；这仍是离线工程门，不等于真实交易日验收。
-2. Web Schema 目标为 v10（`candidate_repeat_days` / `candidate_repeat_states`）。
-   当前 Mac Docker 运行源码仍为 `34ce825` / Schema v9，直到完成本版受控部署。
+2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；Schema v10、公网
+   `app.css?v=15`、部署前 Schema v9 备份、数据库完整性与公网入口均已验证。
 3. 「近期多次出现」已在本 worktree 实现：计数 sidecar、历史回算、强异动弹窗紫色徽标、
    历史页当时状态与「只看紫色标记」。首页与 09:45/14:45 弹窗保持原样。
 4. 当前部署依赖 Mac 开机、联网及 Docker Desktop；VPS 已由 Human Owner 明确后置，本基准
@@ -52,8 +53,8 @@
 
 ## 下一步
 
-1. 在下一真实交易日验收 09:45/14:45 右下角提醒、次日同点结算/有界重试、
-   强异动与全日持续运行。
+1. 在下一真实交易日验收 09:45/14:45 右下角提醒、盘中强异动弹窗紫色徽标、历史「只看紫色标记」、
+   次日同点结算/有界重试与全日持续运行。
 2. 浏览器完全关闭后的 Web Push 如仍需要，作为非阻断的独立后续功能；当前页面内
    提醒与浏览器 Notification 不因此降级。
 3. 现场门通过后，由 Human Owner 决定是否建立受控集成提交；在此之前保持
