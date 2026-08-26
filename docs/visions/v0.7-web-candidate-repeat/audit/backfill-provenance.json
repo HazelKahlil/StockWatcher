@@ -1,0 +1,49 @@
+{
+  "active_states": 90,
+  "alert_trigger_types": {
+    "intraday": 39,
+    "scheduled-09:45": 12,
+    "scheduled-14:45": 11
+  },
+  "app_version": {
+    "0.4.0a1": 1158,
+    "0.6.0a4": 4120
+  },
+  "config_version": {
+    "v1-real-candidates-20260729": 5278
+  },
+  "distinct_trade_dates_from_snapshots": 13,
+  "duplicate_code_trade_date_groups": 0,
+  "filters": {
+    "displayed_items": 3,
+    "health": "HEALTHY",
+    "non_countable_markers": [
+      "mock",
+      "replay",
+      "synthetic",
+      "demo",
+      "fixture"
+    ],
+    "provider_is_countable": true,
+    "source_ts": "parseable timezone-aware Asia/Shanghai (or +08:00 offset)"
+  },
+  "non_production_used": 0,
+  "provider_version": {
+    "tushare-1.4.29": 5278
+  },
+  "repeat_days_distinct_code": 1119,
+  "repeat_days_distinct_trade_date": 13,
+  "repeat_days_max": "2026-08-26",
+  "repeat_days_min": "2026-08-10",
+  "repeat_days_rows": 1618,
+  "skipped": {},
+  "snapshots_total": 5278,
+  "snapshots_used": 5278,
+  "source_max": "2026-08-26T11:30:03+08:00",
+  "source_min": "2026-08-10T10:39:57+08:00",
+  "source_tz_offsets": {
+    "+08:00": 5278
+  },
+  "trade_date_max": "2026-08-26",
+  "trade_date_min": "2026-08-10"
+}

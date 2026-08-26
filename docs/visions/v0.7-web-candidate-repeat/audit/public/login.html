@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · StockWatcher</title>
+<link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  
+</header>
+<main id="main">
+
+<section class="login-card" aria-labelledby="login-title">
+  <h1 id="login-title">StockWatcher Login</h1>
+  <form id="login-form" method="post" action="/api/v1/auth/login" novalidate>
+    <label for="username">用户名</label>
+    <input id="username" name="username" autocomplete="username" required autofocus>
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <p id="login-error" class="error" role="alert" hidden></p>
+    <button type="submit">登录</button>
+  </form>
+</section>
+<script type="module" src="/static/login.js?v=1"></script>
+
+</main>
+
+</body>
+</html>

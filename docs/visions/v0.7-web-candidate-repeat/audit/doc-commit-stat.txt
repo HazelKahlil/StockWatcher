@@ -1,0 +1,6 @@
+bf07c22 docs(web): record Schema v10 repeat-hint Mac tunnel deployment
+ deploy/scripts/scheduled-backup.sh               |  2 +-
+ docs/tracks/web.md                               | 13 +++---
+ docs/visions/README.md                           |  4 +-
+ docs/visions/v0.7-web-candidate-repeat/README.md | 56 +++++++++++++++++-------
+ 4 files changed, 50 insertions(+), 25 deletions(-)

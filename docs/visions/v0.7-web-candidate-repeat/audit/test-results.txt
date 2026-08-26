@@ -1,0 +1,60 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e
+configfile: pyproject.toml
+testpaths: tests
+plugins: asyncio-1.4.0, cov-6.3.0, anyio-4.14.2
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 591 items / 2 deselected / 589 selected
+
+tests/test_automation_reliability.py ........                            [  1%]
+tests/test_candidate_outcomes.py ....................................... [  7%]
+...................                                                      [ 11%]
+tests/test_candidate_repeat_tracker.py ...............                   [ 13%]
+tests/test_cnb_registry_snapshot.py ..                                   [ 14%]
+tests/test_credential_store.py ........                                  [ 15%]
+tests/test_data_source_settings.py .............                         [ 17%]
+tests/test_foundation.py ............                                    [ 19%]
+tests/test_mac_validation_scripts.py ......                              [ 20%]
+tests/test_macos_keep_awake.py ....                                      [ 21%]
+tests/test_macos_package.py .                                            [ 21%]
+tests/test_macos_port.py .........................                       [ 25%]
+tests/test_no_ui_import.py ...                                           [ 26%]
+tests/test_pdf_data_contract.py .......                                  [ 27%]
+tests/test_portability.py .........                                      [ 29%]
+tests/test_portable_launcher.py .................                        [ 31%]
+tests/test_post_close_runtime.py .....                                   [ 32%]
+tests/test_runtime_universe_cache.py ...............                     [ 35%]
+tests/test_shared_connection_gate.py ...............                     [ 37%]
+tests/test_tdxquant.py ................................................. [ 46%]
+...........                                                              [ 48%]
+tests/test_tushare_m0.py .....                                           [ 48%]
+tests/test_tushare_native_realtime.py ..........                         [ 50%]
+tests/test_tushare_normalization.py ............                         [ 52%]
+tests/test_tushare_response_parser.py ..............                     [ 55%]
+tests/test_tushare_router.py ......                                      [ 56%]
+tests/test_tushare_transports.py ................                        [ 58%]
+tests/test_ui_alpha.py ..........                                        [ 60%]
+tests/test_v02_core.py ......................................            [ 66%]
+tests/test_v1_real_candidates.py ....................................... [ 73%]
+                                                                         [ 73%]
+tests/test_web_admin_cli.py ......                                       [ 74%]
+tests/test_web_auth_api.py .......................................       [ 81%]
+tests/test_web_fixture_parity.py sssss                                   [ 82%]
+tests/test_web_healthcheck.py .....                                      [ 82%]
+tests/test_web_public_state.py ......                                    [ 83%]
+tests/test_web_services.py ................................              [ 89%]
+tests/test_web_token_activation.py ...                                   [ 89%]
+tests/test_web_worker.py ........                                        [ 91%]
+tests/test_web_ws.py .........................                           [ 95%]
+tests/test_windows_package.py ......ssssssssssssssssssss.                [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_web_fixture_parity.py:137: handoff fixtures not vendored
+SKIPPED [1] tests/test_web_fixture_parity.py:162: handoff fixtures not vendored
+SKIPPED [1] tests/test_web_fixture_parity.py:182: handoff fixtures not vendored
+SKIPPED [1] tests/test_web_fixture_parity.py:199: handoff fixtures not vendored
+SKIPPED [1] tests/test_web_fixture_parity.py:226: handoff fixtures not vendored
+SKIPPED [20] tests/test_windows_package.py:29: PowerShell runtime is unavailable on this host
+=========== 564 passed, 25 skipped, 2 deselected in 67.98s (0:01:07) ===========
+PYTEST_EXIT=0

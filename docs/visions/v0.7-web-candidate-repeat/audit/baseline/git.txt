@@ -1,0 +1,24 @@
+=== git ===
+?? docs/visions/v0.7-web-candidate-repeat/audit/
+?? scripts/verify_old_data_compatibility.py
+?? scripts/verify_repeat_non_regression.py
+BRANCH=feat/web-candidate-repeat
+HEAD=bf07c2284eba38c30dd5009e3d2aeb673dd71a3c
+FEATURE=4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997
+DOC=bf07c2284eba38c30dd5009e3d2aeb673dd71a3c
+BASE_CANDIDATE=34ce825014692aef01ae397499dd7604c67273ef
+PARENT=0c7b301a66406f62fbaecc64edb9509c18b59027
+=== log FEATURE parent ===
+4b1e79e feat(web): surface repeat Top3 appearances as an independent purple hint
+bf07c22 docs(web): record Schema v10 repeat-hint Mac tunnel deployment
+34ce825 fix(storage): keep online backup source read only
+=== merge-base ===
+ANCESTOR=yes
+=== commits BASE..FEATURE ===
+4b1e79e feat(web): surface repeat Top3 appearances as an independent purple hint
+0c7b301 ops(web): timeout hung docker info in watchdog and backup
+f057124 ops(web): harden Mac tunnel stack after WAL disk I/O outage
+664c8c2 fix(web): close independent security review findings
+2160863 fix(web): remediate security audit findings
+27d509a docs(web): record GitHub review sync
+d02c823 docs(web): record UI deployment and database recovery

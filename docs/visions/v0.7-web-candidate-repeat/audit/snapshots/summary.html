@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>盘后总结 · StockWatcher</title>
+<link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+<meta name="csrf-token" content="866c32a00e49318b24b21c5a4cebe51147b12bdf5fe3a061607eeefeee57428e">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
+    <a href="/summary">盘后总结</a>
+    
+  </nav>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">[redacted-user]</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+  </div>
+  
+</header>
+<main id="main">
+
+<h1>盘后总结</h1>
+<div id="summaries" class="cards"></div>
+
+</main>
+
+<script type="module" src="/static/app.js?v=6"></script>
+
+<script type="module" src="/static/summary.js"></script>
+
+
+</body>
+</html>

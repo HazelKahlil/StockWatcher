@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>提醒中心 · StockWatcher</title>
+<link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+<meta name="csrf-token" content="866c32a00e49318b24b21c5a4cebe51147b12bdf5fe3a061607eeefeee57428e">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
+    <a href="/summary">盘后总结</a>
+    
+  </nav>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">[redacted-user]</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+  </div>
+  
+</header>
+<main id="main">
+
+<h1>提醒中心</h1>
+<section aria-label="实时事件流" id="alerts-live" class="cards" aria-live="polite">
+  <p class="muted">等待实时事件…</p>
+</section>
+<section aria-label="历史提醒">
+  <h2>历史提醒</h2>
+  <div id="alerts-history" class="table-wrap"></div>
+  <button id="load-more" type="button" hidden>加载更多</button>
+</section>
+
+</main>
+
+<script type="module" src="/static/app.js?v=6"></script>
+
+<script type="module" src="/static/alerts.js"></script>
+
+
+</body>
+</html>

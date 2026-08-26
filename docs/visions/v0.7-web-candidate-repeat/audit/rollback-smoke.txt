@@ -1,0 +1,34 @@
+ROLLBACK_RESTORE=PASS
+
+backup_host=~/StockWatcherBackups/auto-20260826T040404Z/stockwatcher-20260826T120405Z
+backup_volume=/backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z
+backup_sqlite_sha256=ce5766a53604bcc3be3230013f17d0a47591ebcaa0f6263fe9788993ed62ed11
+backup_schema=9
+backup_source_commit=34ce825014692aef01ae397499dd7604c67273ef
+old_image=stockwatcher-web:web-alpha4-34ce825
+old_image_digest=sha256:e270d6601596e414d5e29595317f4d2557c22f702d4f434856990d4b3ce6986e
+old_image_source_commit=34ce825014692aef01ae397499dd7604c67273ef
+
+isolated_container=sw-audit-rollback
+isolated_bind=127.0.0.1:18080
+isolated_network=default bridge (no stockwatcher compose project, no Cloudflare Tunnel)
+STOCKWATCHER_ENV=test
+db_copy=/tmp/sw-repeat-audit/rollback/stockwatcher.sqlite3
+restored_schema=9
+
+health_live=HTTP 200 {"status":"ok"}
+health_ready=HTTP 503 {"status":"not_ready","schema_version":9,"worker_lease_held":false,"reason":"lease expired"}
+  (web-only restore; copied lease row is expired; expected for this isolated topology)
+
+login_page=HTTP 200
+throwaway_user_create=exit 0 (copy only)
+login_api=HTTP 200
+/api/v1/me=200
+/api/v1/state=200 (3 candidates; old keys only, no repeat_*)
+/api/v1/history=200 (20 items; old item keys present)
+/api/v1/alerts=200 (20 items)
+/api/v1/outcomes=200 (records_len=66, range=month)
+/history /alerts /outcomes /summary pages=200
+purple markup on rollback pages=absent
+
+container_removed_after_smoke=yes

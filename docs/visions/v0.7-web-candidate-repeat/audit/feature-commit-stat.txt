@@ -1,0 +1,26 @@
+4b1e79e feat(web): surface repeat Top3 appearances as an independent purple hint
+ CHANGELOG.md                                       |   8 +
+ docs/process/rules/storage.md                      |  10 +-
+ docs/tracks/web.md                                 |  18 +-
+ docs/visions/README.md                             |   6 +-
+ docs/visions/v0.7-web-candidate-repeat/README.md   |  95 +++
+ src/stock_watcher/runtime/__init__.py              |  12 +
+ src/stock_watcher/runtime/repeat_tracker.py        | 744 +++++++++++++++++++++
+ src/stock_watcher/server/api.py                    |  63 +-
+ src/stock_watcher/server/static/app.css            |  15 +
+ src/stock_watcher/server/static/dashboard.js       |  14 +-
+ src/stock_watcher/server/static/history.js         |  17 +-
+ src/stock_watcher/server/templates/base.html       |   2 +-
+ src/stock_watcher/server/templates/dashboard.html  |   2 +-
+ src/stock_watcher/server/templates/history.html    |   3 +-
+ src/stock_watcher/services/public_state.py         |  15 +
+ src/stock_watcher/services/stockwatcher_service.py | 117 +++-
+ src/stock_watcher/storage/sqlite.py                | 107 ++-
+ tests/test_candidate_outcomes.py                   |   4 +-
+ tests/test_candidate_repeat_tracker.py             | 445 ++++++++++++
+ tests/test_v02_core.py                             |   6 +-
+ tests/test_v1_real_candidates.py                   |   2 +-
+ tests/test_web_auth_api.py                         |  40 +-
+ tests/test_web_services.py                         |   8 +-
+ tests/test_web_ws.py                               |  51 ++
+ 24 files changed, 1744 insertions(+), 60 deletions(-)

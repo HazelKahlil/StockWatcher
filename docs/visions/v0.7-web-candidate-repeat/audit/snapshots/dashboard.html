@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>当前观察 · StockWatcher</title>
+<link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+<meta name="csrf-token" content="866c32a00e49318b24b21c5a4cebe51147b12bdf5fe3a061607eeefeee57428e">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
+    <a href="/summary">盘后总结</a>
+    
+  </nav>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">[redacted-user]</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+  </div>
+  
+</header>
+<main id="main">
+
+<section class="dashboard-intro" aria-labelledby="dashboard-page-title">
+  <div>
+    <p class="dashboard-eyebrow">A股观察提醒 <span>Web 内测</span></p>
+    <h1 id="dashboard-page-title">当前观察</h1>
+  </div>
+  <a class="desktop-history-link" href="/alerts">历史提醒</a>
+</section>
+
+<section aria-label="运行状态总览" class="statusbar">
+  <div class="status-item">
+    <span class="status-item-label">数据状态</span>
+    <strong id="svc-state" class="status-item-value status-warming">预热</strong>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">最后更新时间</span>
+    <strong id="last-scan" class="status-item-value">尚未完成实时扫描</strong>
+  </div>
+  <div class="status-item status-item-connection">
+    <span class="status-item-label">数据接口连接 / 最近检测</span>
+    <span id="ws-state" class="ws-status" data-state="connecting" role="status" aria-label="实时连接状态">
+      <span class="status-lamp" aria-hidden="true"></span>
+      <span class="status-label">连接中…</span>
+    </span>
+    <small id="worker-age" class="status-item-meta"></small>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">候选状态</span>
+    <strong id="candidate-state" class="status-item-value">等待数据</strong>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">当前阶段</span>
+    <strong id="market-state" class="status-item-value">—</strong>
+  </div>
+</section>
+
+<section aria-label="今日自动任务" class="tasks" id="tasks"></section>
+
+<div id="strong-alerts" class="alert-overlay" aria-live="assertive" hidden></div>
+
+<section class="hero-top3-section">
+  <div class="hero-header">
+    <div>
+      <h2 id="top3-title" class="hero-title">当前3只观察｜数据同步中</h2>
+      <p id="live-clock" class="live-clock" aria-live="off">当前时间同步中…</p>
+    </div>
+  </div>
+
+  <div id="cards" class="cards dashboard-cards" aria-live="polite">
+    
+    <article class="card placeholder-card" aria-label="等待抓取第 1 只候选">
+      <span class="rank rank-1-badge">1</span>
+      <div class="candidate-identity">
+        <h3 class="display-name placeholder-text">等待候选</h3>
+        <span class="display-code placeholder-text">------</span>
+      </div>
+      <div class="candidate-quote">
+        <span class="ashare-pct placeholder-text">--.--%</span>
+        <span class="ashare-price placeholder-text">¥--.--</span>
+      </div>
+      <span class="level-tag level-placeholder">待</span>
+      <div class="candidate-sector">
+        <span class="candidate-meta-label">最强板块</span>
+        <strong class="placeholder-text">板块待抓取</strong>
+        <small class="placeholder-card-status">正在抓取<span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span></small>
+      </div>
+      <span class="card-arrow" aria-hidden="true">›</span>
+    </article>
+    
+    <article class="card placeholder-card" aria-label="等待抓取第 2 只候选">
+      <span class="rank rank-2-badge">2</span>
+      <div class="candidate-identity">
+        <h3 class="display-name placeholder-text">等待候选</h3>
+        <span class="display-code placeholder-text">------</span>
+      </div>
+      <div class="candidate-quote">
+        <span class="ashare-pct placeholder-text">--.--%</span>
+        <span class="ashare-price placeholder-text">¥--.--</span>
+      </div>
+      <span class="level-tag level-placeholder">待</span>
+      <div class="candidate-sector">
+        <span class="candidate-meta-label">最强板块</span>
+        <strong class="placeholder-text">板块待抓取</strong>
+        <small class="placeholder-card-status">正在抓取<span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span></small>
+      </div>
+      <span class="card-arrow" aria-hidden="true">›</span>
+    </article>
+    
+    <article class="card placeholder-card" aria-label="等待抓取第 3 只候选">
+      <span class="rank rank-3-badge">3</span>
+      <div class="candidate-identity">
+        <h3 class="display-name placeholder-text">等待候选</h3>
+        <span class="display-code placeholder-text">------</span>
+      </div>
+      <div class="candidate-quote">
+        <span class="ashare-pct placeholder-text">--.--%</span>
+        <span class="ashare-price placeholder-text">¥--.--</span>
+      </div>
+      <span class="level-tag level-placeholder">待</span>
+      <div class="candidate-sector">
+        <span class="candidate-meta-label">最强板块</span>
+        <strong class="placeholder-text">板块待抓取</strong>
+        <small class="placeholder-card-status">正在抓取<span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span></small>
+      </div>
+      <span class="card-arrow" aria-hidden="true">›</span>
+    </article>
+    
+  </div>
+
+  <div class="hero-action-box">
+    <button id="manual-refresh" type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
+    <button id="notify-btn" type="button" class="btn-hero hero-action-button btn-notify" hidden>开启浏览器通知</button>
+    <a class="hero-history-button" href="/alerts">历史记录</a>
+    <div id="refresh-progress" class="refresh-progress" data-state="working" role="status" aria-live="polite" hidden>
+      <span class="refresh-spinner" aria-hidden="true"></span>
+      <span class="refresh-progress-copy">
+        <span id="refresh-progress-label" class="refresh-progress-label">准备刷新</span>
+        <span id="refresh-progress-elapsed" class="refresh-progress-elapsed">已用 0 秒</span>
+      </span>
+      <span class="refresh-progress-track" aria-hidden="true"></span>
+    </div>
+  </div>
+  <p class="readonly-note"><span aria-hidden="true"></span>只读观察 · 不连接交易账户 · 资金未确认不阻塞候选</p>
+</section>
+
+<section class="outcome-editorial" aria-labelledby="outcome-summary-title">
+  <div class="outcome-editorial-header">
+    <div>
+      <span class="editorial-kicker">NEXT-DAY REVIEW</span>
+      <h2 id="outcome-summary-title">近一月复盘</h2>
+    </div>
+    <a class="outcome-detail-link" href="/outcomes">查看完整复盘</a>
+  </div>
+  <div id="outcome-summary" class="outcome-summary-grid" aria-live="polite">
+    <article class="outcome-summary-card"><span>个人胜率</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>日组合胜率</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>平均收益</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>已结算 / 总数</span><strong>—</strong></article>
+  </div>
+  <p id="outcome-backfill" class="outcome-backfill muted">历史回补状态待确认；从新固定提醒开始记录不受影响。</p>
+</section>
+
+<!-- Slide-out Candidate Inspection Drawer Overlay -->
+<div id="drawer-overlay" class="drawer-overlay" hidden>
+  <div class="drawer-content">
+    <div class="drawer-header">
+      <h3 class="drawer-title">候选因子审计</h3>
+      <button id="close-drawer-btn" type="button" class="drawer-close">关闭</button>
+    </div>
+    <div id="detail"></div>
+  </div>
+</div>
+
+</main>
+
+<script type="module" src="/static/app.js?v=6"></script>
+
+<script type="module" src="/static/dashboard.js?v=12"></script>
+
+
+</body>
+</html>

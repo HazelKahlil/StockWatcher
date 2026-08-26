@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>历史 · StockWatcher</title>
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
+    <a href="/summary">盘后总结</a>
+  </nav>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">[redacted-user]</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+  </div>
+</header>
+<main id="main">
+
+<h1>历史观察</h1>
+<section class="filters">
+  <label>日期从 <input id="from" type="date"></label>
+  <label>到 <input id="to" type="date"></label>
+  <label>代码 <input id="code" placeholder="600001.SH"></label>
+  <label class="repeat-filter"><input id="repeat-only" type="checkbox" checked> 只看紫色标记</label>
+  <button id="filter-btn" type="button">筛选</button>
+</section>
+<div id="history" class="table-wrap">
+<table><thead><tr><th>快照</th><th>时间</th><th>健康</th><th>候选</th></tr></thead><tbody><tr><td>#5260</td><td>2026/08/26 11:18:47</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>超频三 <span class="muted">300647.SZ</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span></td></tr><tr><td>#5259</td><td>2026/08/26 11:18:18</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>超频三 <span class="muted">300647.SZ</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span></td></tr><tr><td>#5258</td><td>2026/08/26 11:17:47</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span><br>鼎胜新材 <span class="muted">603876.SH</span></td></tr><tr><td>#5257</td><td>2026/08/26 11:17:18</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span><br>鼎胜新材 <span class="muted">603876.SH</span></td></tr><tr><td>#5256</td><td>2026/08/26 11:16:47</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span><br>超纯应材 <span class="muted">301717.SZ</span></td></tr><tr><td>#5255</td><td>2026/08/26 11:16:15</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span><br>超纯应材 <span class="muted">301717.SZ</span></td></tr><tr><td>#5254</td><td>2026/08/26 11:15:44</td><td>HEALTHY</td><td>远东股份 <span class="muted">600869.SH</span><br>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span><br>超纯应材 <span class="muted">301717.SZ</span></td></tr><tr><td>#5253</td><td>2026/08/26 11:15:14</td><td>HEALTHY</td><td>共进股份 <span class="muted">603118.SH</span> <span class="repeat-badge">近14天第3次</span><br>远东股份 <span class="muted">600869.SH</span><br>江航装备 <span class="muted">688586.SH</span></td></tr></tbody></table>
+</div>
+
+</main>
+</body>
+</html>

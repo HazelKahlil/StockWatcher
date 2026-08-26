@@ -1,0 +1,15 @@
+{
+  "added_schema_objects": [
+    "candidate_repeat_days",
+    "candidate_repeat_states",
+    "idx_candidate_repeat_days_active",
+    "idx_candidate_repeat_days_date",
+    "idx_candidate_repeat_states_active"
+  ],
+  "changed_schema_objects": [],
+  "foreign_key_check_rows": 0,
+  "integrity_check": "ok",
+  "removed_schema_objects": [],
+  "version_after": 10,
+  "version_before": 9
+}

@@ -1,0 +1,5 @@
+No known vulnerabilities found
+Name          Skip Reason
+------------- -------------------------------
+stock-watcher distribution marked as editable
+PIP_AUDIT_VENV_EXIT=0

@@ -1,0 +1,1797 @@
+diff --git a/tests/test_candidate_outcomes.py b/tests/test_candidate_outcomes.py
+index 9da6bb1..95d7465 100644
+--- a/tests/test_candidate_outcomes.py
++++ b/tests/test_candidate_outcomes.py
+@@ -1740,7 +1740,7 @@ def test_v7_to_v9_migration_persists_outcome_retry_state_and_backup(tmp_path: Pa
+     migrated = SQLiteStore(path)
+     migrated.initialize()
+     with closing(sqlite3.connect(path)) as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         columns = {
+             str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
+         }
+@@ -1836,7 +1836,7 @@ def test_v8_to_v9_migration_preserves_web_accounts_sessions_commands_and_events(
+     SQLiteStore(path).initialize()
+ 
+     with closing(sqlite3.connect(path)) as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         assert connection.execute("SELECT username FROM web_users").fetchone() == ("tester",)
+         assert connection.execute("SELECT user_id FROM web_sessions").fetchone() == (1,)
+         assert connection.execute("SELECT command_id FROM web_commands").fetchone() == (
+diff --git a/tests/test_candidate_repeat_tracker.py b/tests/test_candidate_repeat_tracker.py
+new file mode 100644
+index 0000000..ac2c9c3
+--- /dev/null
++++ b/tests/test_candidate_repeat_tracker.py
+@@ -0,0 +1,445 @@
++"""Repeat-occurrence tracker, persistence, history projection and backfill."""
++from __future__ import annotations
++
++import json
++from datetime import datetime, timedelta
++from pathlib import Path
++
++from stock_watcher.domain import SHANGHAI, HealthState
++from stock_watcher.engine import AlertTrigger, Candidate
++from stock_watcher.engine.candidates import CandidateBatch
++from stock_watcher.runtime.repeat_tracker import (
++    ACTIVATE_AT,
++    CandidateRepeatTracker,
++    RepeatProjection,
++    compute_repeat_state,
++    format_repeat_label,
++)
++from stock_watcher.services.public_state import PublicStateBuilder
++from stock_watcher.services.stockwatcher_service import StockWatcherService
++from stock_watcher.storage import SQLiteStore
++
++
++def _at(day: int, hour: int = 10, minute: int = 0) -> datetime:
++    return datetime(2026, 8, day, hour, minute, tzinfo=SHANGHAI)
++
++
++def make_batch(
++    source_ts: datetime,
++    *,
++    prefix: str = "测",
++    health: HealthState = HealthState.HEALTHY,
++    provider_version: str = "tushare-15000",
++    codes: tuple[str, str, str] = ("600001.SH", "600002.SH", "600003.SH"),
++) -> CandidateBatch:
++    candidates = tuple(
++        Candidate(
++            code=codes[index],
++            name=f"{prefix}{index + 1}",
++            sector="测试板块",
++            sector_code="TEST",
++            level="强" if index == 0 else "中",
++            score=50.0 - index,
++            price_score=20.0,
++            sector_score=20.0,
++            trend_score=10.0,
++            penalty=0.0,
++            reasons=("测试",),
++            source_ts=source_ts,
++            provider_version=provider_version,
++            config_version="test-config",
++            app_version="test-app",
++            price=10.0 + index,
++            change_pct=float(index + 1),
++            total_score=50.0 - index,
++            core_score=40.0,
++            is_formal=index < 2,
++            is_supplement=index >= 2,
++        )
++        for index in range(3)
++    )
++    return CandidateBatch(
++        source_ts=source_ts,
++        generated_at=source_ts,
++        health=health,
++        overall_weak=False,
++        candidates=candidates,
++    )
++
++
++def persist(
++    store: SQLiteStore,
++    batch: CandidateBatch,
++    seen_at: datetime,
++    source_type: str = "automatic",
++) -> int:
++    tracker = CandidateRepeatTracker(store)
++    with store.transaction() as connection:
++        snapshot_id = store.record_batch_in(connection, batch)
++        tracker.observe_batch_in(
++            connection,
++            batch=batch,
++            snapshot_id=snapshot_id,
++            seen_at=seen_at,
++            source_type=source_type,
++        )
++    return snapshot_id
++
++
++def projection(store: SQLiteStore, code: str) -> RepeatProjection:
++    return CandidateRepeatTracker(store).projections_from_store([code])[code]
++
++
++def day_row(store: SQLiteStore, code: str, trade_date: str) -> dict[str, object]:
++    with store.connect() as connection:
++        row = connection.execute(
++            "SELECT count_after, span_days_after, active_after, source_types_json "
++            "FROM candidate_repeat_days WHERE code = ? AND trade_date = ?",
++            (code, trade_date),
++        ).fetchone()
++    assert row is not None
++    return {
++        "count_after": row[0],
++        "span_days_after": row[1],
++        "active_after": row[2],
++        "source_types": json.loads(str(row[3])),
++    }
++
++
++def test_format_label_and_fourteenth_day_window() -> None:
++    assert format_repeat_label(12, 3) == "近12天第3次"
++    dates = [
++        datetime(2026, 8, 1, tzinfo=SHANGHAI).date(),
++        datetime(2026, 8, 6, tzinfo=SHANGHAI).date(),
++        datetime(2026, 8, 14, tzinfo=SHANGHAI).date(),
++    ]
++    state = compute_repeat_state(dates)
++    assert state.active is True
++    assert state.occurrence_count == ACTIVATE_AT
++    assert state.span_days == 14
++
++
++def test_same_code_same_day_scanned_100_times_counts_once(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "repeat.sqlite3")
++    store.initialize()
++    first = _at(10, 9, 35)
++    for index in range(100):
++        moment = first + timedelta(minutes=index)
++        persist(store, make_batch(moment), moment)
++    state = projection(store, "600001.SH")
++    assert state.occurrence_count == 1
++    assert state.active is False
++    with store.connect() as connection:
++        assert connection.execute("SELECT COUNT(*) FROM candidate_repeat_days").fetchone() == (3,)
++
++
++def test_same_day_realtime_fixed_and_intraday_merge_to_one(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "merge.sqlite3")
++    store.initialize()
++    now = _at(10, 10, 0)
++    batch = make_batch(now)
++    snapshot_id = persist(store, batch, now, "automatic")
++    tracker = CandidateRepeatTracker(store)
++    with store.transaction() as connection:
++        tracker.note_source_in(
++            connection,
++            batch=batch,
++            snapshot_id=snapshot_id,
++            seen_at=_at(10, 10, 20),
++            source_type="intraday",
++        )
++        tracker.note_source_in(
++            connection,
++            batch=batch,
++            snapshot_id=snapshot_id,
++            seen_at=_at(10, 14, 45),
++            source_type="scheduled-14:45",
++        )
++    state = projection(store, "600001.SH")
++    assert state.occurrence_count == 1
++    sources = day_row(store, "600001.SH", "2026-08-10")["source_types"]
++    assert sources == ["automatic", "intraday", "scheduled-14:45"]
++
++
++def test_leave_and_reenter_same_day_still_once(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "reenter.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(10, 10, 0), prefix="早"), _at(10, 10, 0))
++    persist(
++        store,
++        make_batch(
++            _at(10, 11, 0),
++            prefix="午",
++            codes=("601001.SH", "601002.SH", "601003.SH"),
++        ),
++        _at(10, 11, 0),
++    )
++    persist(store, make_batch(_at(10, 14, 0), prefix="晚"), _at(10, 14, 0))
++    assert projection(store, "600001.SH").occurrence_count == 1
++
++
++def test_three_appearances_same_day_do_not_activate(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "same-day.sqlite3")
++    store.initialize()
++    day = _at(10)
++    persist(store, make_batch(day), day, "automatic")
++    persist(store, make_batch(day + timedelta(hours=1)), day + timedelta(hours=1), "intraday")
++    persist(
++        store,
++        make_batch(day + timedelta(hours=4)),
++        day + timedelta(hours=4),
++        "scheduled-14:45",
++    )
++    state = projection(store, "600001.SH")
++    assert state.occurrence_count == 1
++    assert state.active is False
++
++
++def test_three_trade_days_within_14_calendar_days_activate(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "activate.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(12)), _at(12))
++    state = projection(store, "600001.SH")
++    assert state.active is True
++    assert state.occurrence_count == 3
++    assert state.span_days == 12
++    assert state.label == "近12天第3次"
++    first = day_row(store, "600001.SH", "2026-08-01")
++    second = day_row(store, "600001.SH", "2026-08-06")
++    third = day_row(store, "600001.SH", "2026-08-12")
++    assert first["active_after"] == 0
++    assert second["active_after"] == 0
++    assert third["active_after"] == 1
++
++
++def test_third_on_day_14_activates_and_day_15_drops_expired_start(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "window.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(14)), _at(14))
++    assert projection(store, "600001.SH").active is True
++
++    other = SQLiteStore(tmp_path / "expired.sqlite3")
++    other.initialize()
++    persist(other, make_batch(_at(1)), _at(1))
++    persist(other, make_batch(_at(6)), _at(6))
++    persist(other, make_batch(_at(15)), _at(15))
++    late = projection(other, "600001.SH")
++    assert late.active is False
++    assert late.occurrence_count == 2
++    assert late.sequence_started_on is not None
++    assert late.sequence_started_on.isoformat() == "2026-08-06"
++    persist(other, make_batch(_at(19)), _at(19))
++    activated = projection(other, "600001.SH")
++    assert activated.active is True
++    assert activated.occurrence_count == 3
++    assert activated.sequence_started_on is not None
++    assert activated.sequence_started_on.isoformat() == "2026-08-06"
++    assert day_row(other, "600001.SH", "2026-08-01")["active_after"] == 0
++    assert day_row(other, "600001.SH", "2026-08-06")["count_after"] == 2
++
++
++def test_expired_dates_are_not_wiped_from_history(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "keep.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(15)), _at(15))
++    with store.connect() as connection:
++        dates = [
++            row[0]
++            for row in connection.execute(
++                "SELECT trade_date FROM candidate_repeat_days WHERE code = '600001.SH' "
++                "ORDER BY trade_date"
++            )
++        ]
++    assert dates == ["2026-08-01", "2026-08-06", "2026-08-15"]
++
++
++def test_activation_is_permanent_and_later_days_increment(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "permanent.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(12)), _at(12))
++    persist(store, make_batch(_at(20)), _at(20))
++    persist(store, make_batch(_at(20, 14, 45)), _at(20, 14, 45))
++    state = projection(store, "600001.SH")
++    assert state.active is True
++    assert state.occurrence_count == 4
++    assert state.span_days == 20
++    assert state.label == "近20天第4次"
++    september = datetime(2026, 9, 10, 10, tzinfo=SHANGHAI)
++    persist(store, make_batch(september), september)
++    later = projection(store, "600001.SH")
++    assert later.active is True
++    assert later.occurrence_count == 5
++    with store.connect() as connection:
++        tracker = CandidateRepeatTracker(store)
++        fourth = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(20).date()
++        )
++        third = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(12).date()
++        )
++    assert fourth["repeat_active"] is True
++    assert fourth["repeat_count"] == 4
++    assert fourth["repeat_activated_at"] == third["repeat_activated_at"]
++
++
++def test_warming_stale_stopped_and_mock_do_not_count(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "quality.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1), health=HealthState.WARMING), _at(1))
++    persist(store, make_batch(_at(2), health=HealthState.STALE), _at(2))
++    persist(store, make_batch(_at(3), health=HealthState.STOPPED), _at(3))
++    persist(store, make_batch(_at(4), provider_version="mock-provider"), _at(4))
++    persist(store, make_batch(_at(5), provider_version="replay-v1"), _at(5))
++    persist(store, make_batch(_at(6), provider_version="synthetic"), _at(6))
++    with store.connect() as connection:
++        assert connection.execute("SELECT COUNT(*) FROM candidate_repeat_days").fetchone() == (0,)
++
++
++def test_service_persist_and_restart_keep_state(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "service.sqlite3")
++    store.initialize()
++    first = StockWatcherService(store, clock=lambda: _at(1))
++    first.batch = make_batch(_at(1))
++    first.state = HealthState.HEALTHY
++    first._persist_scan_snapshot(_at(1))  # noqa: SLF001
++    first.batch = make_batch(_at(6))
++    first._persist_scan_snapshot(_at(6))  # noqa: SLF001
++    first.batch = make_batch(_at(12))
++    first._persist_scan_snapshot(_at(12))  # noqa: SLF001
++
++    restarted = StockWatcherService(store, clock=lambda: _at(20))
++    restarted.batch = make_batch(_at(20))
++    restarted.state = HealthState.HEALTHY
++    restarted._persist_scan_snapshot(_at(20))  # noqa: SLF001
++    payload = restarted._candidate_payload(restarted.batch)  # noqa: SLF001
++    target = next(row for row in payload if row["code"] == "600001.SH")
++    assert target["repeat_active"] is True
++    assert target["repeat_count"] == 4
++    assert target["repeat_label"] == "近20天第4次"
++    state = PublicStateBuilder(store).build(now=_at(20))
++    assert state["candidates"][0]["repeat_active"] is True
++    with store.connect() as connection:
++        updated = json.loads(
++            connection.execute(
++                "SELECT payload_json FROM web_events WHERE event_type = 'candidates.updated' "
++                "ORDER BY event_id DESC LIMIT 1"
++            ).fetchone()[0]
++        )
++    assert updated["candidates"][0]["repeat_active"] is True
++    assert updated["candidates"][0]["repeat_label"] == "近20天第4次"
++
++
++def test_alert_payload_uses_snapshot_candidates_and_does_not_double_count(
++    tmp_path: Path,
++) -> None:
++    store = SQLiteStore(tmp_path / "alert.sqlite3")
++    store.initialize()
++    service = StockWatcherService(store, clock=lambda: _at(12))
++    service.batch = make_batch(_at(1))
++    service.state = HealthState.HEALTHY
++    service._persist_scan_snapshot(_at(1))  # noqa: SLF001
++    service.batch = make_batch(_at(6))
++    service._persist_scan_snapshot(_at(6))  # noqa: SLF001
++    service.batch = make_batch(_at(12))
++    snapshot_id = service._persist_scan_snapshot(_at(12))  # noqa: SLF001
++    service._record_alert(  # noqa: SLF001
++        _at(12),
++        AlertTrigger.INTRADAY,
++        "strong",
++        "盘中强异动",
++        "个股与板块同步增强｜资金未确认",
++        snapshot_id=snapshot_id,
++    )
++    assert projection(store, "600001.SH").occurrence_count == 3
++    with store.connect() as connection:
++        payload = json.loads(
++            connection.execute(
++                "SELECT payload_json FROM web_events WHERE event_type = 'alert.created'"
++            ).fetchone()[0]
++        )
++    assert payload["trigger_type"] == "intraday"
++    assert payload["candidates"][0]["repeat_active"] is True
++    assert payload["candidates"][0]["repeat_label"] == "近12天第3次"
++    assert payload["snapshot_id"] == snapshot_id
++
++
++def test_backfill_is_idempotent_and_preserves_historical_purple(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "backfill.sqlite3")
++    store.initialize()
++    store.record_batch(make_batch(_at(1)))
++    store.record_batch(make_batch(_at(6)))
++    store.record_batch(make_batch(_at(12)))
++    tracker = CandidateRepeatTracker(store)
++    first = tracker.backfill()
++    second = tracker.backfill()
++    assert first == second
++    assert first.occurrences == 9
++    assert first.activated == 3
++    with store.connect() as connection:
++        days = connection.execute(
++            "SELECT trade_date, active_after, count_after FROM candidate_repeat_days "
++            "WHERE code = '600001.SH' ORDER BY trade_date"
++        ).fetchall()
++    assert days == [
++        ("2026-08-01", 0, 1),
++        ("2026-08-06", 0, 2),
++        ("2026-08-12", 1, 3),
++    ]
++    with store.connect() as connection:
++        first_day = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(1).date()
++        )
++        third_day = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(12).date()
++        )
++    assert first_day["repeat_active"] is False
++    assert first_day["repeat_label"] is None
++    assert third_day["repeat_active"] is True
++    assert third_day["repeat_label"] == "近12天第3次"
++    purple = store.query_snapshots(limit=20, repeat_active=True)
++    assert {row["source_ts"][:10] for row in purple} == {"2026-08-12"}
++
++
++def test_v9_to_v10_migration_adds_repeat_tables_and_backup(tmp_path: Path) -> None:
++    import sqlite3
++    from contextlib import closing
++
++    import stock_watcher.storage.sqlite as sqlite_module
++
++    path = tmp_path / "v9.sqlite3"
++    original = sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION
++    sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION = 9
++    try:
++        SQLiteStore(path).initialize()
++    finally:
++        sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION = original
++    SQLiteStore(path).initialize()
++    with closing(sqlite3.connect(path)) as connection:
++        assert connection.execute(
++            "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
++        ).fetchone() == (10,)
++        tables = {
++            row[0]
++            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
++        }
++        assert "candidate_repeat_days" in tables
++        assert "candidate_repeat_states" in tables
++        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
++    assert path.with_suffix(".sqlite3.pre-v10.bak").is_file()
++
++
++def test_scoring_ranking_and_strong_move_modules_do_not_import_repeat_tracker() -> None:
++    root = Path(__file__).resolve().parents[1] / "src" / "stock_watcher" / "engine"
++    for name in ("candidates.py", "stable_top3.py", "alerts.py"):
++        text = (root / name).read_text(encoding="utf-8")
++        assert "repeat_tracker" not in text
++        assert "repeat_active" not in text
++        assert "CandidateRepeatTracker" not in text
+diff --git a/tests/test_cnb_registry_snapshot.py b/tests/test_cnb_registry_snapshot.py
+index 175a792..a8ac6f6 100644
+--- a/tests/test_cnb_registry_snapshot.py
++++ b/tests/test_cnb_registry_snapshot.py
+@@ -10,6 +10,7 @@ from pathlib import Path
+ PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ REGISTRY_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "registry-snapshot.sh"
+ PREVIEW_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "run-preview.sh"
++RUNTIME_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "runtime-lib.sh"
+ 
+ 
+ def _write_fake_docker(target: Path) -> None:
+@@ -156,3 +157,10 @@ def test_cnb_preview_fails_closed_and_snapshots_while_running() -> None:
+     assert "type: cnb:apply" in pipeline
+     assert "event: api_trigger_cnb_preview" in pipeline
+     assert "services:\n        - name: vscode" in pipeline
++
++    runtime = RUNTIME_SCRIPT.read_text(encoding="utf-8")
++    assert "local require_https_origin=${1:-0}" in runtime
++    assert "public_origin=${CNB_VSCODE_WEB_URL:-http://127.0.0.1:8686}" in runtime
++    assert "require_https_origin == 1" in runtime
++    assert "CNB_VSCODE_WEB_URL must be an HTTPS origin" in runtime
++    assert "stockwatcher_cnb_export_app_env 1" in script
+diff --git a/tests/test_v02_core.py b/tests/test_v02_core.py
+index fdc5e85..7ce5940 100644
+--- a/tests/test_v02_core.py
++++ b/tests/test_v02_core.py
+@@ -309,7 +309,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
+     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
+     empty_store.initialize()
+     with empty_store.connect() as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+ 
+     path = tmp_path / "watcher.sqlite3"
+     with sqlite3.connect(path) as connection:
+@@ -326,7 +326,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
+     store.initialize()
+     store.initialize()
+     with store.connect() as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         columns = {
+             row[1]
+             for row in connection.execute("PRAGMA table_info(runtime_sessions)")
+@@ -871,7 +871,7 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
+     assert recovered.last_recovery is not None
+     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
+     with recovered.connect() as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         assert connection.execute(
+             "SELECT value FROM notes WHERE key = 'probe'"
+         ).fetchone() is None
+diff --git a/tests/test_v1_real_candidates.py b/tests/test_v1_real_candidates.py
+index c4fe79d..ec76e5f 100644
+--- a/tests/test_v1_real_candidates.py
++++ b/tests/test_v1_real_candidates.py
+@@ -1075,7 +1075,7 @@ def test_alert_history_daily_summary_and_v3_items_are_persisted(tmp_path: Path)
+     assert len(history) == 1
+     with store.connect() as connection:
+         assert connection.execute("SELECT COUNT(*) FROM candidate_items").fetchone() == (3,)
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+ 
+     summary = DailySummaryEngine().generate(
+         trade_date=now.date(),
+diff --git a/tests/test_web_auth_api.py b/tests/test_web_auth_api.py
+index 8efddd8..b05eafc 100644
+--- a/tests/test_web_auth_api.py
++++ b/tests/test_web_auth_api.py
+@@ -1,21 +1,38 @@
+ """Auth, RBAC, CSRF, rate limit, API contract and snapshot-race tests."""
+ from __future__ import annotations
+ 
++import asyncio
+ import json
+-from datetime import datetime
++import sqlite3
++import threading
++from datetime import datetime, timedelta
+ from pathlib import Path
+ from typing import Any
+ 
+ import pytest
+-from fastapi.testclient import TestClient
++from fastapi.testclient import TestClient as FastAPITestClient
++from starlette.types import Message
+ 
+ from stock_watcher.domain import SHANGHAI
++from stock_watcher.server.auth import AuthError, RateLimiter
+ from stock_watcher.server.config import ServerSettings
++from stock_watcher.server.security import (
++    RequestBodyLimitMiddleware,
++    origin_matches,
++    trusted_client_ip,
++)
+ from stock_watcher.server.web import create_app
+ from stock_watcher.services import CommandType
+ from stock_watcher.storage import SQLiteStore
+ 
+ 
++class TestClient(FastAPITestClient):
++    def __init__(self, app: Any, **kwargs: Any) -> None:
++        headers = dict(kwargs.pop("headers", {}))
++        headers.setdefault("Origin", str(app.state.settings.public_origin))
++        super().__init__(app, headers=headers, **kwargs)
++
++
+ @pytest.fixture()
+ def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore, Any, Any, Any]:
+     import base64
+@@ -26,6 +43,7 @@ def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore, Any, Any, Any]:
+         base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
+     )
+     settings = ServerSettings(
++        environment="test",
+         db_path=tmp_path / "db" / "test.db",
+         report_dir=tmp_path / "reports",
+         master_key_file=master_key_file,
+@@ -66,6 +84,67 @@ def test_login_bad_credentials_and_rate_limit(
+         json={"username": "nobody", "password": "wrong-password"},
+     )
+     assert response.status_code == 429
++    assert response.headers["Retry-After"]
++    assert response.json()["error"]["code"] == "rate_limited"
++
++
++def test_proxy_origin_and_rate_limiter_boundaries() -> None:
++    assert origin_matches("https://stock.example.com", "https://stock.example.com")
++    assert not origin_matches("http://stock.example.com", "https://stock.example.com")
++    assert not origin_matches("https://stock.example.com:444", "https://stock.example.com")
++    assert not origin_matches("https://stock.example.com/path", "https://stock.example.com")
++
++    spoofed = {"x-forwarded-for": "203.0.113.7"}
++    assert trusted_client_ip(spoofed, "198.51.100.9", ()) == "198.51.100.9"
++    assert (
++        trusted_client_ip(spoofed, "172.20.0.5", ("172.16.0.0/12",))
++        == "203.0.113.7"
++    )
++    assert (
++        trusted_client_ip(
++            {"x-forwarded-for": "invalid"},
++            "172.20.0.5",
++            ("172.16.0.0/12",),
++        )
++        == "172.20.0.5"
++    )
++
++    limiter = RateLimiter(max_attempts=2, window_seconds=60, max_keys=2)
++    limiter.record_failure("first")
++    limiter.record_failure("second")
++    with pytest.raises(AuthError) as bounded:
++        limiter.record_failure("third")
++    assert bounded.value.code == "rate_limited"
++    assert len(limiter._events) <= 2
++
++
++def test_streamed_request_body_limit_cannot_be_bypassed() -> None:
++    sent: list[Message] = []
++    messages = iter(
++        (
++            {"type": "http.request", "body": b"1234", "more_body": True},
++            {"type": "http.request", "body": b"5678", "more_body": False},
++        )
++    )
++
++    async def receive() -> Message:
++        return next(messages)
++
++    async def send(message: Message) -> None:
++        sent.append(message)
++
++    async def consume_body(_scope: Any, receive_body: Any, send_body: Any) -> None:
++        while True:
++            message = await receive_body()
++            if not message.get("more_body"):
++                break
++        await send_body({"type": "http.response.start", "status": 200, "headers": []})
++        await send_body({"type": "http.response.body", "body": b""})
++
++    middleware = RequestBodyLimitMiddleware(consume_body, max_bytes=6)
++    asyncio.run(middleware({"type": "http", "headers": []}, receive, send))
++
++    assert sent[0]["status"] == 413
+ 
+ 
+ def test_production_login_cookie_and_http_headers(tmp_path: Path) -> None:
+@@ -93,10 +172,23 @@ def test_production_login_cookie_and_http_headers(tmp_path: Path) -> None:
+     assert "SameSite=lax" in cookie
+     assert response.headers["X-Frame-Options"] == "DENY"
+     assert response.headers["Cross-Origin-Opener-Policy"] == "same-origin"
++    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
++    assert response.headers["Strict-Transport-Security"].startswith("max-age=31536000")
+     assert response.headers["Cache-Control"] == "private, no-store"
+     assert client.get("/api/v1/openapi.json").status_code == 404
+ 
+ 
++def test_production_direct_http_startup_fails_closed(tmp_path: Path) -> None:
++    settings = ServerSettings(
++        environment="production",
++        db_path=tmp_path / "db" / "production.db",
++        report_dir=tmp_path / "reports",
++        public_origin="http://stock.example.com",
++    )
++    with pytest.raises(RuntimeError, match="HTTPS public origin"):
++        create_app(settings)
++
++
+ def test_rbac_matrix(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> None:
+     app, _, _, admin, tester = app_env
+     admin_client = TestClient(app)
+@@ -139,8 +231,16 @@ def test_csrf_protection(app_env: tuple[Any, SQLiteStore, Any, Any, Any]) -> Non
+         headers={"X-CSRF-Token": "wrong-value"},
+     )
+     assert response.status_code == 403
+-    # Stable per-session CSRF from /me works.
++    # A valid CSRF token cannot bypass the exact Origin check.
+     csrf = client.get("/api/v1/me").json()["csrf_token"]
++    response = client.post(
++        "/api/v1/commands/manual-refresh",
++        json={},
++        headers={"X-CSRF-Token": csrf, "Origin": "https://evil.example"},
++    )
++    assert response.status_code == 403
++    assert response.json()["error"]["code"] == "origin_mismatch"
++    # Stable per-session CSRF from /me works.
+     response = client.post(
+         "/api/v1/commands/manual-refresh",
+         json={},
+@@ -165,6 +265,21 @@ def test_csrf_remains_valid_across_multiple_tabs(
+     assert response.status_code == 202
+ 
+ 
++def test_login_requires_exact_origin(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    app, _, _, _, _ = app_env
++    client = FastAPITestClient(app)
++    for headers in ({}, {"Origin": "https://evil.example"}):
++        response = client.post(
++            "/api/v1/auth/login",
++            json={"username": "tester1", "password": "tester-pass-123"},
++            headers=headers,
++        )
++        assert response.status_code == 403
++        assert response.json()["error"]["code"] == "origin_mismatch"
++
++
+ def test_command_rate_limit_consumes_successful_requests(
+     app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+ ) -> None:
+@@ -223,6 +338,24 @@ def test_admin_user_management(app_env: tuple[Any, SQLiteStore, Any, Any, Any])
+     assert bad.status_code == 400
+ 
+ 
++def test_database_error_does_not_become_username_exists(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    _, _, auth, _, _ = app_env
++
++    def broken_create(**_kwargs: Any) -> None:
++        raise sqlite3.OperationalError("disk I/O error")
++
++    monkeypatch.setattr(auth.users, "create", broken_create)
++    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
++        auth.create_user(
++            username="db-failure-user",
++            password="db-failure-password",
++            role="tester",
++        )
++
++
+ def test_password_change_revokes_all_existing_user_sessions(
+     app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+ ) -> None:
+@@ -240,6 +373,339 @@ def test_password_change_revokes_all_existing_user_sessions(
+     assert tester_client.get("/api/v1/me").status_code == 401
+ 
+ 
++def test_role_change_revokes_existing_sessions(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    app, _, _, _, tester = app_env
++    tester_client = TestClient(app)
++    login(tester_client, "tester1", "tester-pass-123")
++    admin_client = TestClient(app)
++    csrf = login(admin_client, "admin one", "admin-pass-12345")
++    changed = admin_client.patch(
++        f"/api/v1/admin/users/{tester['user_id']}",
++        json={"role": "admin"},
++        headers={"X-CSRF-Token": csrf},
++    )
++    assert changed.status_code == 200
++    assert changed.json()["role"] == "admin"
++    assert tester_client.get("/api/v1/me").status_code == 401
++
++
++def test_user_role_and_session_revocation_are_atomic(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    _, store, auth, admin, tester = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    traces: list[str] = []
++    connection = store.connect()
++    connection.set_trace_callback(traces.append)
++    try:
++        result = auth.update_user_security(
++            actor_user_id=int(admin["user_id"]),
++            user_id=int(tester["user_id"]),
++            role="admin",
++        )
++    finally:
++        connection.set_trace_callback(None)
++    assert result is not None
++    assert result.role_changed
++    assert result.revoked_sessions == 1
++    relevant = [
++        statement
++        for statement in traces
++        if statement.startswith(("BEGIN", "UPDATE", "INSERT", "COMMIT"))
++    ]
++    begin = next(index for index, value in enumerate(relevant) if value == "BEGIN IMMEDIATE")
++    user_update = next(
++        index for index, value in enumerate(relevant) if value.startswith("UPDATE web_users SET")
++    )
++    session_update = next(
++        index for index, value in enumerate(relevant) if value.startswith("UPDATE web_sessions SET")
++    )
++    audit_insert = next(
++        index
++        for index, value in enumerate(relevant)
++        if value.startswith("INSERT INTO web_audit_log")
++    )
++    commit = next(index for index, value in enumerate(relevant) if value == "COMMIT")
++    assert begin < user_update < session_update < audit_insert < commit
++    session = auth.sessions.get(str(logged_in["token"]))
++    assert session is not None and session["revoked_at"] is not None
++
++
++def test_password_change_rolls_back_when_session_revoke_fails(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    _, _, auth, admin, tester = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    before = auth.users.get_by_id(int(tester["user_id"]))
++    assert before is not None
++
++    def fail_revoke(_user_id: int, *, connection: Any = None) -> int:
++        assert connection is not None
++        raise sqlite3.OperationalError("injected session revoke failure")
++
++    monkeypatch.setattr(auth.sessions, "revoke_all_for_user", fail_revoke)
++    replacement = auth.hash_password("replacement-password-123")
++    with pytest.raises(sqlite3.OperationalError, match="injected session revoke failure"):
++        auth.update_user_security(
++            actor_user_id=int(admin["user_id"]),
++            user_id=int(tester["user_id"]),
++            password_hash=replacement,
++        )
++    after = auth.users.get_by_id(int(tester["user_id"]))
++    assert after is not None
++    assert after["password_hash"] == before["password_hash"]
++    assert after["password_changed_at"] == before["password_changed_at"]
++    session = auth.sessions.get(str(logged_in["token"]))
++    assert session is not None and session["revoked_at"] is None
++
++
++def test_security_audit_failure_rolls_back_user_mutation(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    _, _, auth, admin, tester = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++
++    def fail_audit(**kwargs: Any) -> None:
++        assert kwargs["connection"] is not None
++        raise sqlite3.OperationalError("injected audit failure")
++
++    monkeypatch.setattr(auth.audit, "record", fail_audit)
++    with pytest.raises(sqlite3.OperationalError, match="injected audit failure"):
++        auth.update_user_security(
++            actor_user_id=int(admin["user_id"]),
++            user_id=int(tester["user_id"]),
++            active=False,
++        )
++    after = auth.users.get_by_id(int(tester["user_id"]))
++    assert after is not None and bool(after["active"])
++    session = auth.sessions.get(str(logged_in["token"]))
++    assert session is not None and session["revoked_at"] is None
++
++
++def test_concurrent_user_role_changes_cannot_skip_revocation(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    _, _, auth, admin, tester = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    barrier = threading.Barrier(3)
++    errors: list[BaseException] = []
++
++    def update(role: str) -> None:
++        try:
++            barrier.wait(timeout=5)
++            auth.update_user_security(
++                actor_user_id=int(admin["user_id"]),
++                user_id=int(tester["user_id"]),
++                role=role,
++            )
++        except BaseException as error:  # pragma: no cover - surfaced below
++            errors.append(error)
++
++    threads = [
++        threading.Thread(target=update, args=(role,), daemon=True)
++        for role in ("admin", "tester")
++    ]
++    for thread in threads:
++        thread.start()
++    barrier.wait(timeout=5)
++    for thread in threads:
++        thread.join(timeout=10)
++        assert not thread.is_alive()
++    assert not errors
++    session = auth.sessions.get(str(logged_in["token"]))
++    assert session is not None and session["revoked_at"] is not None
++
++
++def test_old_session_never_observes_promoted_admin_role(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    _, _, auth, admin, tester = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    update_visible = threading.Event()
++    allow_revoke = threading.Event()
++    original_revoke = auth.sessions.revoke_all_for_user
++    errors: list[BaseException] = []
++
++    def paused_revoke(user_id: int, *, connection: Any = None) -> int:
++        update_visible.set()
++        if not allow_revoke.wait(timeout=5):
++            raise TimeoutError("test did not release session revocation")
++        return int(original_revoke(user_id, connection=connection))
++
++    monkeypatch.setattr(auth.sessions, "revoke_all_for_user", paused_revoke)
++
++    def promote() -> None:
++        try:
++            auth.update_user_security(
++                actor_user_id=int(admin["user_id"]),
++                user_id=int(tester["user_id"]),
++                role="admin",
++            )
++        except BaseException as error:  # pragma: no cover - surfaced below
++            errors.append(error)
++
++    thread = threading.Thread(target=promote, daemon=True)
++    thread.start()
++    assert update_visible.wait(timeout=5)
++    try:
++        during = auth.sessions.get(str(logged_in["token"]))
++        assert during is not None
++        assert during["role"] == "tester"
++        assert during["revoked_at"] is None
++    finally:
++        allow_revoke.set()
++        thread.join(timeout=10)
++    assert not thread.is_alive()
++    assert not errors
++    after = auth.sessions.get(str(logged_in["token"]))
++    assert after is not None
++    assert after["role"] == "admin"
++    assert after["revoked_at"] is not None
++
++
++def test_authenticate_skips_write_transaction_when_touch_not_due(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    _, store, auth, _, _ = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    traces: list[str] = []
++    connection = store.connect()
++    connection.set_trace_callback(traces.append)
++    try:
++        assert auth.authenticate(str(logged_in["token"])) is not None
++    finally:
++        connection.set_trace_callback(None)
++    assert not any(statement.startswith("BEGIN") for statement in traces)
++    assert not any("UPDATE web_sessions SET last_seen_at" in statement for statement in traces)
++
++
++def test_authenticate_touch_false_is_read_only_even_when_due(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    _, store, auth, _, _ = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    token = str(logged_in["token"])
++    session = auth.sessions.get(token)
++    assert session is not None
++    before = datetime.now(SHANGHAI) - timedelta(minutes=10)
++    with store.transaction() as connection:
++        connection.execute(
++            "UPDATE web_sessions SET last_seen_at = ? WHERE session_token_hash = ?",
++            (before.isoformat(), session["session_token_hash"]),
++        )
++    traces: list[str] = []
++    connection = store.connect()
++    connection.set_trace_callback(traces.append)
++    try:
++        assert auth.authenticate(token, touch=False) is not None
++    finally:
++        connection.set_trace_callback(None)
++    assert not any(statement.startswith("BEGIN") for statement in traces)
++    assert not any("UPDATE web_sessions SET last_seen_at" in statement for statement in traces)
++
++
++def test_authenticate_updates_session_only_when_touch_is_due(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    _, store, auth, _, _ = app_env
++    logged_in = auth.login(username="tester1", password="tester-pass-123")
++    token = str(logged_in["token"])
++    session = auth.sessions.get(token)
++    assert session is not None
++    before = datetime.now(SHANGHAI) - timedelta(minutes=10)
++    with store.transaction() as connection:
++        connection.execute(
++            "UPDATE web_sessions SET last_seen_at = ? WHERE session_token_hash = ?",
++            (before.isoformat(), session["session_token_hash"]),
++        )
++    traces: list[str] = []
++    connection = store.connect()
++    connection.set_trace_callback(traces.append)
++    try:
++        assert auth.authenticate(token) is not None
++    finally:
++        connection.set_trace_callback(None)
++    assert any(statement.startswith("BEGIN") for statement in traces)
++    assert any("UPDATE web_sessions SET last_seen_at" in statement for statement in traces)
++    after = auth.sessions.get(token)
++    assert after is not None
++    assert datetime.fromisoformat(str(after["last_seen_at"])) > before
++
++
++def test_login_input_limits_apply_before_argon2(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    app, _, auth, _, _ = app_env
++
++    def unexpected_login(**_kwargs: Any) -> None:
++        raise AssertionError("oversized credentials reached AuthService.login")
++
++    monkeypatch.setattr(auth, "login", unexpected_login)
++    client = TestClient(app)
++    for payload in (
++        {"username": "u" * 65, "password": "valid-password"},
++        {"username": "tester1", "password": "p" * 257},
++        {"username": 123, "password": "valid-password"},
++    ):
++        response = client.post("/api/v1/auth/login", json=payload)
++        assert response.status_code == 400
++        assert response.json()["error"]["code"] == "invalid_request"
++
++
++def test_login_concurrency_saturation_fails_fast(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    app, _, auth, _, _ = app_env
++
++    class SaturatedSemaphore:
++        async def acquire(self) -> None:
++            await asyncio.sleep(1)
++
++        def release(self) -> None:
++            raise AssertionError("an unacquired semaphore must not be released")
++
++    def unexpected_login(**_kwargs: Any) -> None:
++        raise AssertionError("saturated login reached Argon2")
++
++    monkeypatch.setattr(auth, "login", unexpected_login)
++    app.state.login_semaphore = SaturatedSemaphore()
++    response = TestClient(app).post(
++        "/api/v1/auth/login",
++        json={"username": "tester1", "password": "tester-pass-123"},
++    )
++    assert response.status_code == 429
++    assert response.headers["Retry-After"] == "1"
++    assert response.json()["error"]["code"] == "login_busy"
++
++
++def test_invalid_host_and_oversized_request_are_rejected(
++    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
++) -> None:
++    app, _, _, _, _ = app_env
++    invalid_host = FastAPITestClient(
++        app,
++        base_url="http://evil.example",
++        headers={"Origin": app.state.settings.public_origin},
++    )
++    assert invalid_host.get("/").status_code == 400
++
++    too_large = TestClient(app).post(
++        "/api/v1/auth/login",
++        content=b"x" * (app.state.settings.request_body_limit_bytes + 1),
++        headers={"Content-Type": "application/json"},
++    )
++    assert too_large.status_code == 413
++    assert too_large.json()["error"]["code"] == "request_too_large"
++
++
++
+ def test_command_status_is_limited_to_requester_or_admin(
+     app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+ ) -> None:
+@@ -324,11 +790,28 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
+         in dashboard_script
+     )
+     assert "const state = await loadState();\n      showAutomaticAlert" not in dashboard_script
++    assert "if (stateRefreshPromise)" in dashboard_script
++    assert "stateRefreshQueued = true" in dashboard_script
++    assert "while (stateRefreshQueued)" in dashboard_script
+     assert "handledAlertIds.clear()" in dashboard_script
+     assert "event.event_type === 'server.resync_required'" in dashboard_script
+     assert dashboard_script.index("onEvent((event)") < dashboard_script.index(
+         "connectEvents();"
+     )
++    assert "payload.candidates" in dashboard_script
++    assert "showRepeat = payload.trigger_type === 'intraday'" in dashboard_script
++    card_for = dashboard_script[
++        dashboard_script.index("function cardFor") : dashboard_script.index("function compactPrice")
++    ]
++    compact = dashboard_script[
++        dashboard_script.index("function compactAlertCard") : dashboard_script.index(
++            "function alertMeta"
++        )
++    ]
++    assert "repeat-badge" not in card_for
++    assert "repeat-badge" in compact
++    assert "notify('近期多次出现'" not in dashboard_script
++    assert "new Audio" not in dashboard_script
+     for relative in (
+         "src/stock_watcher/server/templates/dashboard.html",
+         "src/stock_watcher/server/static/dashboard.js",
+@@ -364,7 +847,7 @@ def test_desktop_app_theme_outcome_page_and_bottom_right_alert_contract() -> Non
+     assert "font-size: clamp(1.4rem, 2.5vw, 1.85rem)" in css
+     assert '.cards .ashare-pct[data-direction="up"]' in css
+     assert "color: var(--top3-gain-red) !important" in css
+-    assert 'href="/static/app.css?v=14"' in base
++    assert 'href="/static/app.css?v=15"' in base
+     assert 'src="/static/app.js?v=6"' in base
+     assert ".hero-action-button.btn-notify" in css
+     assert ".dashboard-cards > .card {" in css
+@@ -612,3 +1095,27 @@ def test_token_endpoints_never_echo_token(app_env: tuple[Any, SQLiteStore, Any,
+     raw = response.text
+     assert "super-secret-token-value-xyz" not in raw
+     assert "fingerprint" in response.json()
++
++
++def test_history_page_has_purple_filter_and_does_not_paint_homepage_cards() -> None:
++    root = Path(__file__).resolve().parents[1]
++    history_page = (root / "src/stock_watcher/server/templates/history.html").read_text(
++        encoding="utf-8"
++    )
++    history_script = (root / "src/stock_watcher/server/static/history.js").read_text(
++        encoding="utf-8"
++    )
++    dashboard = (root / "src/stock_watcher/server/static/dashboard.js").read_text(
++        encoding="utf-8"
++    )
++    assert 'id="repeat-only"' in history_page
++    assert "只看紫色标记" in history_page
++    assert "repeat_active" in history_script
++    assert "repeat-badge" in history_script
++    assert "candidate.name" in history_script
++    card_start = dashboard.index("function cardFor")
++    card_end = dashboard.index("function compactPrice")
++    assert "repeat-badge" not in dashboard[card_start:card_end]
++    assert "payload.trigger_type === 'intraday'" in dashboard
++    assert "showAutomaticAlert(event.payload, latestDashboardState, alertSequence)" in dashboard
++    assert dashboard.count("notify(") == 2
+diff --git a/tests/test_web_healthcheck.py b/tests/test_web_healthcheck.py
+index 616beb2..a642af0 100644
+--- a/tests/test_web_healthcheck.py
++++ b/tests/test_web_healthcheck.py
+@@ -19,6 +19,7 @@ def _settings(tmp_path: Path) -> ServerSettings:
+     db.parent.mkdir(parents=True)
+     SQLiteStore(db).initialize()
+     return ServerSettings(
++        environment="test",
+         db_path=db,
+         report_dir=tmp_path / "reports",
+         public_origin="http://testserver",
+@@ -80,7 +81,7 @@ def test_web_readiness_rejects_expired_worker_lease(tmp_path: Path) -> None:
+         )
+     response = TestClient(app).get("/health/ready")
+     assert response.status_code == 503
+-    assert response.json()["worker_lease_held"] is False
++    assert response.json() == {"status": "not_ready"}
+ 
+ 
+ def test_web_readiness_uses_fresh_read_only_store(tmp_path: Path) -> None:
+diff --git a/tests/test_web_services.py b/tests/test_web_services.py
+index da72d59..73a9434 100644
+--- a/tests/test_web_services.py
++++ b/tests/test_web_services.py
+@@ -2,10 +2,12 @@
+ from __future__ import annotations
+ 
+ import base64
++import hashlib
+ import json
+ import os
+ import sqlite3
+ import threading
++from contextlib import contextmanager
+ from datetime import date, datetime, timedelta
+ from pathlib import Path
+ from typing import Any, cast
+@@ -28,6 +30,7 @@ from stock_watcher.services import (
+ from stock_watcher.services.secret_service import MASTER_KEY_BYTES, fingerprint
+ from stock_watcher.services.stockwatcher_service import StockWatcherService
+ from stock_watcher.storage import SQLiteStore
++from stock_watcher.storage.web import AuditLogRepository, SessionRepository
+ 
+ 
+ def make_store(tmp_path: Path) -> SQLiteStore:
+@@ -228,6 +231,129 @@ def test_command_create_claim_complete(tmp_path: Path) -> None:
+     assert saved["result"] == {"rounds": 3}
+ 
+ 
++def test_database_error_does_not_become_command_coalesced() -> None:
++    class BrokenConnection:
++        def execute(self, *_args: Any, **_kwargs: Any) -> None:
++            raise sqlite3.OperationalError("disk I/O error")
++
++    class BrokenStore:
++        @contextmanager
++        def transaction(self) -> Any:
++            yield BrokenConnection()
++
++    commands = CommandService(cast(Any, BrokenStore()))
++    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
++        commands.create(
++            command_type=CommandType.MANUAL_REFRESH,
++            requested_by=1,
++        )
++
++
++def test_web_session_command_and_audit_retention(tmp_path: Path) -> None:
++    store = make_store(tmp_path)
++    seed_user(store)
++    sessions = SessionRepository(store)
++    sessions.create(
++        user_id=1,
++        token="expired-token",
++        csrf_value="expired-csrf",
++        ip_hash=None,
++        user_agent="pytest",
++    )
++    sessions.create(
++        user_id=1,
++        token="current-token",
++        csrf_value="current-csrf",
++        ip_hash=None,
++        user_agent="pytest",
++    )
++    now = datetime(2026, 8, 13, 12, 0, tzinfo=SHANGHAI)
++    with store.transaction() as connection:
++        connection.execute(
++            "UPDATE web_sessions SET idle_expires_at = ?, absolute_expires_at = ? "
++            "WHERE session_token_hash = ?",
++            (
++                (now - timedelta(days=40)).isoformat(),
++                (now - timedelta(days=40)).isoformat(),
++                hashlib.sha256(b"expired-token").hexdigest(),
++            ),
++        )
++    assert sessions.cleanup_expired(now=now, retention_days=30) == 1
++    assert sessions.get("expired-token") is None
++    assert sessions.get("current-token") is not None
++
++    before = sessions.get("current-token")
++    assert before is not None
++    assert not sessions.touch_if_due(
++        "current-token",
++        minimum_interval_seconds=300,
++    )
++    after = sessions.get("current-token")
++    assert after is not None
++    assert after["last_seen_at"] == before["last_seen_at"]
++
++    commands = CommandService(store, clock=lambda: now)
++    old_command = commands.create(
++        command_type=CommandType.TOKEN_TEST,
++        requested_by=1,
++        idempotency_key="retention-old",
++    )
++    recent_command = commands.create(
++        command_type=CommandType.TOKEN_TEST,
++        requested_by=1,
++        idempotency_key="retention-recent",
++    )
++    with store.transaction() as connection:
++        connection.execute(
++            "UPDATE web_commands SET status = 'succeeded', completed_at = ? "
++            "WHERE command_id = ?",
++            ((now - timedelta(days=100)).isoformat(), old_command["command_id"]),
++        )
++        connection.execute(
++            "UPDATE web_commands SET status = 'succeeded', completed_at = ? "
++            "WHERE command_id = ?",
++            ((now - timedelta(days=10)).isoformat(), recent_command["command_id"]),
++        )
++    assert commands.prune_completed(now=now, retention_days=90) == 1
++    assert commands.get(str(old_command["command_id"])) is None
++    assert commands.get(str(recent_command["command_id"])) is not None
++
++    audit = AuditLogRepository(store)
++    for object_id, action in (
++        ("ordinary-old", "auth.login"),
++        ("security-kept", "user.update"),
++        ("security-old", "token.update"),
++    ):
++        audit.record(
++            action=action,
++            object_type="test",
++            object_id=object_id,
++            outcome="succeeded",
++        )
++    with store.transaction() as connection:
++        connection.execute(
++            "UPDATE web_audit_log SET occurred_at = ? WHERE object_id = ?",
++            ((now - timedelta(days=200)).isoformat(), "ordinary-old"),
++        )
++        connection.execute(
++            "UPDATE web_audit_log SET occurred_at = ? WHERE object_id = ?",
++            ((now - timedelta(days=200)).isoformat(), "security-kept"),
++        )
++        connection.execute(
++            "UPDATE web_audit_log SET occurred_at = ? WHERE object_id = ?",
++            ((now - timedelta(days=400)).isoformat(), "security-old"),
++        )
++    assert audit.prune(
++        now=now,
++        ordinary_retention_days=180,
++        security_retention_days=365,
++    ) == 2
++    kept = {row["object_id"] for row in audit.list(limit=20)}
++    assert "ordinary-old" not in kept
++    assert "security-old" not in kept
++    assert "security-kept" in kept
++
++
+ def test_command_wrong_holder_cannot_complete(tmp_path: Path) -> None:
+     store = make_store(tmp_path)
+     seed_user(store)
+@@ -614,7 +740,7 @@ def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
+     with sqlite3.connect(path) as connection:
+         assert connection.execute(
+             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+-        ).fetchone() == (9,)
++        ).fetchone() == (10,)
+         assert connection.execute(
+             "SELECT value FROM notes WHERE key = 'sentinel'"
+         ).fetchone() == ("kept",)
+@@ -638,6 +764,8 @@ def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
+             "web_public_state",
+             "web_audit_log",
+             "candidate_outcomes",
++            "candidate_repeat_days",
++            "candidate_repeat_states",
+         ):
+             assert table in tables
+     assert path.with_suffix(".sqlite3.pre-v7.bak").is_file()
+@@ -650,7 +778,7 @@ def test_migration_idempotent(tmp_path: Path) -> None:
+     with store.connect() as connection:
+         assert connection.execute(
+             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+-        ).fetchone() == (9,)
++        ).fetchone() == (10,)
+ 
+ 
+ def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -> None:
+@@ -667,7 +795,7 @@ def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -
+     with sqlite3.connect(path) as connection:
+         assert connection.execute(
+             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+-        ).fetchone() == (9,)
++        ).fetchone() == (10,)
+         index_sql = connection.execute(
+             "SELECT sql FROM sqlite_master WHERE type = 'index' "
+             "AND name = 'idx_web_events_source_dedupe'"
+diff --git a/tests/test_web_worker.py b/tests/test_web_worker.py
+index e2ed307..66a57be 100644
+--- a/tests/test_web_worker.py
++++ b/tests/test_web_worker.py
+@@ -13,6 +13,7 @@ import sys
+ import threading
+ import time
+ from pathlib import Path
++from types import SimpleNamespace
+ from typing import Any, cast
+ 
+ import stock_watcher.server.worker as worker_module
+@@ -323,3 +324,88 @@ def test_worker_keeps_command_queued_while_automatic_scan_is_busy() -> None:
+     finally:
+         release.set()
+         busy.join(timeout=1)
++
++
++def test_maintenance_tasks_are_isolated_after_one_prune_failure() -> None:
++    calls: list[str] = []
++
++    class Outbox:
++        def prune(self, **_: object) -> int:
++            calls.append("outbox")
++            raise sqlite3.OperationalError("outbox unavailable")
++
++    class Secrets:
++        def expire_requests(self, **_: object) -> int:
++            calls.append("secret-expiry")
++            return 0
++
++        def prune_requests(self, **_: object) -> int:
++            calls.append("secret-prune")
++            return 0
++
++    class Sessions:
++        def cleanup_expired(self, **_: object) -> int:
++            calls.append("session-prune")
++            return 0
++
++    class Commands:
++        def prune_completed(self, **_: object) -> int:
++            calls.append("command-prune")
++            return 0
++
++    class Audit:
++        def prune(self, **_: object) -> int:
++            calls.append("audit-prune")
++            return 0
++
++    runtime = cast(Any, WorkerRuntime.__new__(WorkerRuntime))
++    runtime.outbox = Outbox()
++    runtime.secrets = Secrets()
++    runtime.sessions = Sessions()
++    runtime.commands = Commands()
++    runtime.audit = Audit()
++    runtime.settings = SimpleNamespace(
++        retention_enabled=True,
++        session_retention_days=30,
++        command_retention_days=90,
++        audit_retention_days=180,
++        security_audit_retention_days=365,
++    )
++
++    runtime._maintenance()
++
++    assert calls == [
++        "outbox",
++        "secret-expiry",
++        "secret-prune",
++        "session-prune",
++        "command-prune",
++        "audit-prune",
++    ]
++
++
++def test_worker_retention_pruning_is_opt_in() -> None:
++    calls: list[str] = []
++
++    class Outbox:
++        def prune(self, **_: object) -> int:
++            calls.append("outbox")
++            return 0
++
++    class Secrets:
++        def expire_requests(self, **_: object) -> int:
++            calls.append("secret-expiry")
++            return 0
++
++        def prune_requests(self, **_: object) -> int:
++            calls.append("secret-prune")
++            return 0
++
++    runtime = cast(Any, WorkerRuntime.__new__(WorkerRuntime))
++    runtime.outbox = Outbox()
++    runtime.secrets = Secrets()
++    runtime.settings = SimpleNamespace(retention_enabled=False)
++
++    runtime._maintenance()
++
++    assert calls == ["outbox", "secret-expiry", "secret-prune"]
+diff --git a/tests/test_web_ws.py b/tests/test_web_ws.py
+index 7f4a026..6ab0006 100644
+--- a/tests/test_web_ws.py
++++ b/tests/test_web_ws.py
+@@ -6,13 +6,22 @@ from pathlib import Path
+ from typing import Any
+ 
+ import pytest
+-from fastapi.testclient import TestClient
++from fastapi.testclient import TestClient as FastAPITestClient
++from starlette.websockets import WebSocketDisconnect
+ 
++from stock_watcher.server.auth import RateLimiter
+ from stock_watcher.server.config import ServerSettings
+ from stock_watcher.server.web import create_app
+ from stock_watcher.storage import SQLiteStore
+ 
+ 
++class TestClient(FastAPITestClient):
++    def __init__(self, app: Any, **kwargs: Any) -> None:
++        headers = dict(kwargs.pop("headers", {}))
++        headers.setdefault("Origin", str(app.state.settings.public_origin))
++        super().__init__(app, headers=headers, **kwargs)
++
++
+ @pytest.fixture()
+ def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore]:
+     import base64
+@@ -21,6 +30,7 @@ def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore]:
+     master_key_file = tmp_path / "master.key"
+     master_key_file.write_text(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+     settings = ServerSettings(
++        environment="test",
+         db_path=tmp_path / "db" / "test.db",
+         report_dir=tmp_path / "reports",
+         master_key_file=master_key_file,
+@@ -212,6 +222,227 @@ def test_ws_unauthorized_rejected(app_env: tuple[Any, SQLiteStore]) -> None:
+             websocket.receive_text()
+ 
+ 
++def test_ws_closes_after_logout(app_env: tuple[Any, SQLiteStore]) -> None:
++    app, _ = app_env
++    client = login(app)
++    csrf = client.get("/api/v1/me").json()["csrf_token"]
++    with client.websocket_connect("/ws/v1/events") as websocket:
++        websocket.receive_text()
++        websocket.receive_text()
++        response = client.post(
++            "/api/v1/auth/logout",
++            headers={"X-CSRF-Token": csrf},
++        )
++        assert response.status_code == 204
++        with pytest.raises(WebSocketDisconnect) as closed:
++            websocket.receive_text()
++        assert closed.value.code == 4401
++
++
++@pytest.mark.parametrize(
++    "mutation",
++    [
++        {"password": "replacement-password-123"},
++        {"active": False},
++    ],
++    ids=["password-change", "deactivation"],
++)
++def test_ws_closes_after_account_security_change(
++    app_env: tuple[Any, SQLiteStore],
++    mutation: dict[str, object],
++) -> None:
++    app, _ = app_env
++    tester = app.state.auth.users.get_by_username("tester1")
++    assert tester is not None
++    app.state.auth.create_user(
++        username="admin1",
++        password="admin-password-123",
++        role="admin",
++    )
++    tester_client = login(app)
++    admin_client = login(app, "admin1", "admin-password-123")
++    csrf = admin_client.get("/api/v1/me").json()["csrf_token"]
++    with tester_client.websocket_connect("/ws/v1/events") as websocket:
++        websocket.receive_text()
++        websocket.receive_text()
++        changed = admin_client.patch(
++            f"/api/v1/admin/users/{tester['user_id']}",
++            json=mutation,
++            headers={"X-CSRF-Token": csrf},
++        )
++        assert changed.status_code == 200
++        with pytest.raises(WebSocketDisconnect) as closed:
++            websocket.receive_text()
++        assert closed.value.code == 4401
++
++
++def test_ws_admin_visibility_removed_after_role_change(
++    app_env: tuple[Any, SQLiteStore],
++) -> None:
++    app, _ = app_env
++    tester = app.state.auth.users.get_by_username("tester1")
++    assert tester is not None
++    app.state.auth.create_user(
++        username="admin1",
++        password="admin-password-123",
++        role="admin",
++    )
++    tester_client = login(app)
++    admin_client = login(app, "admin1", "admin-password-123")
++    csrf = admin_client.get("/api/v1/me").json()["csrf_token"]
++    with tester_client.websocket_connect("/ws/v1/events") as websocket:
++        websocket.receive_text()
++        websocket.receive_text()
++        changed = admin_client.patch(
++            f"/api/v1/admin/users/{tester['user_id']}",
++            json={"role": "admin"},
++            headers={"X-CSRF-Token": csrf},
++        )
++        assert changed.status_code == 200
++        with pytest.raises(WebSocketDisconnect) as closed:
++            websocket.receive_text()
++        assert closed.value.code == 4403
++
++
++def test_ws_closes_after_absolute_expiry(app_env: tuple[Any, SQLiteStore]) -> None:
++    app, store = app_env
++    app.state.ws_manager.auth_check_seconds = 0.0
++    client = login(app)
++    with client.websocket_connect("/ws/v1/events") as websocket:
++        websocket.receive_text()
++        websocket.receive_text()
++        with store.transaction() as connection:
++            connection.execute(
++                "UPDATE web_sessions SET absolute_expires_at = ?",
++                ("2000-01-01T00:00:00+08:00",),
++            )
++        with pytest.raises(WebSocketDisconnect) as closed:
++            websocket.receive_text()
++        assert closed.value.code == 4401
++
++
++@pytest.mark.parametrize("origin", [None, "https://testserver", "http://evil.example"])
++def test_ws_rejects_missing_or_mismatched_origin(
++    app_env: tuple[Any, SQLiteStore],
++    origin: str | None,
++) -> None:
++    app, _ = app_env
++    client = FastAPITestClient(app)
++    response = client.post(
++        "/api/v1/auth/login",
++        json={"username": "tester1", "password": "tester-pass-123"},
++        headers={"Origin": app.state.settings.public_origin},
++    )
++    assert response.status_code == 200
++    headers = {} if origin is None else {"Origin": origin}
++    with pytest.raises(WebSocketDisconnect) as closed:
++        with client.websocket_connect("/ws/v1/events", headers=headers) as websocket:
++            websocket.receive_text()
++    assert closed.value.code == 4403
++
++
++def test_ws_enforces_per_user_connection_cap(app_env: tuple[Any, SQLiteStore]) -> None:
++    app, _ = app_env
++    app.state.ws_manager.max_per_user = 1
++    client = login(app)
++    with client.websocket_connect("/ws/v1/events") as first:
++        first.receive_text()
++        first.receive_text()
++        with client.websocket_connect("/ws/v1/events") as second:
++            with pytest.raises(WebSocketDisconnect) as closed:
++                second.receive_text()
++            assert closed.value.code == 4429
++
++
++def test_ws_enforces_global_connection_rate(app_env: tuple[Any, SQLiteStore]) -> None:
++    app, _ = app_env
++    app.state.auth.websocket_global_limiter = RateLimiter(
++        max_attempts=1,
++        window_seconds=60,
++        max_keys=1,
++    )
++    client = login(app)
++    with client.websocket_connect("/ws/v1/events") as first:
++        first.receive_text()
++        first.receive_text()
++    with client.websocket_connect("/ws/v1/events") as second:
++        with pytest.raises(WebSocketDisconnect) as closed:
++            second.receive_text()
++        assert closed.value.code == 4429
++
++
++def test_ws_user_rate_limit_does_not_block_other_users(
++    app_env: tuple[Any, SQLiteStore],
++) -> None:
++    app, _ = app_env
++    app.state.auth.create_user(
++        username="tester2",
++        password="tester-two-pass-123",
++        role="tester",
++    )
++    app.state.auth.websocket_user_limiter = RateLimiter(
++        max_attempts=1,
++        window_seconds=60,
++        max_keys=10,
++    )
++    app.state.auth.websocket_ip_limiter = RateLimiter(
++        max_attempts=10,
++        window_seconds=60,
++        max_keys=10,
++    )
++    app.state.auth.websocket_global_limiter = RateLimiter(
++        max_attempts=10,
++        window_seconds=60,
++        max_keys=1,
++    )
++    first_user = login(app)
++    second_user = login(app, "tester2", "tester-two-pass-123")
++    with first_user.websocket_connect("/ws/v1/events") as first:
++        first.receive_text()
++        first.receive_text()
++    with first_user.websocket_connect("/ws/v1/events") as blocked:
++        with pytest.raises(WebSocketDisconnect) as closed:
++            blocked.receive_text()
++        assert closed.value.code == 4429
++    with second_user.websocket_connect("/ws/v1/events") as allowed:
++        assert json.loads(allowed.receive_text())["event_type"] == "server.hello"
++        assert json.loads(allowed.receive_text())["event_type"] == "state.snapshot"
++
++
++def test_ws_rejected_active_cap_does_not_consume_global_budget(
++    app_env: tuple[Any, SQLiteStore],
++) -> None:
++    app, _ = app_env
++    app.state.ws_manager.max_per_user = 1
++    app.state.auth.websocket_global_limiter = RateLimiter(
++        max_attempts=2,
++        window_seconds=60,
++        max_keys=1,
++    )
++    client = login(app)
++    with client.websocket_connect("/ws/v1/events") as first:
++        first.receive_text()
++        first.receive_text()
++        with client.websocket_connect("/ws/v1/events") as rejected:
++            with pytest.raises(WebSocketDisconnect) as closed:
++                rejected.receive_text()
++            assert closed.value.code == 4429
++    with client.websocket_connect("/ws/v1/events") as second_valid:
++        assert json.loads(second_valid.receive_text())["event_type"] == "server.hello"
++        assert json.loads(second_valid.receive_text())["event_type"] == "state.snapshot"
++
++
++def test_ws_global_rate_is_above_normal_reconnect_burst() -> None:
++    settings = ServerSettings(environment="test", public_origin="http://testserver")
++    settings.validate_for_web()
++    assert settings.rate_limits.websocket_global_connect_max >= settings.websocket_max_global
++    assert (
++        settings.rate_limits.websocket_global_connect_max
++        > settings.rate_limits.websocket_ip_connect_max
++        > settings.rate_limits.websocket_user_connect_max
++    )
++
++
+ def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally() -> None:
+     script = (
+         Path(__file__).resolve().parents[1]
+@@ -227,3 +458,63 @@ def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally(
+     assert "lastEventId = Number(event.payload?.latest_event_id || 0);" in script
+     assert "event.event_type === 'server.resync_required'" in script
+     assert "if (csrfToken)" not in script
++    api_wrapper = script.split("export async function apiJson", 1)[0]
++    assert api_wrapper.count("await response.json()") == 1
++    assert "error.status = response.status" in api_wrapper
++    assert "error.code =" in api_wrapper
++    assert "error.payload = payload" in api_wrapper
++    assert "event.code === 4401 || event.code === 4403" in script
++    assert "1000 * (2 ** reconnectAttempt)" in script
++    assert "Math.random() * 500" in script
++    assert "setTimeout(connectEvents, 3000)" not in script
++
++
++def test_ws_replays_repeat_fields_on_candidates_and_alert_events(
++    app_env: tuple[Any, SQLiteStore],
++) -> None:
++    app, store = app_env
++    outbox = app.state.outbox
++    candidate = {
++        "code": "600001.SH",
++        "name": "测试1",
++        "repeat_active": True,
++        "repeat_count": 3,
++        "repeat_span_days": 12,
++        "repeat_label": "近12天第3次",
++        "repeat_sequence_started_on": "2026-08-01",
++        "repeat_activated_at": "2026-08-12T10:00:00+08:00",
++        "repeat_last_seen_on": "2026-08-12",
++    }
++    with store.transaction() as connection:
++        outbox.append(
++            connection,
++            event_type="candidates.updated",
++            payload={"snapshot_id": 11, "state_version": 11, "candidates": [candidate]},
++            source_kind="snapshot",
++            source_id="11",
++        )
++        outbox.append(
++            connection,
++            event_type="alert.created",
++            payload={
++                "alert_id": 7,
++                "snapshot_id": 11,
++                "trigger_type": "intraday",
++                "candidates": [candidate],
++            },
++            source_kind="alert",
++            source_id="7",
++        )
++    client = login(app)
++    seen: dict[str, Any] = {}
++    with client.websocket_connect("/ws/v1/events?after_id=0") as websocket:
++        for _ in range(8):
++            message = json.loads(websocket.receive_text())
++            event_type = message.get("event_type")
++            if event_type in {"candidates.updated", "alert.created"}:
++                seen[event_type] = message["payload"]["candidates"][0]
++            if len(seen) == 2:
++                break
++    assert seen["candidates.updated"]["repeat_label"] == "近12天第3次"
++    assert seen["alert.created"]["repeat_active"] is True
++    assert seen["alert.created"]["repeat_count"] == 3

@@ -1,0 +1,9 @@
+{
+  "NON_REGRESSION": "PASS",
+  "core_diff_count": 0,
+  "core_diffs": [],
+  "service_diff_count": 1,
+  "service_diffs": [
+    "service.public_state.updated_at: '2026-08-26T13:00:39.113661' vs '2026-08-26T13:00:38.739536'"
+  ]
+}

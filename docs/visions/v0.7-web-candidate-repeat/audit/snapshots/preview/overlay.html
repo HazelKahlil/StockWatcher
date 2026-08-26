@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>当前观察 · StockWatcher</title>
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
+    <a href="/summary">盘后总结</a>
+  </nav>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">[redacted-user]</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+  </div>
+</header>
+<main id="main">
+
+<section class="dashboard-intro" aria-labelledby="dashboard-page-title">
+  <div>
+    <p class="dashboard-eyebrow">A股观察提醒 <span>Web 内测</span></p>
+    <h1 id="dashboard-page-title">当前观察</h1>
+  </div>
+  <a class="desktop-history-link" href="/alerts">历史提醒</a>
+</section>
+<section aria-label="运行状态总览" class="statusbar">
+  <div class="status-item">
+    <span class="status-item-label">数据状态</span>
+    <strong class="status-item-value">正常</strong>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">最后更新时间</span>
+    <strong class="status-item-value">2026/08/26 11:18:47</strong>
+  </div>
+  <div class="status-item status-item-connection">
+    <span class="status-item-label">数据接口连接 / 最近检测</span>
+    <span class="ws-status" data-state="live" role="status">
+      <span class="status-lamp" aria-hidden="true"></span>
+      <span class="status-label">已连接</span>
+    </span>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">候选状态</span>
+    <strong class="status-item-value">有候选</strong>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">当前阶段</span>
+    <strong class="status-item-value">休市</strong>
+  </div>
+</section>
+<div id="strong-alerts" class="alert-overlay" aria-live="assertive">
+  <section class="strong-alert-dialog" role="alertdialog" aria-modal="false">
+    <div class="strong-alert-header">
+      <div>
+        <span class="strong-alert-kicker">实时观察提醒</span>
+        <time>2026/08/26 11:18:47</time>
+      </div>
+      <button type="button" class="strong-alert-dismiss">关闭</button>
+    </div>
+    <h2 class="strong-alert-title">盘中强异动</h2>
+    <p class="strong-alert-summary">共进股份 · 通信设备 · 请及时查看</p>
+    <div class="strong-alert-mini-grid">
+    <article class="strong-alert-mini-card">
+      <span class="rank rank-1-badge">1</span>
+      <div class="strong-alert-mini-identity">
+        <strong class="strong-alert-mini-name">远东股份</strong>
+        <span class="strong-alert-mini-code">600869.SH</span>
+      </div>
+      <span class="strong-alert-mini-pct" data-direction="up">+8.15%</span>
+      <span class="strong-alert-mini-price">¥17.52</span>
+      <span class="level-tag level-strong">强</span>
+    </article>
+    <article class="strong-alert-mini-card">
+      <span class="rank rank-2-badge">2</span>
+      <div class="strong-alert-mini-identity">
+        <strong class="strong-alert-mini-name">超频三</strong>
+        <span class="strong-alert-mini-code">300647.SZ</span>
+      </div>
+      <span class="strong-alert-mini-pct" data-direction="up">+6.36%</span>
+      <span class="strong-alert-mini-price">¥6.19</span>
+      <span class="level-tag level-strong">强</span>
+    </article>
+    <article class="strong-alert-mini-card is-trigger">
+      <span class="rank rank-3-badge">3</span>
+      <div class="strong-alert-mini-identity">
+        <strong class="strong-alert-mini-name">共进股份<span class="repeat-badge">近14天第3次</span></strong>
+        <span class="strong-alert-mini-code">603118.SH</span>
+      </div>
+      <span class="strong-alert-mini-pct" data-direction="up">+10.03%</span>
+      <span class="strong-alert-mini-price">¥17.88</span>
+      <span class="level-tag level-strong">强</span>
+    </article></div>
+    <div class="strong-alert-footer">
+      <span>只读观察提醒</span>
+      <a class="strong-alert-open" href="/alerts">打开列表</a>
+    </div>
+  </section>
+</div>
+<section class="hero-top3-section">
+  <div class="hero-header">
+    <div>
+      <h2 class="hero-title">当前3只观察｜休市</h2>
+      <p class="live-clock">2026/08/26 11:18:47</p>
+    </div>
+  </div>
+  <div id="cards" class="cards dashboard-cards">
+  <article class="card rank-1-card">
+    <span class="rank rank-1-badge">1</span>
+    <div class="candidate-identity">
+      <h3 class="display-name">远东股份</h3>
+      <span class="display-code">600869.SH</span>
+    </div>
+    <div class="candidate-quote">
+      <span class="ashare-pct" data-direction="up">+8.15%</span>
+      <span class="ashare-price">¥17.52</span>
+    </div>
+    <span class="level-tag level-strong">强</span>
+    <div class="candidate-sector">
+      <span class="candidate-meta-label">最强板块</span>
+      <strong>青海板块</strong>
+      <small>资金未确认</small>
+    </div>
+    <button type="button" class="card-open-detail" aria-label="查看因子审计"><span aria-hidden="true">›</span></button>
+  </article>
+  <article class="card ">
+    <span class="rank rank-2-badge">2</span>
+    <div class="candidate-identity">
+      <h3 class="display-name">超频三</h3>
+      <span class="display-code">300647.SZ</span>
+    </div>
+    <div class="candidate-quote">
+      <span class="ashare-pct" data-direction="up">+6.36%</span>
+      <span class="ashare-price">¥6.19</span>
+    </div>
+    <span class="level-tag level-strong">强</span>
+    <div class="candidate-sector">
+      <span class="candidate-meta-label">最强板块</span>
+      <strong>化工原料</strong>
+      <small>资金未确认</small>
+    </div>
+    <button type="button" class="card-open-detail" aria-label="查看因子审计"><span aria-hidden="true">›</span></button>
+  </article>
+  <article class="card ">
+    <span class="rank rank-3-badge">3</span>
+    <div class="candidate-identity">
+      <h3 class="display-name">共进股份</h3>
+      <span class="display-code">603118.SH</span>
+    </div>
+    <div class="candidate-quote">
+      <span class="ashare-pct" data-direction="up">+10.03%</span>
+      <span class="ashare-price">¥17.88</span>
+    </div>
+    <span class="level-tag level-strong">强</span>
+    <div class="candidate-sector">
+      <span class="candidate-meta-label">最强板块</span>
+      <strong>通信设备</strong>
+      <small>资金未确认</small>
+    </div>
+    <button type="button" class="card-open-detail" aria-label="查看因子审计"><span aria-hidden="true">›</span></button>
+  </article></div>
+  <div class="hero-action-box">
+    <button type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
+    <a class="hero-history-button" href="/alerts">历史记录</a>
+  </div>
+  <p class="readonly-note">只读观察 · 不连接交易账户 · 资金未确认不阻塞候选</p>
+</section>
+
+</main>
+</body>
+</html>

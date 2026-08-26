@@ -1,0 +1,2422 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 069fcef..bfc16e6 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -99,6 +99,14 @@
+ 
+ ## [Unreleased]
+ 
++### Web
++
++- 2026-08-26：Web 独立线增加「近期多次出现」观察提示。同一展示 Top3 股票按不同交易日
++  计数；连续 14 个自然日内第三次出现后永久激活紫色，文案为「近 n 天第 m 次」。
++  Schema v9→v10 新增 `candidate_repeat_days` / `candidate_repeat_states`。本次只在盘中
++  强异动弹窗和历史记录页显示徽标。评分、排名、Stable Top3 和强异动算法保持原路径。
++  Web 继续 `BLOCKED / NOT_ACCEPTED`。
++
+ ### Mainline
+ 
+ - 2026-08-12：在 `0.6.0a3` 修正次日同点复盘的生产交易日历 wire endpoint 契约：
+diff --git a/docs/process/rules/storage.md b/docs/process/rules/storage.md
+index 81751df..35ec9ad 100644
+--- a/docs/process/rules/storage.md
++++ b/docs/process/rules/storage.md
+@@ -1,6 +1,6 @@
+ # 存储规则：可追溯、可恢复，不让历史写入拖垮实时提醒
+ 
+-> 最后更新：2026-08-12 ｜ 适用：SQLite、repository、缓存、配置版本、备份、导出和迁移
++> 最后更新：2026-08-26 ｜ 适用：SQLite、repository、缓存、配置版本、备份、导出和迁移
+ 
+ ## 硬规则（违反按 review P1；不可恢复数据损坏按 P0）
+ 
+@@ -25,9 +25,11 @@
+ - 次日复盘的分钟回补必须持久化尝试次数、上次尝试和下次重试时间；按目标交易日与档位
+   查询，App 重启从 SQLite 恢复。当前档位优先于旧积压，网络/限流/服务器错误不得转成
+   unavailable；只有最终确认精确分钟缺失或无成交才结束 pending。
+-- 桌面基线 Schema v8 的 v7→v8 迁移、Web Schema v9 的 v8→v9 迁移都必须在变更前备份，
+-  事务内升级，回滚失败变更，升级后执行 `integrity_check`，并保持 Windows 文件句柄可释放；
+-  Web 迁移还必须证明账号、会话、命令与事件原样保留。
++- 桌面基线 Schema v8 的 v7→v8 迁移、Web Schema v9 的 v8→v9 迁移、Web Schema
++  v10 的 v9→v10 迁移都必须在变更前备份，事务内升级，回滚失败变更，升级后执行
++  `integrity_check`，并保持 Windows 文件句柄可释放；Web 迁移还必须证明账号、会话、
++  命令与事件原样保留。v10 只新增 `candidate_repeat_days` / `candidate_repeat_states`，
++  不得改写评分或候选快照表。
+ - 分钟缓存按日期分区；数据库与备份至少支持不同目录。
+ - 启动先做完整性检查；损坏时切最近备份或只读模式并显示红色状态。
+ 
+diff --git a/docs/tracks/web.md b/docs/tracks/web.md
+index 196eacb..1fdd62d 100644
+--- a/docs/tracks/web.md
++++ b/docs/tracks/web.md
+@@ -18,15 +18,12 @@
+ 
+ 原因：
+ 
+-1. 当前 macOS worktree 的完整 pytest 为 `513 passed, 25 skipped, 2 deselected`；Murphy 定向回归为
+-   `32 passed`，完整门在 `-W error` 下零告警。Ruff、Mypy（142 source files）、workspace validator
+-   （29 个必需文件）、JavaScript syntax check 全部通过，生产与全锁定依赖
+-   审计沿用上一轮无已知漏洞证据。
+-2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；Schema v9、公网
+-   `app.css?v=14`、部署前/恢复后备份、数据库完整性与公网入口均已验证。
+-3. 桌面视觉与提醒生命周期返修已经部署。以上仍是 Mac 本地托管与浏览器/接口证据，不等于
+-   真实交易日的固定提醒、同点结算/
+-   重试和全日运行验收。
++1. 当前 macOS worktree 的完整 pytest、Ruff、Mypy 与 workspace validator 在
++   `feat/web-candidate-repeat` 上已通过；这仍是离线工程门，不等于真实交易日验收。
++2. Web Schema 目标为 v10（`candidate_repeat_days` / `candidate_repeat_states`）。
++   当前 Mac Docker 运行源码仍为 `34ce825` / Schema v9，直到完成本版受控部署。
++3. 「近期多次出现」已在本 worktree 实现：计数 sidecar、历史回算、强异动弹窗紫色徽标、
++   历史页当时状态与「只看紫色标记」。首页与 09:45/14:45 弹窗保持原样。
+ 4. 当前部署依赖 Mac 开机、联网及 Docker Desktop；VPS 已由 Human Owner 明确后置，本基准
+    不把 Mac 托管写成独立服务器部署。
+ 
+@@ -35,7 +32,8 @@
+ - FastAPI/Jinja2/原生 CSS/ES modules/WebSocket。
+ - 唯一 headless Worker；lease 防重复 Worker；Web 不复制 CandidateEngine、StableTop3 或自动调度。
+ - REST/API、Admin/Tester、Argon2id session、CSRF、RBAC、AES-256-GCM Token 存储边界和全局 redaction。
+-- SQLite WAL v9、备份/恢复 CLI、Compose/Caddy 及运维脚本。
++- SQLite WAL v10、备份/恢复 CLI、Compose/Caddy 及运维脚本。v10 新增独立重复出现表，
++  不改写候选快照、评分或提醒状态机。
+ - 自动恢复会递归识别运维备份目录中的 `stockwatcher.sqlite3`，不会因文件名和目录层级不同而
+   静默回退到较旧迁移备份；在线备份只以只读连接接入 live DB，不再创建额外 WAL writer。
+ - 认证只读 outcomes API、近一月摘要/完整页、桌面 App 浅色视觉与右下角非模态自动提醒。
+diff --git a/docs/visions/README.md b/docs/visions/README.md
+index 20e9a3f..d484983 100644
+--- a/docs/visions/README.md
++++ b/docs/visions/README.md
+@@ -1,10 +1,13 @@
+ # 版本索引
+ 
+-> 最后更新：2026-08-13
++> 最后更新：2026-08-26
+ > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
+ 
+ ## 活跃版本
+ 
++- **[v0.7-web-candidate-repeat](v0.7-web-candidate-repeat/README.md)** —
++  Web 最终展示 Top3 的「近期多次出现」紫色观察提示、Schema v10 与历史回算
++  （状态：进行中；Web 继续 `BLOCKED / NOT_ACCEPTED`）。
+ - **[v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md)** —
+   正式 09:45/14:45 三只候选的下一真实交易日同档理论复盘、桌面 SQLite v8 / Web v9、
+   历史回补与桌面/Web UI
+@@ -47,6 +50,7 @@
+ | [v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md) | 固定 Mac / Web / Windows 可重建内部试用基准 | 源码基准；Web 未接受、Windows 非权威 M0 | 2026-08-11 |
+ | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
+ | [v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md) | 下一真实交易日同档理论复盘、统计、历史回补与桌面 UI | 本地实现；真实同点行情待验收 | |
++| [v0.7-web-candidate-repeat](v0.7-web-candidate-repeat/README.md) | Web「近期多次出现」紫色观察提示 | 进行中 | |
+ 
+ ## 候选方向（尚未登记为执行版本）
+ 
+diff --git a/docs/visions/v0.7-web-candidate-repeat/README.md b/docs/visions/v0.7-web-candidate-repeat/README.md
+new file mode 100644
+index 0000000..6346db0
+--- /dev/null
++++ b/docs/visions/v0.7-web-candidate-repeat/README.md
+@@ -0,0 +1,95 @@
++# v0.7-web-candidate-repeat：Web「近期多次出现」紫色观察提示
++
++> 状态: 进行中
++> 交付层级: 本地实现与离线验证已完成；受控部署 / 公网页面验证待执行
++> 任务锚点: Web 独立线 `feat/web-candidate-repeat`
++> 创建: 2026-08-26 ｜ 封版:
++
++## 目标与范围
++
++为 Web 端最终展示的稳定 Top3 增加独立「近期多次出现」识别：同一股票在连续
++14 个自然日内覆盖三个不同交易日后永久激活紫色标识，之后按不同交易日累计次数。
++
++本功能只做观察提示。模型评分、候选排名、Stable Top3、「强 / 中 / 近」和盘中强异动
++判断继续走原路径。它也不构成买入、卖出或收益预测。
++
++客户确认来源：`StockWatcher2.docx` 问卷；工程规则见本目录交付 brief。
++
++明确不在本版：
++
++- 首页实时候选卡紫色
++- 09:45 / 14:45 固定提醒弹窗紫色
++- 股票详情页紫色
++- 新增弹窗、声音、浏览器通知或手机通知
++- 紫色置顶、模型加分
++- 修改 CandidateEngine / Stable Top3 / 强异动算法
++- 扩展到 Mac 或 Windows 客户端
++
++## 验收标准（必须可检查）
++
++- [x] 同股同日扫描 100 次只计 1 次
++- [x] 同日实时、固定提醒、强异动重合只计 1 次
++- [x] 同日离开再进入仍只计 1 次
++- [x] 三次都在同一天不激活
++- [x] 三个不同交易日在 14 个自然日内，第三次激活
++- [x] 第三次发生在第 14 天，激活
++- [x] 第三次发生在第 15 天，最早过期日期不参与
++- [x] 旧日期过期后仍有效日期不会被全部清空
++- [x] 激活后永久保留
++- [x] 激活后新交易日出现，次数 +1
++- [x] 激活后同日重复不增加次数
++- [x] Worker 重启后状态不丢失
++- [x] 浏览器刷新、重连、多用户登录不增加次数（计数在健康快照事务内，与会话无关）
++- [x] 历史回算执行两次，结果一致
++- [x] 历史第一次、第二次不紫，第三次开始紫色
++- [x] 只有盘中强异动弹窗显示紫色（首页 `cardFor` 不含徽标；`showRepeat` 仅 `intraday`）
++- [x] 固定提醒弹窗和首页不显示紫色
++- [x] 没有新增重复出现专属声音、通知或弹窗（`dashboard.js` 仍只有原有两处 `notify(`）
++- [x] 模型分数、排名、Stable Top3 和强异动逻辑不变（`engine/{candidates,stable_top3,alerts}.py` 未引入 repeat）
++- [x] 数据库迁移、完整性检查和回滚备份通过（v9→v10 前置 `.pre-v10.bak` + `integrity_check`）
++- [ ] Docker 构建、受控部署、公网页面验证
++
++## 进度
++
++| 日期 | 进展 | 状态 |
++| --- | --- | --- |
++| 2026-08-26 | 登记版本并实现 Web Schema v10 / CandidateRepeatTracker / API / 弹窗与历史 UI | 本地完成 |
++| 2026-08-26 | `uv run pytest`、`ruff check .`、`mypy src tests`、`python3 scripts/validate_workspace.py` 通过 | 本地完成 |
++| 2026-08-26 | Docker 构建、live 备份、Schema v10 受控部署与公网页面验证 | 待执行 |
++
++## 实现要点
++
++- 独立 sidecar：`src/stock_watcher/runtime/repeat_tracker.py`
++- Schema v10 表：`candidate_repeat_days`（`UNIQUE(code, trade_date)`）、`candidate_repeat_states`
++- 写入时机：健康候选快照与明细同一事务内追踪；提醒只 `note_source_in` 合并当天来源
++- 历史页使用 `active_after` / `count_after` / `span_days_after` 的当时状态
++- 当前 REST / `candidates.updated` / `alert.created` 带 repeat 字段；强异动弹窗优先用该提醒 payload 中的候选
++- Worker 首次 tick 对已有健康快照做幂等回算，结果写入 `app_settings.candidate_repeat_backfill_status`
++
++## 生命周期三账对账
++
++| 检查点 | 任务载体 | `docs/visions/README.md` | 本 README | 结果 |
++| --- | --- | --- | --- | --- |
++| 开工 | `feat/web-candidate-repeat` / in_progress | 活跃登记 v0.7-web-candidate-repeat | 范围已写入 | 一致 |
++| 重要集成 | 本地 pytest / ruff / mypy 已通过 | 待部署后更新 | 本表已更新 | 部分 |
++| 封版 | 待完成 | 待完成 | 待完成 | 待核 |
++
++## 决策与风险
++
++| 决策/风险 | 理由/应对 |
++| --- | --- |
++| 滚动 14 日窗口 | 客户未定义首窗未达标处理；用仍有效日期作为新起点，避免长期漏判 |
++| 计数发生在健康快照写入事务 | 提醒只补充当天来源，不能反向驱动次数 |
++| Web 继续 `BLOCKED / NOT_ACCEPTED` | 本功能上线后仍为内部测试，不宣称生产稳定 |
++| live Schema v10 | 仅新增两张表；部署前必须走现有 backup → migrate → healthcheck，回滚用该次备份 |
++
++## Session Handoff 索引
++
++<!-- 本版落盘的交接文件在此登记 -->
++
++## 封版记录
++
++- 验证结果：
++- 遗留问题：受控部署与公网页面验证尚未执行
++- 三账终态：
++- 同步债 / successor：
+diff --git a/src/stock_watcher/runtime/__init__.py b/src/stock_watcher/runtime/__init__.py
+index aec8f0a..4a8820c 100644
+--- a/src/stock_watcher/runtime/__init__.py
++++ b/src/stock_watcher/runtime/__init__.py
+@@ -38,6 +38,13 @@ from .post_close_review import (
+     render_post_close_markdown,
+     write_post_close_report,
+ )
++from .repeat_tracker import (
++    CandidateRepeatTracker,
++    RepeatBackfillReport,
++    RepeatProjection,
++    empty_repeat_fields,
++    format_repeat_label,
++)
+ from .scan_coordinator import (
+     FullMarketScanCoordinator,
+     IncompleteScanError,
+@@ -73,10 +80,13 @@ __all__ = [
+     "ScanInProgressError",
+     "MarketSessionSchedule",
+     "CandidateOutcomeTracker",
++    "CandidateRepeatTracker",
+     "OutcomeActionReport",
+     "OutcomeProvider",
+     "PostCloseDataProvider",
+     "PostCloseReviewCollection",
++    "RepeatBackfillReport",
++    "RepeatProjection",
+     "RuntimeUniverse",
+     "RuntimeUniverseCache",
+     "RUNTIME_UNIVERSE_CACHE_VERSION",
+@@ -88,6 +98,8 @@ __all__ = [
+     "alert_timeline_records",
+     "application_summary_record",
+     "candidate_outcome_rows",
++    "empty_repeat_fields",
++    "format_repeat_label",
+     "build_local_fallback_report",
+     "collect_post_close_review",
+     "LOCAL_FALLBACK_RENDERER_VERSION",
+diff --git a/src/stock_watcher/runtime/repeat_tracker.py b/src/stock_watcher/runtime/repeat_tracker.py
+new file mode 100644
+index 0000000..8318755
+--- /dev/null
++++ b/src/stock_watcher/runtime/repeat_tracker.py
+@@ -0,0 +1,744 @@
++"""Independent Top3 repeat-occurrence tracker for Web observation hints.
++
++This sidecar never participates in scoring, ranking, Stable Top3, level tags,
++or strong-movement detection. The unit of counting is a distinct trade date.
++"""
++from __future__ import annotations
++
++import json
++import re
++import sqlite3
++from collections.abc import Iterable, Mapping, Sequence
++from dataclasses import dataclass
++from datetime import date, datetime, timedelta
++from typing import Any
++
++from stock_watcher.domain import SHANGHAI, HealthState
++from stock_watcher.engine import Candidate, CandidateBatch
++from stock_watcher.storage import SQLiteStore
++
++WINDOW_DAYS = 14
++ACTIVATE_AT = 3
++REPEAT_BACKFILL_VERSION = 1
++CODE_PATTERN = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
++NON_COUNTABLE_MARKERS = ("mock", "replay", "synthetic", "demo", "fixture")
++SOURCE_AUTOMATIC = "automatic"
++SOURCE_MANUAL = "manual"
++SOURCE_SCHEDULED_0945 = "scheduled-09:45"
++SOURCE_SCHEDULED_1445 = "scheduled-14:45"
++SOURCE_INTRADAY = "intraday"
++REPEAT_FIELDS = (
++    "repeat_active",
++    "repeat_count",
++    "repeat_span_days",
++    "repeat_label",
++    "repeat_sequence_started_on",
++    "repeat_activated_at",
++    "repeat_last_seen_on",
++)
++
++
++def format_repeat_label(span_days: int, occurrence_count: int) -> str:
++    return f"近{span_days}天第{occurrence_count}次"
++
++
++def calendar_span_days(start: date, end: date) -> int:
++    return (end - start).days + 1
++
++
++def shanghai_trade_date(value: datetime) -> date:
++    if value.tzinfo is None or getattr(value.tzinfo, "key", None) != SHANGHAI.key:
++        raise ValueError("repeat occurrence timestamps must use the Asia/Shanghai timezone")
++    return value.astimezone(SHANGHAI).date()
++
++
++def parse_shanghai_timestamp(value: object) -> datetime | None:
++    if isinstance(value, datetime):
++        timestamp = value
++    elif isinstance(value, str):
++        try:
++            timestamp = datetime.fromisoformat(value)
++        except ValueError:
++            return None
++    else:
++        return None
++    if timestamp.tzinfo is None:
++        return None
++    return timestamp.astimezone(SHANGHAI)
++
++
++def is_valid_code(code: object) -> bool:
++    return isinstance(code, str) and CODE_PATTERN.fullmatch(code) is not None
++
++
++def provider_is_countable(provider_version: object) -> bool:
++    text = str(provider_version or "").casefold()
++    return bool(text) and not any(marker in text for marker in NON_COUNTABLE_MARKERS)
++
++
++def empty_repeat_fields() -> dict[str, Any]:
++    return {
++        "repeat_active": False,
++        "repeat_count": 0,
++        "repeat_span_days": 0,
++        "repeat_label": None,
++        "repeat_sequence_started_on": None,
++        "repeat_activated_at": None,
++        "repeat_last_seen_on": None,
++    }
++
++
++@dataclass(frozen=True, slots=True)
++class RepeatProjection:
++    active: bool = False
++    occurrence_count: int = 0
++    span_days: int = 0
++    sequence_started_on: date | None = None
++    activated_at: str | None = None
++    last_seen_on: date | None = None
++
++    @property
++    def label(self) -> str | None:
++        if not self.active or self.occurrence_count < ACTIVATE_AT or self.span_days < 1:
++            return None
++        return format_repeat_label(self.span_days, self.occurrence_count)
++
++    def as_fields(self) -> dict[str, Any]:
++        return {
++            "repeat_active": self.active,
++            "repeat_count": self.occurrence_count,
++            "repeat_span_days": self.span_days,
++            "repeat_label": self.label,
++            "repeat_sequence_started_on": (
++                self.sequence_started_on.isoformat() if self.sequence_started_on else None
++            ),
++            "repeat_activated_at": self.activated_at,
++            "repeat_last_seen_on": (
++                self.last_seen_on.isoformat() if self.last_seen_on else None
++            ),
++        }
++
++
++@dataclass(frozen=True, slots=True)
++class RepeatBackfillReport:
++    snapshots: int = 0
++    occurrences: int = 0
++    activated: int = 0
++    skipped: int = 0
++
++
++@dataclass(frozen=True, slots=True)
++class _ComputedState:
++    dates: tuple[date, ...]
++    active: bool
++    sequence_started_on: date | None
++    occurrence_count: int
++    span_days: int
++    window_started_on: date | None
++    window_expires_on: date | None
++    newly_activated: bool
++
++
++def compute_repeat_state(
++    trade_dates: Sequence[date],
++    *,
++    previously_active: bool = False,
++    sequence_started_on: date | None = None,
++) -> _ComputedState:
++    """Deterministic rolling 14-calendar-day / permanent-after-activation rule."""
++    unique = tuple(sorted({item for item in trade_dates}))
++    if not unique:
++        return _ComputedState((), False, None, 0, 0, None, None, False)
++    latest = unique[-1]
++    if previously_active and sequence_started_on is not None:
++        counted = tuple(item for item in unique if item >= sequence_started_on)
++        last = counted[-1] if counted else latest
++        span = calendar_span_days(sequence_started_on, last)
++        expires = sequence_started_on + timedelta(days=WINDOW_DAYS - 1)
++        return _ComputedState(
++            counted,
++            True,
++            sequence_started_on,
++            len(counted),
++            span,
++            sequence_started_on,
++            expires,
++            False,
++        )
++    window = tuple(
++        item for item in unique if calendar_span_days(item, latest) <= WINDOW_DAYS
++    )
++    if not window:
++        return _ComputedState((), False, None, 0, 0, None, None, False)
++    started = window[0]
++    expires = started + timedelta(days=WINDOW_DAYS - 1)
++    span = calendar_span_days(started, latest)
++    active = len(window) >= ACTIVATE_AT
++    return _ComputedState(
++        window,
++        active,
++        started,
++        len(window),
++        span,
++        started,
++        expires,
++        newly_activated=active,
++    )
++
++
++class CandidateRepeatTracker:
++    """Persist per-code trade-day occurrences and the current purple state."""
++
++    def __init__(self, store: SQLiteStore) -> None:
++        self.store = store
++
++    def observe_batch_in(
++        self,
++        connection: sqlite3.Connection,
++        *,
++        batch: CandidateBatch,
++        snapshot_id: int,
++        seen_at: datetime,
++        source_type: str,
++    ) -> dict[str, RepeatProjection]:
++        if not self._batch_is_countable(batch, seen_at):
++            return self.projections_for_codes(
++                connection,
++                [candidate.code for candidate in batch.candidates],
++            )
++        trade_date = shanghai_trade_date(batch.source_ts)
++        output: dict[str, RepeatProjection] = {}
++        for candidate in batch.candidates[:3]:
++            output[candidate.code] = self._observe_candidate(
++                connection,
++                candidate=candidate,
++                trade_date=trade_date,
++                snapshot_id=snapshot_id,
++                seen_at=seen_at,
++                source_type=source_type,
++            )
++        return output
++
++    def note_source_in(
++        self,
++        connection: sqlite3.Connection,
++        *,
++        batch: CandidateBatch,
++        snapshot_id: int,
++        seen_at: datetime,
++        source_type: str,
++    ) -> dict[str, RepeatProjection]:
++        """Merge a same-day source without creating a new occurrence."""
++        if not batch.candidates:
++            return {}
++        try:
++            trade_date = shanghai_trade_date(batch.source_ts)
++        except ValueError:
++            return self.projections_for_codes(
++                connection,
++                [candidate.code for candidate in batch.candidates],
++            )
++        output: dict[str, RepeatProjection] = {}
++        for candidate in batch.candidates:
++            if not is_valid_code(candidate.code):
++                output[candidate.code] = RepeatProjection()
++                continue
++            existing = self._load_day(connection, candidate.code, trade_date)
++            if existing is None:
++                output[candidate.code] = self._load_projection(connection, candidate.code)
++                continue
++            self._touch_day(
++                connection,
++                existing=existing,
++                name=candidate.name,
++                snapshot_id=snapshot_id,
++                seen_at=seen_at,
++                source_type=source_type,
++                formal_seen=candidate.is_formal,
++                supplement_seen=candidate.is_supplement,
++            )
++            output[candidate.code] = self._load_projection(connection, candidate.code)
++        return output
++
++    def projections_for_codes(
++        self,
++        connection: sqlite3.Connection,
++        codes: Iterable[str],
++    ) -> dict[str, RepeatProjection]:
++        return {code: self._load_projection(connection, code) for code in codes}
++
++    def projections_from_store(self, codes: Iterable[str]) -> dict[str, RepeatProjection]:
++        self.store.initialize()
++        with self.store.connect() as connection:
++            return self.projections_for_codes(connection, codes)
++
++    def historical_fields_for(
++        self,
++        connection: sqlite3.Connection,
++        *,
++        code: str,
++        trade_date: date,
++    ) -> dict[str, Any]:
++        row = self._load_day(connection, code, trade_date)
++        if row is None:
++            return empty_repeat_fields()
++        active = bool(row["active_after"])
++        count = int(row["count_after"])
++        span = int(row["span_days_after"])
++        sequence = trade_date - timedelta(days=span - 1) if span > 0 else None
++        activated_at = None
++        if active and count >= ACTIVATE_AT:
++            state = self._load_state_row(connection, code)
++            if state and state.get("activated_at"):
++                activated_at = str(state["activated_at"])
++            else:
++                activated_at = str(row["first_seen_at"])
++        projection = RepeatProjection(
++            active=active,
++            occurrence_count=count,
++            span_days=span,
++            sequence_started_on=sequence,
++            activated_at=activated_at,
++            last_seen_on=trade_date,
++        )
++        return projection.as_fields()
++
++    def backfill(self) -> RepeatBackfillReport:
++        """Replay countable snapshots in time order. Safe to run twice."""
++        self.store.initialize()
++        snapshots = 0
++        skipped = 0
++        with self.store.transaction(immediate=True) as connection:
++            rows = self._load_backfill_rows(connection)
++            grouped: dict[int, list[dict[str, Any]]] = {}
++            order: list[int] = []
++            for row in rows:
++                snapshot_id = int(row["snapshot_id"])
++                if snapshot_id not in grouped:
++                    grouped[snapshot_id] = []
++                    order.append(snapshot_id)
++                grouped[snapshot_id].append(row)
++            for snapshot_id in order:
++                items = sorted(
++                    grouped[snapshot_id],
++                    key=lambda row: int(row["rank"]),
++                )[:3]
++                first = items[0]
++                snapshots += 1
++                seen_at = parse_shanghai_timestamp(first["source_ts"]) or parse_shanghai_timestamp(
++                    first["generated_at"]
++                )
++                if (
++                    str(first["health"]) != HealthState.HEALTHY.value
++                    or seen_at is None
++                    or not provider_is_countable(first["provider_version"])
++                    or len(items) != 3
++                ):
++                    skipped += 1
++                    continue
++                for item in items:
++                    if not is_valid_code(item["code"]):
++                        skipped += 1
++                        continue
++                    candidate = _backfill_candidate(item, seen_at)
++                    self._observe_candidate(
++                        connection,
++                        candidate=candidate,
++                        trade_date=shanghai_trade_date(seen_at),
++                        snapshot_id=snapshot_id,
++                        seen_at=seen_at,
++                        source_type=SOURCE_AUTOMATIC,
++                    )
++            for alert in self._load_backfill_alerts(connection):
++                seen_at = parse_shanghai_timestamp(alert["displayed_at"])
++                if seen_at is None or not is_valid_code(alert["code"]):
++                    continue
++                existing = self._load_day(
++                    connection,
++                    str(alert["code"]),
++                    shanghai_trade_date(seen_at),
++                )
++                if existing is None:
++                    continue
++                self._touch_day(
++                    connection,
++                    existing=existing,
++                    name=str(alert["name"]),
++                    snapshot_id=int(alert["snapshot_id"]),
++                    seen_at=seen_at,
++                    source_type=str(alert["trigger_type"]),
++                    formal_seen=bool(alert["is_formal"]),
++                    supplement_seen=bool(alert["is_supplement"]),
++                )
++            activated = int(
++                connection.execute(
++                    "SELECT COUNT(*) FROM candidate_repeat_states WHERE active = 1"
++                ).fetchone()[0]
++            )
++            occurrences = int(
++                connection.execute("SELECT COUNT(*) FROM candidate_repeat_days").fetchone()[0]
++            )
++        return RepeatBackfillReport(
++            snapshots=snapshots,
++            occurrences=occurrences,
++            activated=activated,
++            skipped=skipped,
++        )
++
++    def _batch_is_countable(self, batch: CandidateBatch, seen_at: datetime) -> bool:
++        if batch.health is not HealthState.HEALTHY:
++            return False
++        if len(batch.candidates) != 3:
++            return False
++        try:
++            shanghai_trade_date(seen_at)
++            shanghai_trade_date(batch.source_ts)
++        except ValueError:
++            return False
++        first = batch.candidates[0]
++        return provider_is_countable(first.provider_version)
++
++    def _observe_candidate(
++        self,
++        connection: sqlite3.Connection,
++        *,
++        candidate: Candidate,
++        trade_date: date,
++        snapshot_id: int,
++        seen_at: datetime,
++        source_type: str,
++    ) -> RepeatProjection:
++        if not is_valid_code(candidate.code):
++            return RepeatProjection()
++        existing = self._load_day(connection, candidate.code, trade_date)
++        previous_state = self._load_state_row(connection, candidate.code)
++        if existing is not None:
++            self._touch_day(
++                connection,
++                existing=existing,
++                name=candidate.name,
++                snapshot_id=snapshot_id,
++                seen_at=seen_at,
++                source_type=source_type,
++                formal_seen=candidate.is_formal,
++                supplement_seen=candidate.is_supplement,
++            )
++            return self._load_projection(connection, candidate.code)
++
++        prior_dates = self._load_dates(connection, candidate.code)
++        computed = compute_repeat_state(
++            (*prior_dates, trade_date),
++            previously_active=bool(previous_state and previous_state["active"]),
++            sequence_started_on=(
++                date.fromisoformat(str(previous_state["sequence_started_on"]))
++                if previous_state and previous_state["sequence_started_on"]
++                else None
++            ),
++        )
++        seen_iso = seen_at.isoformat()
++        activated_at = None
++        activated_trade_date = None
++        if previous_state and previous_state["active"]:
++            activated_at = previous_state["activated_at"]
++            activated_trade_date = previous_state["activated_trade_date"]
++        elif computed.newly_activated:
++            activated_at = seen_iso
++            activated_trade_date = trade_date.isoformat()
++        connection.execute(
++            "INSERT INTO candidate_repeat_days ("
++            "code, name, trade_date, first_seen_at, last_seen_at, "
++            "first_snapshot_id, last_snapshot_id, source_types_json, "
++            "formal_seen, supplement_seen, count_after, span_days_after, "
++            "active_after, created_at, updated_at"
++            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
++            (
++                candidate.code,
++                candidate.name,
++                trade_date.isoformat(),
++                seen_iso,
++                seen_iso,
++                snapshot_id,
++                snapshot_id,
++                json.dumps([source_type], ensure_ascii=False),
++                int(candidate.is_formal),
++                int(candidate.is_supplement),
++                computed.occurrence_count,
++                computed.span_days,
++                int(computed.active),
++                seen_iso,
++                seen_iso,
++            ),
++        )
++        connection.execute(
++            "INSERT INTO candidate_repeat_states ("
++            "code, name, active, window_started_on, window_expires_on, "
++            "sequence_started_on, occurrence_count, span_days, activated_at, "
++            "activated_trade_date, last_seen_on, last_seen_at, last_snapshot_id, "
++            "updated_at"
++            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
++            "ON CONFLICT(code) DO UPDATE SET "
++            "name = excluded.name, "
++            "active = excluded.active, "
++            "window_started_on = excluded.window_started_on, "
++            "window_expires_on = excluded.window_expires_on, "
++            "sequence_started_on = excluded.sequence_started_on, "
++            "occurrence_count = excluded.occurrence_count, "
++            "span_days = excluded.span_days, "
++            "activated_at = excluded.activated_at, "
++            "activated_trade_date = excluded.activated_trade_date, "
++            "last_seen_on = excluded.last_seen_on, "
++            "last_seen_at = excluded.last_seen_at, "
++            "last_snapshot_id = excluded.last_snapshot_id, "
++            "updated_at = excluded.updated_at",
++            (
++                candidate.code,
++                candidate.name,
++                int(computed.active),
++                computed.window_started_on.isoformat() if computed.window_started_on else None,
++                computed.window_expires_on.isoformat() if computed.window_expires_on else None,
++                computed.sequence_started_on.isoformat() if computed.sequence_started_on else None,
++                computed.occurrence_count,
++                computed.span_days,
++                activated_at,
++                activated_trade_date,
++                trade_date.isoformat(),
++                seen_iso,
++                snapshot_id,
++                seen_iso,
++            ),
++        )
++        return RepeatProjection(
++            active=computed.active,
++            occurrence_count=computed.occurrence_count,
++            span_days=computed.span_days,
++            sequence_started_on=computed.sequence_started_on,
++            activated_at=activated_at,
++            last_seen_on=trade_date,
++        )
++
++    def _touch_day(
++        self,
++        connection: sqlite3.Connection,
++        *,
++        existing: Mapping[str, Any],
++        name: str,
++        snapshot_id: int,
++        seen_at: datetime,
++        source_type: str,
++        formal_seen: bool,
++        supplement_seen: bool,
++    ) -> None:
++        sources = _merge_sources(existing["source_types_json"], source_type)
++        connection.execute(
++            "UPDATE candidate_repeat_days SET "
++            "name = ?, last_seen_at = ?, last_snapshot_id = ?, "
++            "source_types_json = ?, formal_seen = ?, supplement_seen = ?, "
++            "updated_at = ? WHERE id = ?",
++            (
++                name,
++                seen_at.isoformat(),
++                snapshot_id,
++                json.dumps(sources, ensure_ascii=False),
++                int(bool(existing["formal_seen"]) or formal_seen),
++                int(bool(existing["supplement_seen"]) or supplement_seen),
++                seen_at.isoformat(),
++                int(existing["id"]),
++            ),
++        )
++        connection.execute(
++            "UPDATE candidate_repeat_states SET "
++            "name = ?, last_seen_at = ?, last_snapshot_id = ?, updated_at = ? "
++            "WHERE code = ?",
++            (
++                name,
++                seen_at.isoformat(),
++                snapshot_id,
++                seen_at.isoformat(),
++                str(existing["code"]),
++            ),
++        )
++
++    def _load_projection(
++        self,
++        connection: sqlite3.Connection,
++        code: str,
++    ) -> RepeatProjection:
++        row = self._load_state_row(connection, code)
++        if row is None:
++            return RepeatProjection()
++        sequence = (
++            date.fromisoformat(str(row["sequence_started_on"]))
++            if row["sequence_started_on"]
++            else None
++        )
++        last_seen = (
++            date.fromisoformat(str(row["last_seen_on"])) if row["last_seen_on"] else None
++        )
++        return RepeatProjection(
++            active=bool(row["active"]),
++            occurrence_count=int(row["occurrence_count"]),
++            span_days=int(row["span_days"]),
++            sequence_started_on=sequence,
++            activated_at=row["activated_at"],
++            last_seen_on=last_seen,
++        )
++
++    @staticmethod
++    def _load_state_row(
++        connection: sqlite3.Connection,
++        code: str,
++    ) -> dict[str, Any] | None:
++        row = connection.execute(
++            "SELECT code, name, active, window_started_on, window_expires_on, "
++            "sequence_started_on, occurrence_count, span_days, activated_at, "
++            "activated_trade_date, last_seen_on, last_seen_at, last_snapshot_id "
++            "FROM candidate_repeat_states WHERE code = ?",
++            (code,),
++        ).fetchone()
++        if row is None:
++            return None
++        keys = (
++            "code",
++            "name",
++            "active",
++            "window_started_on",
++            "window_expires_on",
++            "sequence_started_on",
++            "occurrence_count",
++            "span_days",
++            "activated_at",
++            "activated_trade_date",
++            "last_seen_on",
++            "last_seen_at",
++            "last_snapshot_id",
++        )
++        return dict(zip(keys, row))
++
++    @staticmethod
++    def _load_day(
++        connection: sqlite3.Connection,
++        code: str,
++        trade_date: date,
++    ) -> dict[str, Any] | None:
++        row = connection.execute(
++            "SELECT id, code, name, trade_date, first_seen_at, last_seen_at, "
++            "first_snapshot_id, last_snapshot_id, source_types_json, "
++            "formal_seen, supplement_seen, count_after, span_days_after, "
++            "active_after FROM candidate_repeat_days "
++            "WHERE code = ? AND trade_date = ?",
++            (code, trade_date.isoformat()),
++        ).fetchone()
++        if row is None:
++            return None
++        keys = (
++            "id",
++            "code",
++            "name",
++            "trade_date",
++            "first_seen_at",
++            "last_seen_at",
++            "first_snapshot_id",
++            "last_snapshot_id",
++            "source_types_json",
++            "formal_seen",
++            "supplement_seen",
++            "count_after",
++            "span_days_after",
++            "active_after",
++        )
++        return dict(zip(keys, row))
++
++    @staticmethod
++    def _load_dates(connection: sqlite3.Connection, code: str) -> tuple[date, ...]:
++        rows = connection.execute(
++            "SELECT trade_date FROM candidate_repeat_days WHERE code = ? "
++            "ORDER BY trade_date",
++            (code,),
++        ).fetchall()
++        return tuple(date.fromisoformat(str(row[0])) for row in rows)
++
++    @staticmethod
++    def _load_backfill_rows(connection: sqlite3.Connection) -> list[dict[str, Any]]:
++        rows = connection.execute(
++            "SELECT s.id, s.source_ts, s.generated_at, s.health, s.provider_version, "
++            "i.rank, i.code, i.name, i.level, i.is_formal, i.is_supplement, "
++            "i.price, i.change_pct, i.sector_code, i.sector_name "
++            "FROM candidate_snapshots s "
++            "JOIN candidate_items i ON i.snapshot_id = s.id "
++            "WHERE s.health = ? "
++            "ORDER BY s.source_ts ASC, s.id ASC, i.rank ASC",
++            (HealthState.HEALTHY.value,),
++        ).fetchall()
++        keys = (
++            "snapshot_id",
++            "source_ts",
++            "generated_at",
++            "health",
++            "provider_version",
++            "rank",
++            "code",
++            "name",
++            "level",
++            "is_formal",
++            "is_supplement",
++            "price",
++            "change_pct",
++            "sector_code",
++            "sector_name",
++        )
++        return [dict(zip(keys, row)) for row in rows]
++
++    @staticmethod
++    def _load_backfill_alerts(connection: sqlite3.Connection) -> list[dict[str, Any]]:
++        rows = connection.execute(
++            "SELECT e.snapshot_id, e.displayed_at, e.trigger_type, "
++            "i.code, i.name, i.is_formal, i.is_supplement "
++            "FROM alert_events e "
++            "JOIN candidate_items i ON i.snapshot_id = e.snapshot_id "
++            "ORDER BY e.displayed_at ASC, e.id ASC, i.rank ASC"
++        ).fetchall()
++        keys = (
++            "snapshot_id",
++            "displayed_at",
++            "trigger_type",
++            "code",
++            "name",
++            "is_formal",
++            "is_supplement",
++        )
++        return [dict(zip(keys, row)) for row in rows]
++
++
++def _merge_sources(raw: object, source_type: str) -> list[str]:
++    try:
++        parsed = json.loads(str(raw or "[]"))
++    except json.JSONDecodeError:
++        parsed = []
++    sources = [str(item) for item in parsed] if isinstance(parsed, list) else []
++    if source_type not in sources:
++        sources.append(source_type)
++    return sources
++
++
++def _backfill_candidate(item: Mapping[str, Any], seen_at: datetime) -> Candidate:
++    return Candidate(
++        code=str(item["code"]),
++        name=str(item["name"]),
++        sector=str(item.get("sector_name") or ""),
++        level=str(item.get("level") or "近"),
++        score=0.0,
++        price_score=0.0,
++        sector_score=0.0,
++        trend_score=0.0,
++        penalty=0.0,
++        reasons=(),
++        source_ts=seen_at,
++        provider_version="backfill",
++        config_version="backfill",
++        app_version="backfill",
++        price=float(item.get("price") or 0.0),
++        change_pct=float(item.get("change_pct") or 0.0),
++        sector_code=str(item.get("sector_code") or ""),
++        is_formal=bool(item["is_formal"]),
++        is_supplement=bool(item["is_supplement"]),
++    )
+diff --git a/src/stock_watcher/server/api.py b/src/stock_watcher/server/api.py
+index 31c2876..47cdd6d 100644
+--- a/src/stock_watcher/server/api.py
++++ b/src/stock_watcher/server/api.py
+@@ -18,6 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field
+ 
+ from stock_watcher.domain import SHANGHAI, OutcomeStatus, build_outcome_review
+ from stock_watcher.runtime import candidate_outcome_rows
++from stock_watcher.runtime.repeat_tracker import (
++    CandidateRepeatTracker,
++    empty_repeat_fields,
++    parse_shanghai_timestamp,
++)
+ from stock_watcher.services import CommandService, CommandType, EventOutbox
+ from stock_watcher.services.public_state import PublicStateBuilder
+ from stock_watcher.services.secret_service import SecretService
+@@ -480,6 +485,7 @@ def state_router() -> APIRouter:
+         from_date: str | None = Query(None, alias="from"),
+         to: str | None = Query(None),
+         code: str | None = Query(None),
++        repeat_active: bool | None = Query(None),
+         session: dict[str, Any] = Depends(current_session),
+         store: SQLiteStore = Depends(get_read_store),
+     ) -> dict[str, Any]:
+@@ -489,20 +495,53 @@ def state_router() -> APIRouter:
+             from_date=_parse_date(from_date),
+             to_date=_parse_date(to),
+             code=code,
++            repeat_active=repeat_active,
+         )
++        items_by_snapshot = store.query_snapshot_items([int(row["id"]) for row in rows])
++        tracker = CandidateRepeatTracker(store)
+         items = []
+-        for row in rows:
+-            payload = json.loads(row["payload_json"])
+-            items.append(
+-                {
+-                    "snapshot_id": row["id"],
+-                    "source_ts": row["source_ts"],
+-                    "generated_at": row["generated_at"],
+-                    "health": row["health"],
+-                    "overall_weak": row["overall_weak"],
+-                    "candidates": payload.get("candidates", []),
+-                }
+-            )
++        with store.connect() as connection:
++            for row in rows:
++                snapshot_id = int(row["id"])
++                trade_date = None
++                parsed = parse_shanghai_timestamp(row["source_ts"])
++                if parsed is not None:
++                    trade_date = parsed.date()
++                displayed = items_by_snapshot.get(snapshot_id, [])
++                candidates = []
++                for candidate in displayed:
++                    payload = {
++                        "rank": candidate["rank"],
++                        "code": candidate["code"],
++                        "name": candidate["name"],
++                        "level": candidate["level"],
++                        "is_formal": candidate["is_formal"],
++                        "is_supplement": candidate["is_supplement"],
++                        "price": candidate["price"],
++                        "change_pct": candidate["change_pct"],
++                        "sector_name": candidate["sector_name"],
++                    }
++                    if trade_date is not None:
++                        payload.update(
++                            tracker.historical_fields_for(
++                                connection,
++                                code=str(candidate["code"]),
++                                trade_date=trade_date,
++                            )
++                        )
++                    else:
++                        payload.update(empty_repeat_fields())
++                    candidates.append(payload)
++                items.append(
++                    {
++                        "snapshot_id": snapshot_id,
++                        "source_ts": row["source_ts"],
++                        "generated_at": row["generated_at"],
++                        "health": row["health"],
++                        "overall_weak": row["overall_weak"],
++                        "candidates": candidates,
++                    }
++                )
+         return {"items": items, "next_cursor": items[-1]["snapshot_id"] if items else None}
+ 
+     @router.get("/outcomes")
+diff --git a/src/stock_watcher/server/static/app.css b/src/stock_watcher/server/static/app.css
+index 6790624..97c3939 100644
+--- a/src/stock_watcher/server/static/app.css
++++ b/src/stock_watcher/server/static/app.css
+@@ -1649,6 +1649,21 @@ button:hover,
+ .strong-alert-mini-identity { min-width: 0; }
+ .strong-alert-mini-name { margin: 0; font-size: 0.95rem; }
+ .strong-alert-mini-code { margin: 0.1rem 0 0; font-family: var(--font-sans); font-size: 0.7rem; }
++.repeat-badge {
++  display: inline-block;
++  margin-left: 0.35rem;
++  padding: 0.08rem 0.42rem;
++  border-radius: 999px;
++  background: #6b3aa0;
++  color: #ffffff;
++  font-size: 0.68rem;
++  font-weight: 700;
++  letter-spacing: 0.01em;
++  vertical-align: 0.08em;
++  white-space: nowrap;
++}
++.repeat-filter { display: inline-flex; align-items: center; gap: 0.35rem; }
++#history td .repeat-badge { margin-left: 0.4rem; }
+ .strong-alert-mini-pct { color: #df3c3c; font-family: var(--font-sans); font-size: 1rem; font-weight: 780; }
+ .strong-alert-mini-price { color: #667487; font-family: var(--font-sans); font-size: 0.72rem; opacity: 1; }
+ .strong-alert-mini-card .level-tag {
+diff --git a/src/stock_watcher/server/static/dashboard.js b/src/stock_watcher/server/static/dashboard.js
+index 8b4f4cc..a9e002c 100644
+--- a/src/stock_watcher/server/static/dashboard.js
++++ b/src/stock_watcher/server/static/dashboard.js
+@@ -153,17 +153,20 @@ function compactPct(value) {
+   return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+ }
+ 
+-function compactAlertCard(candidate, triggeringCodes) {
++function compactAlertCard(candidate, triggeringCodes, showRepeat) {
+   const rank = Math.min(3, Math.max(1, Number(candidate.rank) || 1));
+   const level = levelMeta(candidate);
+   const isTrigger = triggeringCodes.has(String(candidate.code));
+   const changePct = Number(candidate.change_pct);
+   const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
++  const repeat = showRepeat && candidate.repeat_active && candidate.repeat_label
++    ? `<span class="repeat-badge">${esc(candidate.repeat_label)}</span>`
++    : '';
+   return `
+     <article class="strong-alert-mini-card ${isTrigger ? 'is-trigger' : ''}">
+       <span class="rank rank-${rank}-badge">${rank}</span>
+       <div class="strong-alert-mini-identity">
+-        <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}</strong>
++        <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}${repeat}</strong>
+         <span class="strong-alert-mini-code">${esc(candidate.code || '—')}</span>
+       </div>
+       <span class="strong-alert-mini-pct" data-direction="${direction}">${compactPct(candidate.change_pct)}</span>
+@@ -203,14 +206,17 @@ function renderNextAutomaticAlert() {
+   activeAutomaticAlert = automaticAlertQueue.shift();
+   const { payload, state } = activeAutomaticAlert;
+   const triggeringCodes = new Set((payload.triggering_codes || []).map(String));
+-  const candidates = Array.isArray(state?.candidates) ? state.candidates.slice(0, 3) : [];
++  const snapshotCandidates = Array.isArray(payload.candidates) ? payload.candidates.slice(0, 3) : [];
++  const stateCandidates = Array.isArray(state?.candidates) ? state.candidates.slice(0, 3) : [];
++  const candidates = snapshotCandidates.length ? snapshotCandidates : stateCandidates;
++  const showRepeat = payload.trigger_type === 'intraday';
+   const triggerCandidate = candidates.find((candidate) => triggeringCodes.has(String(candidate.code)));
+   const triggerName = triggerCandidate?.name || [...triggeringCodes][0] || '候选股票';
+   const sectorName = triggerCandidate?.sector_name || '';
+   const alertId = esc(payload.alert_id || Date.now());
+   const meta = alertMeta(payload.trigger_type);
+   const cards = candidates.length
+-    ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes)).join('')
++    ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes, showRepeat)).join('')
+     : `<div class="strong-alert-syncing">${esc([...triggeringCodes].join('、') || '触发股票')} · 实时卡片同步中</div>`;
+   overlay.hidden = false;
+   overlay.classList.remove('is-leaving');
+diff --git a/src/stock_watcher/server/static/history.js b/src/stock_watcher/server/static/history.js
+index 1fddedd..e1af921 100644
+--- a/src/stock_watcher/server/static/history.js
++++ b/src/stock_watcher/server/static/history.js
+@@ -2,6 +2,15 @@ import { apiJson, esc, fmtTime } from './app.js?v=6';
+ 
+ let cursor = null;
+ 
++function candidateCell(candidate) {
++  const badge = candidate.repeat_active && candidate.repeat_label
++    ? ` <span class="repeat-badge">${esc(candidate.repeat_label)}</span>`
++    : '';
++  const name = candidate.name || '待确认';
++  const code = candidate.code || '—';
++  return `${esc(name)} <span class="muted">${esc(code)}</span>${badge}`;
++}
++
+ function render(rows, append = false) {
+   const wrap = document.getElementById('history');
+   if (!rows.length) {
+@@ -17,7 +26,7 @@ function render(rows, append = false) {
+           <td>#${row.snapshot_id}</td>
+           <td>${fmtTime(row.source_ts)}</td>
+           <td>${esc(row.health)}${row.overall_weak ? ' <span class="weak-note">整体偏弱</span>' : ''}</td>
+-          <td>${esc((row.candidates || []).map((candidate) => `${candidate.rank}.${candidate.code}`).join('；'))}</td>
++          <td>${(row.candidates || []).map(candidateCell).join('<br>')}</td>
+         </tr>`).join('')}
+     </tbody>
+   </table>`;
+@@ -31,9 +40,11 @@ async function load(append = false) {
+   const from = document.getElementById('from').value;
+   const to = document.getElementById('to').value;
+   const code = document.getElementById('code').value.trim();
++  const repeatOnly = document.getElementById('repeat-only').checked;
+   if (from) params.set('from', from);
+   if (to) params.set('to', to);
+   if (code) params.set('code', code);
++  if (repeatOnly) params.set('repeat_active', 'true');
+   const payload = await apiJson(`/api/v1/history?${params}`);
+   render(payload.items, append);
+   cursor = payload.next_cursor;
+@@ -46,5 +57,9 @@ document.addEventListener('DOMContentLoaded', () => {
+     cursor = null;
+     load();
+   });
++  document.getElementById('repeat-only').addEventListener('change', () => {
++    cursor = null;
++    load();
++  });
+   document.getElementById('load-more').addEventListener('click', () => load(true));
+ });
+diff --git a/src/stock_watcher/server/templates/base.html b/src/stock_watcher/server/templates/base.html
+index cfa4bd5..2cf3697 100644
+--- a/src/stock_watcher/server/templates/base.html
++++ b/src/stock_watcher/server/templates/base.html
+@@ -7,7 +7,7 @@
+ <link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
+ <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
+ <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
+-<link rel="stylesheet" href="/static/app.css?v=14">
++<link rel="stylesheet" href="/static/app.css?v=15">
+ <meta name="color-scheme" content="light">
+ {% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
+ </head>
+diff --git a/src/stock_watcher/server/templates/dashboard.html b/src/stock_watcher/server/templates/dashboard.html
+index 6c69355..3847b77 100644
+--- a/src/stock_watcher/server/templates/dashboard.html
++++ b/src/stock_watcher/server/templates/dashboard.html
+@@ -116,5 +116,5 @@
+ </div>
+ {% endblock %}
+ {% block scripts %}
+-<script type="module" src="/static/dashboard.js?v=11"></script>
++<script type="module" src="/static/dashboard.js?v=12"></script>
+ {% endblock %}
+diff --git a/src/stock_watcher/server/templates/history.html b/src/stock_watcher/server/templates/history.html
+index b216958..4f2f793 100644
+--- a/src/stock_watcher/server/templates/history.html
++++ b/src/stock_watcher/server/templates/history.html
+@@ -6,11 +6,12 @@
+   <label>日期从 <input id="from" type="date"></label>
+   <label>到 <input id="to" type="date"></label>
+   <label>代码 <input id="code" placeholder="600001.SH"></label>
++  <label class="repeat-filter"><input id="repeat-only" type="checkbox"> 只看紫色标记</label>
+   <button id="filter-btn" type="button">筛选</button>
+ </section>
+ <div id="history" class="table-wrap"></div>
+ <button id="load-more" type="button" hidden>加载更多</button>
+ {% endblock %}
+ {% block scripts %}
+-<script type="module" src="/static/history.js"></script>
++<script type="module" src="/static/history.js?v=2"></script>
+ {% endblock %}
+diff --git a/src/stock_watcher/services/public_state.py b/src/stock_watcher/services/public_state.py
+index 237ac46..5da1d75 100644
+--- a/src/stock_watcher/services/public_state.py
++++ b/src/stock_watcher/services/public_state.py
+@@ -9,6 +9,7 @@ import json
+ from datetime import datetime
+ from typing import Any
+ 
++from stock_watcher.runtime.repeat_tracker import CandidateRepeatTracker, RepeatProjection
+ from stock_watcher.storage import SQLiteStore
+ 
+ SERVICE_STATE_ALIASES = {
+@@ -106,6 +107,7 @@ class PublicStateBuilder:
+         payload["active_command"] = self._active_command()
+         payload["fund_module"] = stored.get("fund_module", "unavailable")
+         payload["formal_count"] = stored.get("formal_count", 0)
++        payload["candidates"] = self._with_repeat_fields(payload.get("candidates", []))
+         return payload
+ 
+     def _worker_heartbeat_age(
+@@ -166,6 +168,19 @@ class PublicStateBuilder:
+         )
+         return [dict(zip(keys, row)) for row in rows]
+ 
++    def _with_repeat_fields(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
++        codes = [str(row.get("code", "")) for row in candidates if row.get("code")]
++        if not codes:
++            return candidates
++        projections = CandidateRepeatTracker(self.store).projections_from_store(codes)
++        enriched: list[dict[str, Any]] = []
++        for row in candidates:
++            payload = dict(row)
++            code = str(payload.get("code", ""))
++            payload.update(projections.get(code, RepeatProjection()).as_fields())
++            enriched.append(payload)
++        return enriched
++
+     def _last_alert(self) -> dict[str, Any] | None:
+         with self.store.connect() as connection:
+             row = connection.execute(
+diff --git a/src/stock_watcher/services/stockwatcher_service.py b/src/stock_watcher/services/stockwatcher_service.py
+index de676a7..fb56d1d 100644
+--- a/src/stock_watcher/services/stockwatcher_service.py
++++ b/src/stock_watcher/services/stockwatcher_service.py
+@@ -47,11 +47,13 @@ from stock_watcher.runtime import (
+     AutomationTaskState,
+     AutomationTaskType,
+     CandidateOutcomeTracker,
++    CandidateRepeatTracker,
+     DataHealthConfig,
+     DataHealthTracker,
+     FullMarketScanCoordinator,
+     MarketSessionSchedule,
+     OutcomeActionReport,
++    RepeatProjection,
+     RuntimeUniverseCache,
+     ScanOutcome,
+     TushareBootstrapLoader,
+@@ -66,6 +68,7 @@ from stock_watcher.runtime import (
+ )
+ from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
+ from stock_watcher.runtime.post_close_report_model import LocalFallbackReport
++from stock_watcher.runtime.repeat_tracker import REPEAT_BACKFILL_VERSION
+ from stock_watcher.storage import SQLiteStore
+ 
+ from .command_service import CommandService, CommandStatus, CommandType
+@@ -291,6 +294,8 @@ class StockWatcherService:
+         self._outcome_initial_backfill_retry_at: datetime | None = None
+         self._outcome_unresolved_retry_at: datetime | None = None
+         self._outcome_executor_closed = False
++        self._repeat_tracker = CandidateRepeatTracker(store)
++        self._repeat_backfill_done = False
+         self._command_context = threading.local()
+         self._holder_id = ""
+         self._fencing_token = 0
+@@ -763,6 +768,7 @@ class StockWatcherService:
+ 
+     def _tick_locked(self, now: datetime) -> TickResult:
+         self._prune_history_if_due(now)
++        self._backfill_repeat_occurrences()
+         self._detect_scan_stall(now)
+         due_tasks = self._prepare_automation_tasks(now)
+         summary_task = next(
+@@ -901,7 +907,7 @@ class StockWatcherService:
+             else self._schedule.crossed_fixed_trigger(now, completed_at)
+         )
+         snapshot_id = (
+-            self._persist_scan_snapshot(completed_at)
++            self._persist_scan_snapshot(completed_at, source_type=requested_trigger)
+             if outcome.health is HealthState.HEALTHY and outcome.batch is not None
+             else None
+         )
+@@ -1136,6 +1142,22 @@ class StockWatcherService:
+         with self.store.transaction() as connection:
+             if snapshot_id is None:
+                 snapshot_id = self.store.record_batch_in(connection, self.batch)
++                if self.state is HealthState.HEALTHY:
++                    self._repeat_tracker.observe_batch_in(
++                        connection,
++                        batch=self.batch,
++                        snapshot_id=snapshot_id,
++                        seen_at=now,
++                        source_type=trigger.value,
++                    )
++            else:
++                self._repeat_tracker.note_source_in(
++                    connection,
++                    batch=self.batch,
++                    snapshot_id=snapshot_id,
++                    seen_at=now,
++                    source_type=trigger.value,
++                )
+             self._snapshot_id = snapshot_id
+             alert_id = self.store.record_alert_event_in(
+                 connection,
+@@ -1157,7 +1179,7 @@ class StockWatcherService:
+                     )
+                 )
+                 self.store.create_candidate_outcomes_in(connection, outcome_entries)
+-            candidates = self._candidate_payload(self.batch)
++            candidates = self._candidate_payload(self.batch, connection=connection)
+             triggering_codes = (
+                 [str(detail["trigger_symbol"])]
+                 if detail and detail.get("trigger_symbol")
+@@ -1176,6 +1198,7 @@ class StockWatcherService:
+                     "funds_unconfirmed": (
+                         alert_detail.get("funds_unconfirmed")
+                     ),
++                    "candidates": candidates,
+                 },
+                 source_kind="alert",
+                 source_id=str(alert_id),
+@@ -1186,7 +1209,7 @@ class StockWatcherService:
+                 state_version=state_version,
+                 snapshot_id=snapshot_id,
+                 source_ts=self.batch.source_ts.isoformat(),
+-                payload=self._public_payload(now, event_id=event_id),
++                payload=self._public_payload(now, event_id=event_id, connection=connection),
+             )
+         if created_snapshot:
+             self._emit(
+@@ -1210,13 +1233,25 @@ class StockWatcherService:
+         )
+         return snapshot_id
+ 
+-    def _persist_scan_snapshot(self, now: datetime) -> int | None:
++    def _persist_scan_snapshot(
++        self,
++        now: datetime,
++        *,
++        source_type: str = "automatic",
++    ) -> int | None:
+         """Persist every healthy automatic result for factor-level audit."""
+         if self.batch is None or len(self.batch.candidates) != 3:
+             return None
+         with self.store.transaction() as connection:
+             snapshot_id = self.store.record_batch_in(connection, self.batch)
+             self._snapshot_id = snapshot_id
++            self._repeat_tracker.observe_batch_in(
++                connection,
++                batch=self.batch,
++                snapshot_id=snapshot_id,
++                seen_at=now,
++                source_type=source_type,
++            )
+             state_version = self._bump_state_version()
+             event_id = self._outbox.append(
+                 connection,
+@@ -1226,7 +1261,7 @@ class StockWatcherService:
+                     "state_version": state_version,
+                     "source_ts": self.batch.source_ts.isoformat(),
+                     "overall_weak": self.batch.overall_weak,
+-                    "candidates": self._candidate_payload(self.batch),
++                    "candidates": self._candidate_payload(self.batch, connection=connection),
+                 },
+                 source_kind="snapshot",
+                 source_id=str(snapshot_id),
+@@ -1236,11 +1271,21 @@ class StockWatcherService:
+                 state_version=state_version,
+                 snapshot_id=snapshot_id,
+                 source_ts=self.batch.source_ts.isoformat(),
+-                payload=self._public_payload(now, event_id=event_id),
++                payload=self._public_payload(now, event_id=event_id, connection=connection),
+             )
+         return snapshot_id
+ 
+-    def _candidate_payload(self, batch: CandidateBatch) -> list[dict[str, Any]]:
++    def _candidate_payload(
++        self,
++        batch: CandidateBatch,
++        *,
++        connection: Any | None = None,
++    ) -> list[dict[str, Any]]:
++        codes = [candidate.code for candidate in batch.candidates]
++        if connection is not None:
++            projections = self._repeat_tracker.projections_for_codes(connection, codes)
++        else:
++            projections = self._repeat_tracker.projections_from_store(codes)
+         return [
+             {
+                 "rank": index,
+@@ -1255,6 +1300,7 @@ class StockWatcherService:
+                 "sector_type": getattr(candidate, "sector_type", "industry"),
+                 "total_score": candidate.total_score,
+                 "source_ts": batch.source_ts.isoformat(),
++                **projections.get(candidate.code, RepeatProjection()).as_fields(),
+             }
+             for index, candidate in enumerate(batch.candidates, start=1)
+         ]
+@@ -1814,13 +1860,22 @@ class StockWatcherService:
+         with self.store.transaction() as connection:
+             snapshot_id = self.store.record_batch_in(connection, self.batch)
+             self._snapshot_id = snapshot_id
++            if self.state is HealthState.HEALTHY:
++                self._repeat_tracker.observe_batch_in(
++                    connection,
++                    batch=self.batch,
++                    snapshot_id=snapshot_id,
++                    seen_at=now,
++                    source_type="manual",
++                )
+             state_version = self._bump_state_version()
++            candidates = self._candidate_payload(self.batch, connection=connection)
+             self.store.upsert_public_state(
+                 connection,
+                 state_version=state_version,
+                 snapshot_id=snapshot_id,
+                 source_ts=self.batch.source_ts.isoformat(),
+-                payload=self._public_payload(now),
++                payload=self._public_payload(now, connection=connection),
+             )
+         self._emit(
+             event_type="candidates.updated",
+@@ -1829,7 +1884,7 @@ class StockWatcherService:
+                 "state_version": state_version,
+                 "source_ts": self.batch.source_ts.isoformat(),
+                 "overall_weak": self.batch.overall_weak,
+-                "candidates": self._candidate_payload(self.batch),
++                "candidates": candidates,
+             },
+             source_kind="snapshot",
+             source_id=str(snapshot_id),
+@@ -2055,14 +2110,24 @@ class StockWatcherService:
+         self._state_version += 1
+         return self._state_version
+ 
+-    def _public_payload(self, now: datetime, *, event_id: int | None = None) -> dict[str, Any]:
++    def _public_payload(
++        self,
++        now: datetime,
++        *,
++        event_id: int | None = None,  # noqa: ARG002 - kept for outbox-aware callers
++        connection: Any | None = None,
++    ) -> dict[str, Any]:
+         batch = self.batch
+         return {
+             "service_state": self.state.value.casefold(),
+             "market_state": self._market_state_label(now),
+             "state_version": self._state_version,
+             "snapshot_id": self._snapshot_id,
+-            "candidates": self._candidate_payload(batch) if batch is not None else [],
++            "candidates": (
++                self._candidate_payload(batch, connection=connection)
++                if batch is not None
++                else []
++            ),
+             "overall_weak": bool(batch.overall_weak) if batch is not None else False,
+             "source_ts": batch.source_ts.isoformat() if batch is not None else None,
+             "fund_module": (
+@@ -2099,7 +2164,7 @@ class StockWatcherService:
+                 state_version=state_version,
+                 snapshot_id=snapshot_id,
+                 source_ts=self.batch.source_ts.isoformat() if self.batch is not None else None,
+-                payload=self._public_payload(now),
++                payload=self._public_payload(now, connection=connection),
+             )
+         self._emit(
+             event_type="state.changed",
+@@ -2130,6 +2195,34 @@ class StockWatcherService:
+         except Exception:
+             return 0
+ 
++    def _backfill_repeat_occurrences(self) -> None:
++        if self._repeat_backfill_done:
++            return
++        existing = self.store.get_app_setting("candidate_repeat_backfill_status")
++        if (
++            isinstance(existing, dict)
++            and existing.get("status") == "completed"
++            and existing.get("version") == REPEAT_BACKFILL_VERSION
++        ):
++            self._repeat_backfill_done = True
++            return
++        try:
++            report = self._repeat_tracker.backfill()
++            self.store.set_app_setting(
++                "candidate_repeat_backfill_status",
++                {
++                    "status": "completed",
++                    "version": REPEAT_BACKFILL_VERSION,
++                    "snapshots": report.snapshots,
++                    "occurrences": report.occurrences,
++                    "activated": report.activated,
++                    "skipped": report.skipped,
++                },
++            )
++            self._repeat_backfill_done = True
++        except Exception as error:  # noqa: BLE001 - sidecar must not fail the scan
++            logger.warning("candidate repeat backfill failed: %s", type(error).__name__)
++
+     def _prune_history_if_due(self, now: datetime) -> None:
+         if self._history_pruned_date == now.date():
+             return
+diff --git a/src/stock_watcher/storage/sqlite.py b/src/stock_watcher/storage/sqlite.py
+index 2db1ccb..2d6d813 100644
+--- a/src/stock_watcher/storage/sqlite.py
++++ b/src/stock_watcher/storage/sqlite.py
+@@ -6,7 +6,7 @@ import re
+ import shutil
+ import sqlite3
+ import threading
+-from collections.abc import Callable, Iterator
++from collections.abc import Callable, Iterator, Sequence
+ from contextlib import closing, contextmanager
+ from dataclasses import asdict, dataclass, field
+ from datetime import date, datetime, timedelta
+@@ -29,7 +29,7 @@ class SQLiteStore:
+     read_only: bool = False
+     recovery_backup_dirs: tuple[Path, ...] = ()
+ 
+-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 9
++    CURRENT_SCHEMA_VERSION: ClassVar[int] = 10
+ 
+     _SQLITE_MAGIC = b"SQLite format 3\x00"
+     _OUTCOME_COLUMNS: ClassVar[tuple[str, ...]] = (
+@@ -430,7 +430,7 @@ class SQLiteStore:
+         staging.replace(backup)
+ 
+     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
+-        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
++        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9):
+             raise RuntimeError(f"unsupported schema version: {version}")
+         try:
+             connection.execute("BEGIN IMMEDIATE")
+@@ -452,6 +452,8 @@ class SQLiteStore:
+                 self._apply_v8_migration(connection)
+             if version <= 8:
+                 self._apply_v9_migration(connection)
++            if version <= 9:
++                self._apply_v10_migration(connection)
+             connection.execute("DELETE FROM schema_version")
+             connection.execute(
+                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
+@@ -889,6 +891,58 @@ class SQLiteStore:
+             "ON candidate_outcomes(code, entry_trade_date DESC)"
+         )
+ 
++    @staticmethod
++    def _apply_v10_migration(connection: sqlite3.Connection) -> None:
++        """Add independent repeat-occurrence tables without touching scoring data."""
++        connection.execute(
++            "CREATE TABLE IF NOT EXISTS candidate_repeat_days ("
++            "id INTEGER PRIMARY KEY, "
++            "code TEXT NOT NULL, "
++            "name TEXT NOT NULL, "
++            "trade_date TEXT NOT NULL, "
++            "first_seen_at TEXT NOT NULL, "
++            "last_seen_at TEXT NOT NULL, "
++            "first_snapshot_id INTEGER, "
++            "last_snapshot_id INTEGER, "
++            "source_types_json TEXT NOT NULL DEFAULT '[]', "
++            "formal_seen INTEGER NOT NULL DEFAULT 0 CHECK (formal_seen IN (0, 1)), "
++            "supplement_seen INTEGER NOT NULL DEFAULT 0 CHECK (supplement_seen IN (0, 1)), "
++            "count_after INTEGER NOT NULL DEFAULT 0 CHECK (count_after >= 0), "
++            "span_days_after INTEGER NOT NULL DEFAULT 0 CHECK (span_days_after >= 0), "
++            "active_after INTEGER NOT NULL DEFAULT 0 CHECK (active_after IN (0, 1)), "
++            "created_at TEXT NOT NULL, "
++            "updated_at TEXT NOT NULL, "
++            "UNIQUE(code, trade_date))"
++        )
++        connection.execute(
++            "CREATE INDEX IF NOT EXISTS idx_candidate_repeat_days_date "
++            "ON candidate_repeat_days(trade_date, code)"
++        )
++        connection.execute(
++            "CREATE INDEX IF NOT EXISTS idx_candidate_repeat_days_active "
++            "ON candidate_repeat_days(active_after, trade_date)"
++        )
++        connection.execute(
++            "CREATE TABLE IF NOT EXISTS candidate_repeat_states ("
++            "code TEXT PRIMARY KEY, "
++            "name TEXT NOT NULL, "
++            "active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)), "
++            "window_started_on TEXT, "
++            "window_expires_on TEXT, "
++            "sequence_started_on TEXT, "
++            "occurrence_count INTEGER NOT NULL DEFAULT 0 CHECK (occurrence_count >= 0), "
++            "span_days INTEGER NOT NULL DEFAULT 0 CHECK (span_days >= 0), "
++            "activated_at TEXT, "
++            "activated_trade_date TEXT, "
++            "last_seen_on TEXT, "
++            "last_seen_at TEXT, "
++            "last_snapshot_id INTEGER, "
++            "updated_at TEXT NOT NULL)"
++        )
++        connection.execute(
++            "CREATE INDEX IF NOT EXISTS idx_candidate_repeat_states_active "
++            "ON candidate_repeat_states(active, last_seen_on)"
++        )
+ 
+     @staticmethod
+     def _assert_integrity(connection: sqlite3.Connection) -> None:
+@@ -924,6 +978,8 @@ class SQLiteStore:
+             "web_public_state",
+             "web_audit_log",
+             "candidate_outcomes",
++            "candidate_repeat_days",
++            "candidate_repeat_states",
+         }
+         tables = {
+             str(row[0])
+@@ -2310,6 +2366,7 @@ class SQLiteStore:
+         from_date: str | None = None,
+         to_date: str | None = None,
+         code: str | None = None,
++        repeat_active: bool | None = None,
+     ) -> list[dict[str, Any]]:
+         """Page candidate snapshots newest-first with optional date/code filters.
+ 
+@@ -2335,6 +2392,15 @@ class SQLiteStore:
+                 "WHERE code = ?)"
+             )
+             values.append(code)
++        if repeat_active:
++            clauses.append(
++                "EXISTS ("
++                "SELECT 1 FROM candidate_items AS i "
++                "JOIN candidate_repeat_days AS d "
++                "ON d.code = i.code AND d.trade_date = substr(s.source_ts, 1, 10) "
++                "WHERE i.snapshot_id = s.id AND d.active_after = 1"
++                ")"
++            )
+         query = (
+             "SELECT s.id, s.source_ts, s.generated_at, s.health, s.overall_weak, "
+             "s.provider_version, s.config_version, s.app_version, s.payload_json "
+@@ -2361,6 +2427,41 @@ class SQLiteStore:
+             for row in rows
+         ]
+ 
++    def query_snapshot_items(self, snapshot_ids: Sequence[int]) -> dict[int, list[dict[str, Any]]]:
++        """Load displayed Top3 rows for a page of snapshots, grouped by id."""
++        if not snapshot_ids:
++            return {}
++        placeholders = ", ".join("?" for _ in snapshot_ids)
++        query = (
++            "SELECT snapshot_id, rank, code, name, level, is_formal, is_supplement, "
++            "price, change_pct, sector_code, sector_name, fund_label, explanation "
++            f"FROM candidate_items WHERE snapshot_id IN ({placeholders}) "
++            "ORDER BY snapshot_id, rank"
++        )
++        with self.connect() as connection:
++            rows = connection.execute(query, tuple(int(item) for item in snapshot_ids)).fetchall()
++        grouped: dict[int, list[dict[str, Any]]] = {int(item): [] for item in snapshot_ids}
++        keys = (
++            "snapshot_id",
++            "rank",
++            "code",
++            "name",
++            "level",
++            "is_formal",
++            "is_supplement",
++            "price",
++            "change_pct",
++            "sector_code",
++            "sector_name",
++            "fund_label",
++            "explanation",
++        )
++        for row in rows:
++            payload = dict(zip(keys, row))
++            snapshot_id = int(payload.pop("snapshot_id"))
++            grouped.setdefault(snapshot_id, []).append(payload)
++        return grouped
++
+     def get_snapshot_detail(self, snapshot_id: int, code: str) -> dict[str, Any] | None:
+         """Return one immutable snapshot plus the requested candidate row."""
+         with self.connect() as connection:
+diff --git a/tests/test_candidate_outcomes.py b/tests/test_candidate_outcomes.py
+index 9da6bb1..95d7465 100644
+--- a/tests/test_candidate_outcomes.py
++++ b/tests/test_candidate_outcomes.py
+@@ -1740,7 +1740,7 @@ def test_v7_to_v9_migration_persists_outcome_retry_state_and_backup(tmp_path: Pa
+     migrated = SQLiteStore(path)
+     migrated.initialize()
+     with closing(sqlite3.connect(path)) as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         columns = {
+             str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
+         }
+@@ -1836,7 +1836,7 @@ def test_v8_to_v9_migration_preserves_web_accounts_sessions_commands_and_events(
+     SQLiteStore(path).initialize()
+ 
+     with closing(sqlite3.connect(path)) as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         assert connection.execute("SELECT username FROM web_users").fetchone() == ("tester",)
+         assert connection.execute("SELECT user_id FROM web_sessions").fetchone() == (1,)
+         assert connection.execute("SELECT command_id FROM web_commands").fetchone() == (
+diff --git a/tests/test_candidate_repeat_tracker.py b/tests/test_candidate_repeat_tracker.py
+new file mode 100644
+index 0000000..ac2c9c3
+--- /dev/null
++++ b/tests/test_candidate_repeat_tracker.py
+@@ -0,0 +1,445 @@
++"""Repeat-occurrence tracker, persistence, history projection and backfill."""
++from __future__ import annotations
++
++import json
++from datetime import datetime, timedelta
++from pathlib import Path
++
++from stock_watcher.domain import SHANGHAI, HealthState
++from stock_watcher.engine import AlertTrigger, Candidate
++from stock_watcher.engine.candidates import CandidateBatch
++from stock_watcher.runtime.repeat_tracker import (
++    ACTIVATE_AT,
++    CandidateRepeatTracker,
++    RepeatProjection,
++    compute_repeat_state,
++    format_repeat_label,
++)
++from stock_watcher.services.public_state import PublicStateBuilder
++from stock_watcher.services.stockwatcher_service import StockWatcherService
++from stock_watcher.storage import SQLiteStore
++
++
++def _at(day: int, hour: int = 10, minute: int = 0) -> datetime:
++    return datetime(2026, 8, day, hour, minute, tzinfo=SHANGHAI)
++
++
++def make_batch(
++    source_ts: datetime,
++    *,
++    prefix: str = "测",
++    health: HealthState = HealthState.HEALTHY,
++    provider_version: str = "tushare-15000",
++    codes: tuple[str, str, str] = ("600001.SH", "600002.SH", "600003.SH"),
++) -> CandidateBatch:
++    candidates = tuple(
++        Candidate(
++            code=codes[index],
++            name=f"{prefix}{index + 1}",
++            sector="测试板块",
++            sector_code="TEST",
++            level="强" if index == 0 else "中",
++            score=50.0 - index,
++            price_score=20.0,
++            sector_score=20.0,
++            trend_score=10.0,
++            penalty=0.0,
++            reasons=("测试",),
++            source_ts=source_ts,
++            provider_version=provider_version,
++            config_version="test-config",
++            app_version="test-app",
++            price=10.0 + index,
++            change_pct=float(index + 1),
++            total_score=50.0 - index,
++            core_score=40.0,
++            is_formal=index < 2,
++            is_supplement=index >= 2,
++        )
++        for index in range(3)
++    )
++    return CandidateBatch(
++        source_ts=source_ts,
++        generated_at=source_ts,
++        health=health,
++        overall_weak=False,
++        candidates=candidates,
++    )
++
++
++def persist(
++    store: SQLiteStore,
++    batch: CandidateBatch,
++    seen_at: datetime,
++    source_type: str = "automatic",
++) -> int:
++    tracker = CandidateRepeatTracker(store)
++    with store.transaction() as connection:
++        snapshot_id = store.record_batch_in(connection, batch)
++        tracker.observe_batch_in(
++            connection,
++            batch=batch,
++            snapshot_id=snapshot_id,
++            seen_at=seen_at,
++            source_type=source_type,
++        )
++    return snapshot_id
++
++
++def projection(store: SQLiteStore, code: str) -> RepeatProjection:
++    return CandidateRepeatTracker(store).projections_from_store([code])[code]
++
++
++def day_row(store: SQLiteStore, code: str, trade_date: str) -> dict[str, object]:
++    with store.connect() as connection:
++        row = connection.execute(
++            "SELECT count_after, span_days_after, active_after, source_types_json "
++            "FROM candidate_repeat_days WHERE code = ? AND trade_date = ?",
++            (code, trade_date),
++        ).fetchone()
++    assert row is not None
++    return {
++        "count_after": row[0],
++        "span_days_after": row[1],
++        "active_after": row[2],
++        "source_types": json.loads(str(row[3])),
++    }
++
++
++def test_format_label_and_fourteenth_day_window() -> None:
++    assert format_repeat_label(12, 3) == "近12天第3次"
++    dates = [
++        datetime(2026, 8, 1, tzinfo=SHANGHAI).date(),
++        datetime(2026, 8, 6, tzinfo=SHANGHAI).date(),
++        datetime(2026, 8, 14, tzinfo=SHANGHAI).date(),
++    ]
++    state = compute_repeat_state(dates)
++    assert state.active is True
++    assert state.occurrence_count == ACTIVATE_AT
++    assert state.span_days == 14
++
++
++def test_same_code_same_day_scanned_100_times_counts_once(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "repeat.sqlite3")
++    store.initialize()
++    first = _at(10, 9, 35)
++    for index in range(100):
++        moment = first + timedelta(minutes=index)
++        persist(store, make_batch(moment), moment)
++    state = projection(store, "600001.SH")
++    assert state.occurrence_count == 1
++    assert state.active is False
++    with store.connect() as connection:
++        assert connection.execute("SELECT COUNT(*) FROM candidate_repeat_days").fetchone() == (3,)
++
++
++def test_same_day_realtime_fixed_and_intraday_merge_to_one(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "merge.sqlite3")
++    store.initialize()
++    now = _at(10, 10, 0)
++    batch = make_batch(now)
++    snapshot_id = persist(store, batch, now, "automatic")
++    tracker = CandidateRepeatTracker(store)
++    with store.transaction() as connection:
++        tracker.note_source_in(
++            connection,
++            batch=batch,
++            snapshot_id=snapshot_id,
++            seen_at=_at(10, 10, 20),
++            source_type="intraday",
++        )
++        tracker.note_source_in(
++            connection,
++            batch=batch,
++            snapshot_id=snapshot_id,
++            seen_at=_at(10, 14, 45),
++            source_type="scheduled-14:45",
++        )
++    state = projection(store, "600001.SH")
++    assert state.occurrence_count == 1
++    sources = day_row(store, "600001.SH", "2026-08-10")["source_types"]
++    assert sources == ["automatic", "intraday", "scheduled-14:45"]
++
++
++def test_leave_and_reenter_same_day_still_once(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "reenter.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(10, 10, 0), prefix="早"), _at(10, 10, 0))
++    persist(
++        store,
++        make_batch(
++            _at(10, 11, 0),
++            prefix="午",
++            codes=("601001.SH", "601002.SH", "601003.SH"),
++        ),
++        _at(10, 11, 0),
++    )
++    persist(store, make_batch(_at(10, 14, 0), prefix="晚"), _at(10, 14, 0))
++    assert projection(store, "600001.SH").occurrence_count == 1
++
++
++def test_three_appearances_same_day_do_not_activate(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "same-day.sqlite3")
++    store.initialize()
++    day = _at(10)
++    persist(store, make_batch(day), day, "automatic")
++    persist(store, make_batch(day + timedelta(hours=1)), day + timedelta(hours=1), "intraday")
++    persist(
++        store,
++        make_batch(day + timedelta(hours=4)),
++        day + timedelta(hours=4),
++        "scheduled-14:45",
++    )
++    state = projection(store, "600001.SH")
++    assert state.occurrence_count == 1
++    assert state.active is False
++
++
++def test_three_trade_days_within_14_calendar_days_activate(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "activate.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(12)), _at(12))
++    state = projection(store, "600001.SH")
++    assert state.active is True
++    assert state.occurrence_count == 3
++    assert state.span_days == 12
++    assert state.label == "近12天第3次"
++    first = day_row(store, "600001.SH", "2026-08-01")
++    second = day_row(store, "600001.SH", "2026-08-06")
++    third = day_row(store, "600001.SH", "2026-08-12")
++    assert first["active_after"] == 0
++    assert second["active_after"] == 0
++    assert third["active_after"] == 1
++
++
++def test_third_on_day_14_activates_and_day_15_drops_expired_start(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "window.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(14)), _at(14))
++    assert projection(store, "600001.SH").active is True
++
++    other = SQLiteStore(tmp_path / "expired.sqlite3")
++    other.initialize()
++    persist(other, make_batch(_at(1)), _at(1))
++    persist(other, make_batch(_at(6)), _at(6))
++    persist(other, make_batch(_at(15)), _at(15))
++    late = projection(other, "600001.SH")
++    assert late.active is False
++    assert late.occurrence_count == 2
++    assert late.sequence_started_on is not None
++    assert late.sequence_started_on.isoformat() == "2026-08-06"
++    persist(other, make_batch(_at(19)), _at(19))
++    activated = projection(other, "600001.SH")
++    assert activated.active is True
++    assert activated.occurrence_count == 3
++    assert activated.sequence_started_on is not None
++    assert activated.sequence_started_on.isoformat() == "2026-08-06"
++    assert day_row(other, "600001.SH", "2026-08-01")["active_after"] == 0
++    assert day_row(other, "600001.SH", "2026-08-06")["count_after"] == 2
++
++
++def test_expired_dates_are_not_wiped_from_history(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "keep.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(15)), _at(15))
++    with store.connect() as connection:
++        dates = [
++            row[0]
++            for row in connection.execute(
++                "SELECT trade_date FROM candidate_repeat_days WHERE code = '600001.SH' "
++                "ORDER BY trade_date"
++            )
++        ]
++    assert dates == ["2026-08-01", "2026-08-06", "2026-08-15"]
++
++
++def test_activation_is_permanent_and_later_days_increment(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "permanent.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1)), _at(1))
++    persist(store, make_batch(_at(6)), _at(6))
++    persist(store, make_batch(_at(12)), _at(12))
++    persist(store, make_batch(_at(20)), _at(20))
++    persist(store, make_batch(_at(20, 14, 45)), _at(20, 14, 45))
++    state = projection(store, "600001.SH")
++    assert state.active is True
++    assert state.occurrence_count == 4
++    assert state.span_days == 20
++    assert state.label == "近20天第4次"
++    september = datetime(2026, 9, 10, 10, tzinfo=SHANGHAI)
++    persist(store, make_batch(september), september)
++    later = projection(store, "600001.SH")
++    assert later.active is True
++    assert later.occurrence_count == 5
++    with store.connect() as connection:
++        tracker = CandidateRepeatTracker(store)
++        fourth = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(20).date()
++        )
++        third = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(12).date()
++        )
++    assert fourth["repeat_active"] is True
++    assert fourth["repeat_count"] == 4
++    assert fourth["repeat_activated_at"] == third["repeat_activated_at"]
++
++
++def test_warming_stale_stopped_and_mock_do_not_count(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "quality.sqlite3")
++    store.initialize()
++    persist(store, make_batch(_at(1), health=HealthState.WARMING), _at(1))
++    persist(store, make_batch(_at(2), health=HealthState.STALE), _at(2))
++    persist(store, make_batch(_at(3), health=HealthState.STOPPED), _at(3))
++    persist(store, make_batch(_at(4), provider_version="mock-provider"), _at(4))
++    persist(store, make_batch(_at(5), provider_version="replay-v1"), _at(5))
++    persist(store, make_batch(_at(6), provider_version="synthetic"), _at(6))
++    with store.connect() as connection:
++        assert connection.execute("SELECT COUNT(*) FROM candidate_repeat_days").fetchone() == (0,)
++
++
++def test_service_persist_and_restart_keep_state(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "service.sqlite3")
++    store.initialize()
++    first = StockWatcherService(store, clock=lambda: _at(1))
++    first.batch = make_batch(_at(1))
++    first.state = HealthState.HEALTHY
++    first._persist_scan_snapshot(_at(1))  # noqa: SLF001
++    first.batch = make_batch(_at(6))
++    first._persist_scan_snapshot(_at(6))  # noqa: SLF001
++    first.batch = make_batch(_at(12))
++    first._persist_scan_snapshot(_at(12))  # noqa: SLF001
++
++    restarted = StockWatcherService(store, clock=lambda: _at(20))
++    restarted.batch = make_batch(_at(20))
++    restarted.state = HealthState.HEALTHY
++    restarted._persist_scan_snapshot(_at(20))  # noqa: SLF001
++    payload = restarted._candidate_payload(restarted.batch)  # noqa: SLF001
++    target = next(row for row in payload if row["code"] == "600001.SH")
++    assert target["repeat_active"] is True
++    assert target["repeat_count"] == 4
++    assert target["repeat_label"] == "近20天第4次"
++    state = PublicStateBuilder(store).build(now=_at(20))
++    assert state["candidates"][0]["repeat_active"] is True
++    with store.connect() as connection:
++        updated = json.loads(
++            connection.execute(
++                "SELECT payload_json FROM web_events WHERE event_type = 'candidates.updated' "
++                "ORDER BY event_id DESC LIMIT 1"
++            ).fetchone()[0]
++        )
++    assert updated["candidates"][0]["repeat_active"] is True
++    assert updated["candidates"][0]["repeat_label"] == "近20天第4次"
++
++
++def test_alert_payload_uses_snapshot_candidates_and_does_not_double_count(
++    tmp_path: Path,
++) -> None:
++    store = SQLiteStore(tmp_path / "alert.sqlite3")
++    store.initialize()
++    service = StockWatcherService(store, clock=lambda: _at(12))
++    service.batch = make_batch(_at(1))
++    service.state = HealthState.HEALTHY
++    service._persist_scan_snapshot(_at(1))  # noqa: SLF001
++    service.batch = make_batch(_at(6))
++    service._persist_scan_snapshot(_at(6))  # noqa: SLF001
++    service.batch = make_batch(_at(12))
++    snapshot_id = service._persist_scan_snapshot(_at(12))  # noqa: SLF001
++    service._record_alert(  # noqa: SLF001
++        _at(12),
++        AlertTrigger.INTRADAY,
++        "strong",
++        "盘中强异动",
++        "个股与板块同步增强｜资金未确认",
++        snapshot_id=snapshot_id,
++    )
++    assert projection(store, "600001.SH").occurrence_count == 3
++    with store.connect() as connection:
++        payload = json.loads(
++            connection.execute(
++                "SELECT payload_json FROM web_events WHERE event_type = 'alert.created'"
++            ).fetchone()[0]
++        )
++    assert payload["trigger_type"] == "intraday"
++    assert payload["candidates"][0]["repeat_active"] is True
++    assert payload["candidates"][0]["repeat_label"] == "近12天第3次"
++    assert payload["snapshot_id"] == snapshot_id
++
++
++def test_backfill_is_idempotent_and_preserves_historical_purple(tmp_path: Path) -> None:
++    store = SQLiteStore(tmp_path / "backfill.sqlite3")
++    store.initialize()
++    store.record_batch(make_batch(_at(1)))
++    store.record_batch(make_batch(_at(6)))
++    store.record_batch(make_batch(_at(12)))
++    tracker = CandidateRepeatTracker(store)
++    first = tracker.backfill()
++    second = tracker.backfill()
++    assert first == second
++    assert first.occurrences == 9
++    assert first.activated == 3
++    with store.connect() as connection:
++        days = connection.execute(
++            "SELECT trade_date, active_after, count_after FROM candidate_repeat_days "
++            "WHERE code = '600001.SH' ORDER BY trade_date"
++        ).fetchall()
++    assert days == [
++        ("2026-08-01", 0, 1),
++        ("2026-08-06", 0, 2),
++        ("2026-08-12", 1, 3),
++    ]
++    with store.connect() as connection:
++        first_day = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(1).date()
++        )
++        third_day = tracker.historical_fields_for(
++            connection, code="600001.SH", trade_date=_at(12).date()
++        )
++    assert first_day["repeat_active"] is False
++    assert first_day["repeat_label"] is None
++    assert third_day["repeat_active"] is True
++    assert third_day["repeat_label"] == "近12天第3次"
++    purple = store.query_snapshots(limit=20, repeat_active=True)
++    assert {row["source_ts"][:10] for row in purple} == {"2026-08-12"}
++
++
++def test_v9_to_v10_migration_adds_repeat_tables_and_backup(tmp_path: Path) -> None:
++    import sqlite3
++    from contextlib import closing
++
++    import stock_watcher.storage.sqlite as sqlite_module
++
++    path = tmp_path / "v9.sqlite3"
++    original = sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION
++    sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION = 9
++    try:
++        SQLiteStore(path).initialize()
++    finally:
++        sqlite_module.SQLiteStore.CURRENT_SCHEMA_VERSION = original
++    SQLiteStore(path).initialize()
++    with closing(sqlite3.connect(path)) as connection:
++        assert connection.execute(
++            "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
++        ).fetchone() == (10,)
++        tables = {
++            row[0]
++            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
++        }
++        assert "candidate_repeat_days" in tables
++        assert "candidate_repeat_states" in tables
++        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
++    assert path.with_suffix(".sqlite3.pre-v10.bak").is_file()
++
++
++def test_scoring_ranking_and_strong_move_modules_do_not_import_repeat_tracker() -> None:
++    root = Path(__file__).resolve().parents[1] / "src" / "stock_watcher" / "engine"
++    for name in ("candidates.py", "stable_top3.py", "alerts.py"):
++        text = (root / name).read_text(encoding="utf-8")
++        assert "repeat_tracker" not in text
++        assert "repeat_active" not in text
++        assert "CandidateRepeatTracker" not in text
+diff --git a/tests/test_v02_core.py b/tests/test_v02_core.py
+index fdc5e85..7ce5940 100644
+--- a/tests/test_v02_core.py
++++ b/tests/test_v02_core.py
+@@ -309,7 +309,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
+     empty_store = SQLiteStore(tmp_path / "empty.sqlite3")
+     empty_store.initialize()
+     with empty_store.connect() as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+ 
+     path = tmp_path / "watcher.sqlite3"
+     with sqlite3.connect(path) as connection:
+@@ -326,7 +326,7 @@ def test_sqlite_explicit_v5_to_v6_migration_is_idempotent(tmp_path: Path) -> Non
+     store.initialize()
+     store.initialize()
+     with store.connect() as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         columns = {
+             row[1]
+             for row in connection.execute("PRAGMA table_info(runtime_sessions)")
+@@ -871,7 +871,7 @@ def test_sqlite_auto_recovers_damaged_file_from_backup(tmp_path: Path) -> None:
+     assert recovered.last_recovery is not None
+     assert recovered.last_recovery["source_backup"] == "watcher.sqlite3.pre-v6.bak"
+     with recovered.connect() as connection:
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+         assert connection.execute(
+             "SELECT value FROM notes WHERE key = 'probe'"
+         ).fetchone() is None
+diff --git a/tests/test_v1_real_candidates.py b/tests/test_v1_real_candidates.py
+index c4fe79d..ec76e5f 100644
+--- a/tests/test_v1_real_candidates.py
++++ b/tests/test_v1_real_candidates.py
+@@ -1075,7 +1075,7 @@ def test_alert_history_daily_summary_and_v3_items_are_persisted(tmp_path: Path)
+     assert len(history) == 1
+     with store.connect() as connection:
+         assert connection.execute("SELECT COUNT(*) FROM candidate_items").fetchone() == (3,)
+-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
++        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
+ 
+     summary = DailySummaryEngine().generate(
+         trade_date=now.date(),
+diff --git a/tests/test_web_auth_api.py b/tests/test_web_auth_api.py
+index f4591c1..b05eafc 100644
+--- a/tests/test_web_auth_api.py
++++ b/tests/test_web_auth_api.py
+@@ -798,6 +798,20 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
+     assert dashboard_script.index("onEvent((event)") < dashboard_script.index(
+         "connectEvents();"
+     )
++    assert "payload.candidates" in dashboard_script
++    assert "showRepeat = payload.trigger_type === 'intraday'" in dashboard_script
++    card_for = dashboard_script[
++        dashboard_script.index("function cardFor") : dashboard_script.index("function compactPrice")
++    ]
++    compact = dashboard_script[
++        dashboard_script.index("function compactAlertCard") : dashboard_script.index(
++            "function alertMeta"
++        )
++    ]
++    assert "repeat-badge" not in card_for
++    assert "repeat-badge" in compact
++    assert "notify('近期多次出现'" not in dashboard_script
++    assert "new Audio" not in dashboard_script
+     for relative in (
+         "src/stock_watcher/server/templates/dashboard.html",
+         "src/stock_watcher/server/static/dashboard.js",
+@@ -833,7 +847,7 @@ def test_desktop_app_theme_outcome_page_and_bottom_right_alert_contract() -> Non
+     assert "font-size: clamp(1.4rem, 2.5vw, 1.85rem)" in css
+     assert '.cards .ashare-pct[data-direction="up"]' in css
+     assert "color: var(--top3-gain-red) !important" in css
+-    assert 'href="/static/app.css?v=14"' in base
++    assert 'href="/static/app.css?v=15"' in base
+     assert 'src="/static/app.js?v=6"' in base
+     assert ".hero-action-button.btn-notify" in css
+     assert ".dashboard-cards > .card {" in css
+@@ -1081,3 +1095,27 @@ def test_token_endpoints_never_echo_token(app_env: tuple[Any, SQLiteStore, Any,
+     raw = response.text
+     assert "super-secret-token-value-xyz" not in raw
+     assert "fingerprint" in response.json()
++
++
++def test_history_page_has_purple_filter_and_does_not_paint_homepage_cards() -> None:
++    root = Path(__file__).resolve().parents[1]
++    history_page = (root / "src/stock_watcher/server/templates/history.html").read_text(
++        encoding="utf-8"
++    )
++    history_script = (root / "src/stock_watcher/server/static/history.js").read_text(
++        encoding="utf-8"
++    )
++    dashboard = (root / "src/stock_watcher/server/static/dashboard.js").read_text(
++        encoding="utf-8"
++    )
++    assert 'id="repeat-only"' in history_page
++    assert "只看紫色标记" in history_page
++    assert "repeat_active" in history_script
++    assert "repeat-badge" in history_script
++    assert "candidate.name" in history_script
++    card_start = dashboard.index("function cardFor")
++    card_end = dashboard.index("function compactPrice")
++    assert "repeat-badge" not in dashboard[card_start:card_end]
++    assert "payload.trigger_type === 'intraday'" in dashboard
++    assert "showAutomaticAlert(event.payload, latestDashboardState, alertSequence)" in dashboard
++    assert dashboard.count("notify(") == 2
+diff --git a/tests/test_web_services.py b/tests/test_web_services.py
+index 560ff6d..73a9434 100644
+--- a/tests/test_web_services.py
++++ b/tests/test_web_services.py
+@@ -740,7 +740,7 @@ def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
+     with sqlite3.connect(path) as connection:
+         assert connection.execute(
+             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+-        ).fetchone() == (9,)
++        ).fetchone() == (10,)
+         assert connection.execute(
+             "SELECT value FROM notes WHERE key = 'sentinel'"
+         ).fetchone() == ("kept",)
+@@ -764,6 +764,8 @@ def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
+             "web_public_state",
+             "web_audit_log",
+             "candidate_outcomes",
++            "candidate_repeat_days",
++            "candidate_repeat_states",
+         ):
+             assert table in tables
+     assert path.with_suffix(".sqlite3.pre-v7.bak").is_file()
+@@ -776,7 +778,7 @@ def test_migration_idempotent(tmp_path: Path) -> None:
+     with store.connect() as connection:
+         assert connection.execute(
+             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+-        ).fetchone() == (9,)
++        ).fetchone() == (10,)
+ 
+ 
+ def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -> None:
+@@ -793,7 +795,7 @@ def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -
+     with sqlite3.connect(path) as connection:
+         assert connection.execute(
+             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
+-        ).fetchone() == (9,)
++        ).fetchone() == (10,)
+         index_sql = connection.execute(
+             "SELECT sql FROM sqlite_master WHERE type = 'index' "
+             "AND name = 'idx_web_events_source_dedupe'"
+diff --git a/tests/test_web_ws.py b/tests/test_web_ws.py
+index d0616e1..6ab0006 100644
+--- a/tests/test_web_ws.py
++++ b/tests/test_web_ws.py
+@@ -467,3 +467,54 @@ def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally(
+     assert "1000 * (2 ** reconnectAttempt)" in script
+     assert "Math.random() * 500" in script
+     assert "setTimeout(connectEvents, 3000)" not in script
++
++
++def test_ws_replays_repeat_fields_on_candidates_and_alert_events(
++    app_env: tuple[Any, SQLiteStore],
++) -> None:
++    app, store = app_env
++    outbox = app.state.outbox
++    candidate = {
++        "code": "600001.SH",
++        "name": "测试1",
++        "repeat_active": True,
++        "repeat_count": 3,
++        "repeat_span_days": 12,
++        "repeat_label": "近12天第3次",
++        "repeat_sequence_started_on": "2026-08-01",
++        "repeat_activated_at": "2026-08-12T10:00:00+08:00",
++        "repeat_last_seen_on": "2026-08-12",
++    }
++    with store.transaction() as connection:
++        outbox.append(
++            connection,
++            event_type="candidates.updated",
++            payload={"snapshot_id": 11, "state_version": 11, "candidates": [candidate]},
++            source_kind="snapshot",
++            source_id="11",
++        )
++        outbox.append(
++            connection,
++            event_type="alert.created",
++            payload={
++                "alert_id": 7,
++                "snapshot_id": 11,
++                "trigger_type": "intraday",
++                "candidates": [candidate],
++            },
++            source_kind="alert",
++            source_id="7",
++        )
++    client = login(app)
++    seen: dict[str, Any] = {}
++    with client.websocket_connect("/ws/v1/events?after_id=0") as websocket:
++        for _ in range(8):
++            message = json.loads(websocket.receive_text())
++            event_type = message.get("event_type")
++            if event_type in {"candidates.updated", "alert.created"}:
++                seen[event_type] = message["payload"]["candidates"][0]
++            if len(seen) == 2:
++                break
++    assert seen["candidates.updated"]["repeat_label"] == "近12天第3次"
++    assert seen["alert.created"]["repeat_active"] is True
++    assert seen["alert.created"]["repeat_count"] == 3

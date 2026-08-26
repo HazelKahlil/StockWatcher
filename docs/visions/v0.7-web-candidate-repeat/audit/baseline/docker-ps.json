@@ -1,0 +1,83 @@
+[
+  {
+    "Command": "\"python -m stock_wat\u2026\"",
+    "CreatedAt": "2026-08-26 12:10:35 +0800 CST",
+    "ID": "83d873ef336e",
+    "Image": "stockwatcher-web:web-repeat-4b1e79e",
+    "Labels": "com.docker.compose.config-hash=4d92df24f8aebd32dbccd9121c68121e8b127574835bdaff00474392e86832e4,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:cbee6514797747197ba3744e03a3e46ddce6455956a9bd169191b55ad3a34c39,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.yml,/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.tunnel.yml,com.docker.compose.project.environment_file=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/.env.tunnel,com.docker.compose.project.working_dir=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy,com.docker.compose.project=stockwatcher,com.docker.compose.replace=web-1,com.docker.compose.service=web,com.docker.compose.version=5.0.2,desktop.docker.io/mounts/0/Source=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/secrets/stockwatcher_master_key,desktop.docker.io/mounts/0/SourceKind=hostFile,desktop.docker.io/mounts/0/Target=/run/secrets/stockwatcher_master_key,desktop.docker.io/ports.scheme=v2,org.opencontainers.image.revision=4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997,org.opencontainers.image.source=https://github.com/HazelKahlil/StockWatcher,org.opencontainers.image.version=web-repeat-4b1e79e",
+    "LocalVolumes": "3",
+    "Mounts": "stockwatcher_s\u2026,/host_mnt/User\u2026,stockwatcher_s\u2026,stockwatcher_s\u2026",
+    "Names": "stockwatcher-web-1",
+    "Networks": "stockwatcher_default",
+    "Platform": {
+      "architecture": "arm64",
+      "os": "linux"
+    },
+    "Ports": "8000/tcp",
+    "RunningFor": "45 minutes ago",
+    "Size": "24.6kB (virtual 474MB)",
+    "State": "running",
+    "Status": "Up 45 minutes (unhealthy)"
+  },
+  {
+    "Command": "\"python -m stock_wat\u2026\"",
+    "CreatedAt": "2026-08-26 12:10:35 +0800 CST",
+    "ID": "84b41c730650",
+    "Image": "stockwatcher-web:web-repeat-4b1e79e",
+    "Labels": "com.docker.compose.config-hash=ae65a7bc9d148ca60f06ebf529b6cc59b877749bb3a7d6f3711114ef40d4c922,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:cbee6514797747197ba3744e03a3e46ddce6455956a9bd169191b55ad3a34c39,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.yml,/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.tunnel.yml,com.docker.compose.project.environment_file=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/.env.tunnel,com.docker.compose.project.working_dir=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy,com.docker.compose.project=stockwatcher,com.docker.compose.replace=worker-1,com.docker.compose.service=worker,com.docker.compose.version=5.0.2,desktop.docker.io/mounts/0/Source=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/secrets/stockwatcher_master_key,desktop.docker.io/mounts/0/SourceKind=hostFile,desktop.docker.io/mounts/0/Target=/run/secrets/stockwatcher_master_key,desktop.docker.io/ports.scheme=v2,org.opencontainers.image.revision=4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997,org.opencontainers.image.source=https://github.com/HazelKahlil/StockWatcher,org.opencontainers.image.version=web-repeat-4b1e79e",
+    "LocalVolumes": "3",
+    "Mounts": "stockwatcher_s\u2026,/host_mnt/User\u2026,stockwatcher_s\u2026,stockwatcher_s\u2026",
+    "Names": "stockwatcher-worker-1",
+    "Networks": "stockwatcher_default",
+    "Platform": {
+      "architecture": "arm64",
+      "os": "linux"
+    },
+    "Ports": "8000/tcp",
+    "RunningFor": "45 minutes ago",
+    "Size": "24.6kB (virtual 474MB)",
+    "State": "running",
+    "Status": "Up 10 minutes (healthy)"
+  },
+  {
+    "Command": "\"cloudflared --no-au\u2026\"",
+    "CreatedAt": "2026-08-18 09:42:47 +0800 CST",
+    "ID": "a0eed29c1aa2",
+    "Image": "cloudflare/cloudflared:2026.7.3",
+    "Labels": "CI_BUILD_DATE=2026-07-23 10:26:19.574489,CI_DOCKER_FROM=gcr.io/distroless/base-debian13:nonroot-arm64@sha256:7a4876f88e7fe3190972c274b679b3473f61e8d990a4dce3627961b3e22a0eaf,CI_DOCKER_VERSION={\"Platform\": {\"Name\": \"Docker Engine - Community\"}, \"Version\": \"29.5.3\", \"ApiVersion\": \"1.54\", \"MinAPIVersion\": \"1.40\", \"Os\": \"linux\", \"Arch\": \"amd64\", \"Components\": [{\"Name\": \"Engine\", \"Version\": \"29.5.3\", \"Details\": {\"ApiVersion\": \"1.54\", \"Arch\": \"amd64\", \"BuildTime\": \"2026-06-03T17:59:56.000000000+00:00\", \"Experimental\": \"false\", \"GitCommit\": \"285b471\", \"GoVersion\": \"go1.26.4\", \"KernelVersion\": \"6.18.37-cloudflare-2026.6.20\", \"MinAPIVersion\": \"1.40\", \"Module\": \"github.com/moby/moby/v2\", \"ModuleVersion\": \"v2.0.0+unknown\", \"Os\": \"linux\"}}, {\"Name\": \"containerd\", \"Version\": \"v2.2.5\", \"Details\": {\"GitCommit\": \"e53c7c1516c3b2bff98eb76f1f4117477e6f4e66\"}}, {\"Name\": \"runc\", \"Version\": \"1.3.6\", \"Details\": {\"GitCommit\": \"v1.3.6-0-g491b69ba\"}}, {\"Name\": \"docker-init\", \"Version\": \"0.19.0\", \"Details\": {\"GitCommit\": \"de40ad0\"}}], \"GitCommit\": \"285b471\", \"GoVersion\": \"go1.26.4\", \"KernelVersion\": \"6.18.37-cloudflare-2026.6.20\", \"BuildTime\": \"2026-06-03T17:59:56.000000000+00:00\"},CI_GIT_COMMIT=3a2b45c2a511fcdd81b68c190938e4ffadbea5dc,CI_GIT_REMOTE=https://gitlab.cfdata.org/cloudflare/tun/cloudflared.git,CI_TEAMCITY_BUILDCONF=,CI_TEAMCITY_BUILD_NUMBER=,IMAGE_TYPE=distroless,com.docker.compose.config-hash=5f4d51c37b2f6538739750906ce1157b5bb0a752b1f4bd8c2e734295e360c6cc,com.docker.compose.container-number=1,com.docker.compose.depends_on=tunnel-gateway:service_healthy:false,com.docker.compose.image=sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.yml,/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.tunnel.yml,com.docker.compose.project.environment_file=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/.env.tunnel,com.docker.compose.project.working_dir=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy,com.docker.compose.project=stockwatcher,com.docker.compose.service=cloudflared,com.docker.compose.version=5.0.2,desktop.docker.io/binds/0/Source=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/cloudflared.yml,desktop.docker.io/binds/0/SourceKind=hostFile,desktop.docker.io/binds/0/Target=/etc/cloudflared/config.yml,desktop.docker.io/binds/1/Source=/Users/kahlilhazel/.cloudflared/5695275a-34ff-428f-a924-bf08c7939e90.json,desktop.docker.io/binds/1/SourceKind=hostFile,desktop.docker.io/binds/1/Target=/etc/cloudflared/credentials.json,desktop.docker.io/ports.scheme=v2,org.opencontainers.image.source=https://github.com/cloudflare/cloudflared",
+    "LocalVolumes": "0",
+    "Mounts": "/host_mnt/User\u2026,/host_mnt/User\u2026",
+    "Names": "stockwatcher-cloudflared-1",
+    "Networks": "stockwatcher_default",
+    "Platform": {
+      "architecture": "arm64",
+      "os": "linux"
+    },
+    "Ports": "",
+    "RunningFor": "8 days ago",
+    "Size": "12.3kB (virtual 75.9MB)",
+    "State": "running",
+    "Status": "Up 4 hours"
+  },
+  {
+    "Command": "\"caddy run --config \u2026\"",
+    "CreatedAt": "2026-08-18 09:42:47 +0800 CST",
+    "ID": "e357accd2ab8",
+    "Image": "caddy:2-alpine",
+    "Labels": "com.docker.compose.config-hash=0f538eeece7981c6abd60f07092b86a39a2ed471df7b8ff8fe1eab67e7a8cb48,com.docker.compose.container-number=1,com.docker.compose.depends_on=web:service_healthy:false,com.docker.compose.image=sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.yml,/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/docker-compose.tunnel.yml,com.docker.compose.project.environment_file=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/.env.tunnel,com.docker.compose.project.working_dir=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy,com.docker.compose.project=stockwatcher,com.docker.compose.service=tunnel-gateway,com.docker.compose.version=5.0.2,desktop.docker.io/binds/0/Source=/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e/deploy/Caddyfile.tunnel,desktop.docker.io/binds/0/SourceKind=hostFile,desktop.docker.io/binds/0/Target=/etc/caddy/Caddyfile,desktop.docker.io/ports.scheme=v2,desktop.docker.io/ports/8080/tcp=127.0.0.1:18000,org.opencontainers.image.description=a powerful, enterprise-ready, open source web server with automatic HTTPS written in Go,org.opencontainers.image.documentation=https://caddyserver.com/docs,org.opencontainers.image.licenses=Apache-2.0,org.opencontainers.image.source=https://github.com/caddyserver/caddy-docker,org.opencontainers.image.title=Caddy,org.opencontainers.image.url=https://caddyserver.com,org.opencontainers.image.vendor=Light Code Labs,org.opencontainers.image.version=v2.11.4",
+    "LocalVolumes": "0",
+    "Mounts": "/host_mnt/User\u2026",
+    "Names": "stockwatcher-tunnel-gateway-1",
+    "Networks": "stockwatcher_default",
+    "Platform": {
+      "architecture": "arm64",
+      "os": "linux",
+      "variant": "v8"
+    },
+    "Ports": "127.0.0.1:18000->8080/tcp",
+    "RunningFor": "8 days ago",
+    "Size": "4.1kB (virtual 61.9MB)",
+    "State": "running",
+    "Status": "Up 4 hours (healthy)"
+  }
+]

@@ -1,0 +1,50 @@
+{
+  "old_image": {
+    "tag": "stockwatcher-web:web-alpha4-34ce825",
+    "id": "sha256:e270d6601596e414d5e29595317f4d2557c22f702d4f434856990d4b3ce6986e",
+    "created": "2026-08-13T11:17:49.660867842Z",
+    "repo_digests": [
+      "stockwatcher-web@sha256:e270d6601596e414d5e29595317f4d2557c22f702d4f434856990d4b3ce6986e"
+    ],
+    "labels": {
+      "com.docker.compose.version": "5.0.2",
+      "org.opencontainers.image.revision": "34ce825014692aef01ae397499dd7604c67273ef",
+      "org.opencontainers.image.source": "https://github.com/HazelKahlil/StockWatcher",
+      "org.opencontainers.image.version": "web-alpha4-34ce825"
+    },
+    "all_label_keys": [
+      "com.docker.compose.project",
+      "com.docker.compose.service",
+      "com.docker.compose.version",
+      "org.opencontainers.image.revision",
+      "org.opencontainers.image.source",
+      "org.opencontainers.image.version"
+    ],
+    "env": {
+      "STOCKWATCHER_SOURCE_COMMIT": "34ce825014692aef01ae397499dd7604c67273ef",
+      "STOCKWATCHER_BUILD_VERSION": "web-alpha4-34ce825"
+    }
+  },
+  "new_image": {
+    "tag": "stockwatcher-web:web-repeat-4b1e79e",
+    "id": "sha256:cbee6514797747197ba3744e03a3e46ddce6455956a9bd169191b55ad3a34c39",
+    "created": "2026-08-26T04:05:34.34834846Z",
+    "repo_digests": [
+      "stockwatcher-web@sha256:cbee6514797747197ba3744e03a3e46ddce6455956a9bd169191b55ad3a34c39"
+    ],
+    "labels": {
+      "org.opencontainers.image.revision": "4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997",
+      "org.opencontainers.image.source": "https://github.com/HazelKahlil/StockWatcher",
+      "org.opencontainers.image.version": "web-repeat-4b1e79e"
+    },
+    "all_label_keys": [
+      "org.opencontainers.image.revision",
+      "org.opencontainers.image.source",
+      "org.opencontainers.image.version"
+    ],
+    "env": {
+      "STOCKWATCHER_SOURCE_COMMIT": "4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997",
+      "STOCKWATCHER_BUILD_VERSION": "web-repeat-4b1e79e"
+    }
+  }
+}

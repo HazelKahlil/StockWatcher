@@ -1,0 +1,26 @@
+{
+  "BACKFILL_IDEMPOTENT": "PASS",
+  "first": {
+    "snapshots": 5278,
+    "occurrences": 1618,
+    "activated": 90,
+    "skipped": 0
+  },
+  "second": {
+    "snapshots": 5278,
+    "occurrences": 1618,
+    "activated": 90,
+    "skipped": 0
+  },
+  "repeat_days_before": 1618,
+  "repeat_days_after_first": 1618,
+  "repeat_days_after_second": 1618,
+  "states_before": 1119,
+  "states_after_first": 1119,
+  "states_after_second": 1119,
+  "active_before": 90,
+  "active_after": 90,
+  "days_equal": true,
+  "states_equal": true,
+  "old_tables_unchanged": true
+}

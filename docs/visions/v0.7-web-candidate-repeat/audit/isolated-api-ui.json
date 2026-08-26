@@ -1,0 +1,168 @@
+{
+  "login": 200,
+  "me": 200,
+  "health_live": 200,
+  "health_ready": 503,
+  "health_ready_body": {
+    "status": "not_ready"
+  },
+  "state": 200,
+  "state_keys": [
+    "active_command",
+    "business_timezone",
+    "candidate_snapshot_generated_at",
+    "candidates",
+    "candidates_source",
+    "formal_count",
+    "fund_module",
+    "last_alert",
+    "last_scan",
+    "last_summary",
+    "market_state",
+    "overall_weak",
+    "service_state",
+    "snapshot_id",
+    "source_ts",
+    "state_version",
+    "tasks",
+    "updated_at",
+    "worker_heartbeat_age_seconds",
+    "worker_running"
+  ],
+  "state_candidate_count": 3,
+  "state_candidate_keys": [
+    "change_pct",
+    "code",
+    "explanation",
+    "fund_label",
+    "is_formal",
+    "is_supplement",
+    "level",
+    "name",
+    "price",
+    "rank",
+    "repeat_activated_at",
+    "repeat_active",
+    "repeat_count",
+    "repeat_label",
+    "repeat_last_seen_on",
+    "repeat_sequence_started_on",
+    "repeat_span_days",
+    "sector_code",
+    "sector_name",
+    "sector_type",
+    "source_ts",
+    "total_score"
+  ],
+  "state_has_repeat": true,
+  "history": 200,
+  "history_count": 20,
+  "history_item_keys": [
+    "candidates",
+    "generated_at",
+    "health",
+    "overall_weak",
+    "snapshot_id",
+    "source_ts"
+  ],
+  "history_candidate_keys": [
+    "change_pct",
+    "code",
+    "is_formal",
+    "is_supplement",
+    "level",
+    "name",
+    "price",
+    "rank",
+    "repeat_activated_at",
+    "repeat_active",
+    "repeat_count",
+    "repeat_label",
+    "repeat_last_seen_on",
+    "repeat_sequence_started_on",
+    "repeat_span_days",
+    "sector_name"
+  ],
+  "history_has_repeat": true,
+  "history_old_keys_present": true,
+  "history_date_min": "2026-08-26",
+  "history_date_max": "2026-08-26",
+  "history_purple_count": 20,
+  "alerts": 200,
+  "alerts_count": 20,
+  "alert_item_keys": [
+    "alert_id",
+    "decision",
+    "detail",
+    "displayed_at",
+    "overall_weak",
+    "snapshot_id",
+    "source_ts",
+    "trigger_type",
+    "triggering_codes"
+  ],
+  "alerts_have_repeat_top": false,
+  "outcomes": 200,
+  "outcomes_keys": [
+    "afternoon",
+    "backfill",
+    "morning",
+    "portfolio",
+    "range",
+    "records",
+    "summary"
+  ],
+  "outcomes_record_n": 66,
+  "pages": {
+    "/": {
+      "status": 200,
+      "repeat_badge": false,
+      "purple_filter": false,
+      "len": 8222
+    },
+    "/history": {
+      "status": 200,
+      "repeat_badge": false,
+      "purple_filter": true,
+      "len": 1706
+    },
+    "/alerts": {
+      "status": 200,
+      "repeat_badge": false,
+      "purple_filter": false,
+      "len": 1554
+    },
+    "/outcomes": {
+      "status": 200,
+      "repeat_badge": false,
+      "purple_filter": false,
+      "len": 3366
+    },
+    "/summary": {
+      "status": 200,
+      "repeat_badge": false,
+      "purple_filter": false,
+      "len": 1307
+    },
+    "/admin": {
+      "status": 200,
+      "repeat_badge": false,
+      "purple_filter": false,
+      "len": 1247
+    }
+  },
+  "css_status": 200,
+  "dashboard_js_notify_count": 2,
+  "cardFor_has_repeat_badge": false,
+  "showRepeat_intraday_only": true,
+  "history_js_has_filter": true,
+  "openapi_status": 200,
+  "history_query_params": [
+    "limit",
+    "cursor",
+    "from",
+    "to",
+    "code",
+    "repeat_active"
+  ]
+}

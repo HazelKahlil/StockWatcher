@@ -1,0 +1,4 @@
+/Users/kahlilhazel/Documents/700-AI-Workspace/20-Projects/StockWatcher                                                                         6a81825 [main]
+/private/tmp/stockwatcher-repeat-base                                                                                                          34ce825 (detached HEAD)
+/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e  bf07c22 [feat/web-candidate-repeat]
+/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/windows/worktree                                              30595f9 [feat/windows-v1-current-port]

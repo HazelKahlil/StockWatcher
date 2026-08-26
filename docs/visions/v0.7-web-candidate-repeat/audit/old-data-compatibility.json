@@ -1,0 +1,120 @@
+{
+  "OLD_ROWS_MISSING": 0,
+  "OLD_ROWS_MUTATED": 0,
+  "app_settings_old_keys": {
+    "extra": [
+      "candidate_repeat_backfill_status"
+    ],
+    "missing": 0,
+    "missing_keys_sample": [],
+    "mutated": 0,
+    "mutated_keys_sample": [],
+    "new_count": 2,
+    "old_count": 1,
+    "unexpected_extra": []
+  },
+  "immutable": {
+    "OLD_ROWS_MISSING": 0,
+    "OLD_ROWS_MUTATED": 0,
+    "alert_events": {
+      "missing": 0,
+      "missing_ids_sample": [],
+      "mutated": 0,
+      "mutated_ids_sample": [],
+      "new_count": 62,
+      "old_count": 62
+    },
+    "candidate_items": {
+      "missing": 0,
+      "missing_ids_sample": [],
+      "mutated": 0,
+      "mutated_ids_sample": [],
+      "new_count": 15834,
+      "old_count": 15834
+    },
+    "candidate_snapshots": {
+      "missing": 0,
+      "missing_ids_sample": [],
+      "mutated": 0,
+      "mutated_ids_sample": [],
+      "new_count": 5278,
+      "old_count": 5278
+    },
+    "config_versions": {
+      "missing": 0,
+      "missing_ids_sample": [],
+      "mutated": 0,
+      "mutated_ids_sample": [],
+      "new_count": 0,
+      "old_count": 0
+    },
+    "daily_summaries": {
+      "missing": 0,
+      "missing_ids_sample": [],
+      "mutated": 0,
+      "mutated_ids_sample": [],
+      "new_count": 12,
+      "old_count": 12
+    },
+    "notes": {
+      "missing": 0,
+      "missing_ids_sample": [],
+      "mutated": 0,
+      "mutated_ids_sample": [],
+      "new_count": 0,
+      "old_count": 0
+    }
+  },
+  "new_counts": {
+    "alert_events": 62,
+    "automation_tasks": 39,
+    "candidate_items": 15834,
+    "candidate_outcomes": 66,
+    "candidate_repeat_days": 1618,
+    "candidate_repeat_states": 1119,
+    "candidate_snapshots": 5278,
+    "config_versions": 0,
+    "daily_summaries": 12,
+    "notes": 0,
+    "runtime_sessions": 65,
+    "service_leases": 1,
+    "web_events": 21332,
+    "web_public_state": 1,
+    "web_sessions": 57,
+    "web_users": 6
+  },
+  "new_integrity": {
+    "foreign_key_check_rows": 0,
+    "integrity_check": "ok"
+  },
+  "new_schema_version": 10,
+  "old_counts": {
+    "alert_events": 62,
+    "automation_tasks": 39,
+    "candidate_items": 15834,
+    "candidate_outcomes": 66,
+    "candidate_snapshots": 5278,
+    "config_versions": 0,
+    "daily_summaries": 12,
+    "notes": 0,
+    "runtime_sessions": 63,
+    "service_leases": 1,
+    "web_events": 21332,
+    "web_public_state": 1,
+    "web_sessions": 55,
+    "web_users": 6
+  },
+  "old_integrity": {
+    "foreign_key_check_rows": 0,
+    "integrity_check": "ok"
+  },
+  "old_schema_version": 9,
+  "outcomes_identity": {
+    "identity_missing": 0,
+    "identity_mutated": 0,
+    "missing_ids_sample": [],
+    "mutated_ids_sample": [],
+    "new_count": 66,
+    "old_count": 66
+  }
+}

@@ -1,0 +1,24 @@
+MIGRATION_COPY=/tmp/sw-repeat-audit/v9-migrated.sqlite3
+SOURCE_V9=/tmp/sw-repeat-audit/v9-backup/stockwatcher.sqlite3
+SOURCE_SHA256=ce5766a53604bcc3be3230013f17d0a47591ebcaa0f6263fe9788993ed62ed11
+HOST_BACKUP=~/StockWatcherBackups/auto-20260826T040404Z/stockwatcher-20260826T120405Z
+VOLUME_BACKUP=/backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z
+
+version_before=9
+version_after=10
+integrity_check=ok
+foreign_key_check_rows=0
+initialize_called=2
+
+added_schema_objects:
+  candidate_repeat_days
+  candidate_repeat_states
+  idx_candidate_repeat_days_active
+  idx_candidate_repeat_days_date
+  idx_candidate_repeat_states_active
+
+removed_schema_objects: (none)
+changed_schema_objects: (none)
+
+DROP/RENAME/column-loss: none observed in sqlite_master diff
+v9→v10 unit test: tests/test_candidate_repeat_tracker.py::test_v9_to_v10_migration_adds_repeat_tables_and_backup (included in FEATURE pytest, passed)

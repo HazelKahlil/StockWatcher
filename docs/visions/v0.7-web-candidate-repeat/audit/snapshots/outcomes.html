@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>次日复盘 · StockWatcher</title>
+<link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
+<link rel="stylesheet" href="/static/app.css?v=15">
+<meta name="color-scheme" content="light">
+<meta name="csrf-token" content="866c32a00e49318b24b21c5a4cebe51147b12bdf5fe3a061607eeefeee57428e">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">StockWatcher</a>
+  
+  <nav aria-label="主导航">
+    <a href="/">当前观察</a>
+    <a href="/alerts">提醒中心</a>
+    <a href="/history">历史</a>
+    <a href="/outcomes">次日复盘</a>
+    <a href="/summary">盘后总结</a>
+    
+  </nav>
+  <div class="account" aria-label="账户">
+    <span class="account-item account-username">[redacted-user]</span>
+    <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+  </div>
+  
+</header>
+<main id="main">
+
+<section class="outcome-page" aria-labelledby="outcome-page-title">
+  <header class="outcome-page-header">
+    <div>
+      <span class="editorial-kicker">CANDIDATE OUTCOMES</span>
+      <h1 id="outcome-page-title">次日同点复盘</h1>
+      <p class="muted">仅复盘固定 09:45 与 14:45 正式候选；缺少可验证行情的数据不计入统计。</p>
+      <p class="outcome-disclaimer">理论复盘未计手续费、滑点及实际成交限制，不构成投资建议。</p>
+    </div>
+    <div class="outcome-range" role="group" aria-label="复盘范围">
+      <button type="button" data-outcome-range="week">近 1 周</button>
+      <button type="button" data-outcome-range="month" class="is-active">近 1 月</button>
+      <button type="button" data-outcome-range="all">全部</button>
+    </div>
+  </header>
+
+  <p id="outcome-page-status" class="outcome-page-status" role="status" aria-live="polite">正在读取复盘记录…</p>
+  <p id="outcome-page-backfill" class="outcome-backfill muted"></p>
+
+  <section id="outcome-page-summary" class="outcome-summary-grid" aria-label="总体统计"></section>
+
+  <div class="outcome-slot-grid">
+    <section class="outcome-slot-card" aria-labelledby="morning-title">
+      <span class="editorial-kicker">MORNING SLOT</span>
+      <h2 id="morning-title">上午档 · 09:45</h2>
+      <div id="outcome-morning"></div>
+    </section>
+    <section class="outcome-slot-card" aria-labelledby="afternoon-title">
+      <span class="editorial-kicker">AFTERNOON SLOT</span>
+      <h2 id="afternoon-title">下午档 · 14:45</h2>
+      <div id="outcome-afternoon"></div>
+    </section>
+  </div>
+
+  <section class="outcome-portfolio" aria-labelledby="portfolio-title">
+    <div class="outcome-editorial-header">
+      <div>
+        <span class="editorial-kicker">DAILY PORTFOLIO</span>
+        <h2 id="portfolio-title">日组合</h2>
+      </div>
+    </div>
+    <div id="outcome-portfolios" class="table-wrap"></div>
+  </section>
+
+  <section aria-labelledby="records-title">
+    <div class="outcome-editorial-header">
+      <div>
+        <span class="editorial-kicker">SETTLEMENT LEDGER</span>
+        <h2 id="records-title">记录明细</h2>
+      </div>
+    </div>
+    <div id="outcome-records" class="outcome-record-grid"></div>
+  </section>
+</section>
+
+</main>
+
+<script type="module" src="/static/app.js?v=6"></script>
+
+<script type="module" src="/static/outcomes.js?v=1"></script>
+
+
+</body>
+</html>
