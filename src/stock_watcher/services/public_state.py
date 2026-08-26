@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from stock_watcher.runtime.repeat_tracker import CandidateRepeatTracker, RepeatProjection
 from stock_watcher.storage import SQLiteStore
 
 SERVICE_STATE_ALIASES = {
@@ -106,6 +107,7 @@ class PublicStateBuilder:
         payload["active_command"] = self._active_command()
         payload["fund_module"] = stored.get("fund_module", "unavailable")
         payload["formal_count"] = stored.get("formal_count", 0)
+        payload["candidates"] = self._with_repeat_fields(payload.get("candidates", []))
         return payload
 
     def _worker_heartbeat_age(
@@ -165,6 +167,19 @@ class PublicStateBuilder:
             "snapshot_id",
         )
         return [dict(zip(keys, row)) for row in rows]
+
+    def _with_repeat_fields(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        codes = [str(row.get("code", "")) for row in candidates if row.get("code")]
+        if not codes:
+            return candidates
+        projections = CandidateRepeatTracker(self.store).projections_from_store(codes)
+        enriched: list[dict[str, Any]] = []
+        for row in candidates:
+            payload = dict(row)
+            code = str(payload.get("code", ""))
+            payload.update(projections.get(code, RepeatProjection()).as_fields())
+            enriched.append(payload)
+        return enriched
 
     def _last_alert(self) -> dict[str, Any] | None:
         with self.store.connect() as connection:

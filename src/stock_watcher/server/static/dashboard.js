@@ -153,17 +153,20 @@ function compactPct(value) {
   return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
 }
 
-function compactAlertCard(candidate, triggeringCodes) {
+function compactAlertCard(candidate, triggeringCodes, showRepeat) {
   const rank = Math.min(3, Math.max(1, Number(candidate.rank) || 1));
   const level = levelMeta(candidate);
   const isTrigger = triggeringCodes.has(String(candidate.code));
   const changePct = Number(candidate.change_pct);
   const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
+  const repeat = showRepeat && candidate.repeat_active && candidate.repeat_label
+    ? `<span class="repeat-badge">${esc(candidate.repeat_label)}</span>`
+    : '';
   return `
     <article class="strong-alert-mini-card ${isTrigger ? 'is-trigger' : ''}">
       <span class="rank rank-${rank}-badge">${rank}</span>
       <div class="strong-alert-mini-identity">
-        <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}</strong>
+        <strong class="strong-alert-mini-name">${esc(candidate.name || '待确认')}${repeat}</strong>
         <span class="strong-alert-mini-code">${esc(candidate.code || '—')}</span>
       </div>
       <span class="strong-alert-mini-pct" data-direction="${direction}">${compactPct(candidate.change_pct)}</span>
@@ -203,14 +206,17 @@ function renderNextAutomaticAlert() {
   activeAutomaticAlert = automaticAlertQueue.shift();
   const { payload, state } = activeAutomaticAlert;
   const triggeringCodes = new Set((payload.triggering_codes || []).map(String));
-  const candidates = Array.isArray(state?.candidates) ? state.candidates.slice(0, 3) : [];
+  const snapshotCandidates = Array.isArray(payload.candidates) ? payload.candidates.slice(0, 3) : [];
+  const stateCandidates = Array.isArray(state?.candidates) ? state.candidates.slice(0, 3) : [];
+  const candidates = snapshotCandidates.length ? snapshotCandidates : stateCandidates;
+  const showRepeat = payload.trigger_type === 'intraday';
   const triggerCandidate = candidates.find((candidate) => triggeringCodes.has(String(candidate.code)));
   const triggerName = triggerCandidate?.name || [...triggeringCodes][0] || '候选股票';
   const sectorName = triggerCandidate?.sector_name || '';
   const alertId = esc(payload.alert_id || Date.now());
   const meta = alertMeta(payload.trigger_type);
   const cards = candidates.length
-    ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes)).join('')
+    ? candidates.map((candidate) => compactAlertCard(candidate, triggeringCodes, showRepeat)).join('')
     : `<div class="strong-alert-syncing">${esc([...triggeringCodes].join('、') || '触发股票')} · 实时卡片同步中</div>`;
   overlay.hidden = false;
   overlay.classList.remove('is-leaving');

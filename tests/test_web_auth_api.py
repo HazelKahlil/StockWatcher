@@ -798,6 +798,20 @@ def test_dashboard_assets_have_no_inline_styles() -> None:
     assert dashboard_script.index("onEvent((event)") < dashboard_script.index(
         "connectEvents();"
     )
+    assert "payload.candidates" in dashboard_script
+    assert "showRepeat = payload.trigger_type === 'intraday'" in dashboard_script
+    card_for = dashboard_script[
+        dashboard_script.index("function cardFor") : dashboard_script.index("function compactPrice")
+    ]
+    compact = dashboard_script[
+        dashboard_script.index("function compactAlertCard") : dashboard_script.index(
+            "function alertMeta"
+        )
+    ]
+    assert "repeat-badge" not in card_for
+    assert "repeat-badge" in compact
+    assert "notify('近期多次出现'" not in dashboard_script
+    assert "new Audio" not in dashboard_script
     for relative in (
         "src/stock_watcher/server/templates/dashboard.html",
         "src/stock_watcher/server/static/dashboard.js",
@@ -833,7 +847,7 @@ def test_desktop_app_theme_outcome_page_and_bottom_right_alert_contract() -> Non
     assert "font-size: clamp(1.4rem, 2.5vw, 1.85rem)" in css
     assert '.cards .ashare-pct[data-direction="up"]' in css
     assert "color: var(--top3-gain-red) !important" in css
-    assert 'href="/static/app.css?v=14"' in base
+    assert 'href="/static/app.css?v=15"' in base
     assert 'src="/static/app.js?v=6"' in base
     assert ".hero-action-button.btn-notify" in css
     assert ".dashboard-cards > .card {" in css
@@ -1081,3 +1095,27 @@ def test_token_endpoints_never_echo_token(app_env: tuple[Any, SQLiteStore, Any, 
     raw = response.text
     assert "super-secret-token-value-xyz" not in raw
     assert "fingerprint" in response.json()
+
+
+def test_history_page_has_purple_filter_and_does_not_paint_homepage_cards() -> None:
+    root = Path(__file__).resolve().parents[1]
+    history_page = (root / "src/stock_watcher/server/templates/history.html").read_text(
+        encoding="utf-8"
+    )
+    history_script = (root / "src/stock_watcher/server/static/history.js").read_text(
+        encoding="utf-8"
+    )
+    dashboard = (root / "src/stock_watcher/server/static/dashboard.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'id="repeat-only"' in history_page
+    assert "只看紫色标记" in history_page
+    assert "repeat_active" in history_script
+    assert "repeat-badge" in history_script
+    assert "candidate.name" in history_script
+    card_start = dashboard.index("function cardFor")
+    card_end = dashboard.index("function compactPrice")
+    assert "repeat-badge" not in dashboard[card_start:card_end]
+    assert "payload.trigger_type === 'intraday'" in dashboard
+    assert "showAutomaticAlert(event.payload, latestDashboardState, alertSequence)" in dashboard
+    assert dashboard.count("notify(") == 2

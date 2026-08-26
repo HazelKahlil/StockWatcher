@@ -467,3 +467,54 @@ def test_browser_fresh_load_uses_server_watermark_then_reconnects_incrementally(
     assert "1000 * (2 ** reconnectAttempt)" in script
     assert "Math.random() * 500" in script
     assert "setTimeout(connectEvents, 3000)" not in script
+
+
+def test_ws_replays_repeat_fields_on_candidates_and_alert_events(
+    app_env: tuple[Any, SQLiteStore],
+) -> None:
+    app, store = app_env
+    outbox = app.state.outbox
+    candidate = {
+        "code": "600001.SH",
+        "name": "测试1",
+        "repeat_active": True,
+        "repeat_count": 3,
+        "repeat_span_days": 12,
+        "repeat_label": "近12天第3次",
+        "repeat_sequence_started_on": "2026-08-01",
+        "repeat_activated_at": "2026-08-12T10:00:00+08:00",
+        "repeat_last_seen_on": "2026-08-12",
+    }
+    with store.transaction() as connection:
+        outbox.append(
+            connection,
+            event_type="candidates.updated",
+            payload={"snapshot_id": 11, "state_version": 11, "candidates": [candidate]},
+            source_kind="snapshot",
+            source_id="11",
+        )
+        outbox.append(
+            connection,
+            event_type="alert.created",
+            payload={
+                "alert_id": 7,
+                "snapshot_id": 11,
+                "trigger_type": "intraday",
+                "candidates": [candidate],
+            },
+            source_kind="alert",
+            source_id="7",
+        )
+    client = login(app)
+    seen: dict[str, Any] = {}
+    with client.websocket_connect("/ws/v1/events?after_id=0") as websocket:
+        for _ in range(8):
+            message = json.loads(websocket.receive_text())
+            event_type = message.get("event_type")
+            if event_type in {"candidates.updated", "alert.created"}:
+                seen[event_type] = message["payload"]["candidates"][0]
+            if len(seen) == 2:
+                break
+    assert seen["candidates.updated"]["repeat_label"] == "近12天第3次"
+    assert seen["alert.created"]["repeat_active"] is True
+    assert seen["alert.created"]["repeat_count"] == 3

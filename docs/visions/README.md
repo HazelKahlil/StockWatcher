@@ -1,10 +1,13 @@
 # 版本索引
 
-> 最后更新：2026-08-13
+> 最后更新：2026-08-26
 > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
 
 ## 活跃版本
 
+- **[v0.7-web-candidate-repeat](v0.7-web-candidate-repeat/README.md)** —
+  Web 最终展示 Top3 的「近期多次出现」紫色观察提示、Schema v10 与历史回算
+  （状态：进行中；Web 继续 `BLOCKED / NOT_ACCEPTED`）。
 - **[v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md)** —
   正式 09:45/14:45 三只候选的下一真实交易日同档理论复盘、桌面 SQLite v8 / Web v9、
   历史回补与桌面/Web UI
@@ -47,6 +50,7 @@
 | [v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md) | 固定 Mac / Web / Windows 可重建内部试用基准 | 源码基准；Web 未接受、Windows 非权威 M0 | 2026-08-11 |
 | [v0.5-stabilization](v0.5-stabilization/README.md) | 目标环境稳定化、安装与试用，通过后发布 v1.0.0 | 计划中 | |
 | [v0.6-candidate-outcomes](v0.6-candidate-outcomes/README.md) | 下一真实交易日同档理论复盘、统计、历史回补与桌面 UI | 本地实现；真实同点行情待验收 | |
+| [v0.7-web-candidate-repeat](v0.7-web-candidate-repeat/README.md) | Web「近期多次出现」紫色观察提示 | 进行中 | |
 
 ## 候选方向（尚未登记为执行版本）
 

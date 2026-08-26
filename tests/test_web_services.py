@@ -740,7 +740,7 @@ def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (9,)
+        ).fetchone() == (10,)
         assert connection.execute(
             "SELECT value FROM notes WHERE key = 'sentinel'"
         ).fetchone() == ("kept",)
@@ -764,6 +764,8 @@ def test_migration_v6_to_v9_preserves_data(tmp_path: Path) -> None:
             "web_public_state",
             "web_audit_log",
             "candidate_outcomes",
+            "candidate_repeat_days",
+            "candidate_repeat_states",
         ):
             assert table in tables
     assert path.with_suffix(".sqlite3.pre-v7.bak").is_file()
@@ -776,7 +778,7 @@ def test_migration_idempotent(tmp_path: Path) -> None:
     with store.connect() as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (9,)
+        ).fetchone() == (10,)
 
 
 def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -> None:
@@ -793,7 +795,7 @@ def test_migration_v7_to_v9_keeps_relaxed_command_event_dedupe(tmp_path: Path) -
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
-        ).fetchone() == (9,)
+        ).fetchone() == (10,)
         index_sql = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'index' "
             "AND name = 'idx_web_events_source_dedupe'"

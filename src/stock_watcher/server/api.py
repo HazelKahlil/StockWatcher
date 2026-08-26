@@ -18,6 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stock_watcher.domain import SHANGHAI, OutcomeStatus, build_outcome_review
 from stock_watcher.runtime import candidate_outcome_rows
+from stock_watcher.runtime.repeat_tracker import (
+    CandidateRepeatTracker,
+    empty_repeat_fields,
+    parse_shanghai_timestamp,
+)
 from stock_watcher.services import CommandService, CommandType, EventOutbox
 from stock_watcher.services.public_state import PublicStateBuilder
 from stock_watcher.services.secret_service import SecretService
@@ -480,6 +485,7 @@ def state_router() -> APIRouter:
         from_date: str | None = Query(None, alias="from"),
         to: str | None = Query(None),
         code: str | None = Query(None),
+        repeat_active: bool | None = Query(None),
         session: dict[str, Any] = Depends(current_session),
         store: SQLiteStore = Depends(get_read_store),
     ) -> dict[str, Any]:
@@ -489,20 +495,53 @@ def state_router() -> APIRouter:
             from_date=_parse_date(from_date),
             to_date=_parse_date(to),
             code=code,
+            repeat_active=repeat_active,
         )
+        items_by_snapshot = store.query_snapshot_items([int(row["id"]) for row in rows])
+        tracker = CandidateRepeatTracker(store)
         items = []
-        for row in rows:
-            payload = json.loads(row["payload_json"])
-            items.append(
-                {
-                    "snapshot_id": row["id"],
-                    "source_ts": row["source_ts"],
-                    "generated_at": row["generated_at"],
-                    "health": row["health"],
-                    "overall_weak": row["overall_weak"],
-                    "candidates": payload.get("candidates", []),
-                }
-            )
+        with store.connect() as connection:
+            for row in rows:
+                snapshot_id = int(row["id"])
+                trade_date = None
+                parsed = parse_shanghai_timestamp(row["source_ts"])
+                if parsed is not None:
+                    trade_date = parsed.date()
+                displayed = items_by_snapshot.get(snapshot_id, [])
+                candidates = []
+                for candidate in displayed:
+                    payload = {
+                        "rank": candidate["rank"],
+                        "code": candidate["code"],
+                        "name": candidate["name"],
+                        "level": candidate["level"],
+                        "is_formal": candidate["is_formal"],
+                        "is_supplement": candidate["is_supplement"],
+                        "price": candidate["price"],
+                        "change_pct": candidate["change_pct"],
+                        "sector_name": candidate["sector_name"],
+                    }
+                    if trade_date is not None:
+                        payload.update(
+                            tracker.historical_fields_for(
+                                connection,
+                                code=str(candidate["code"]),
+                                trade_date=trade_date,
+                            )
+                        )
+                    else:
+                        payload.update(empty_repeat_fields())
+                    candidates.append(payload)
+                items.append(
+                    {
+                        "snapshot_id": snapshot_id,
+                        "source_ts": row["source_ts"],
+                        "generated_at": row["generated_at"],
+                        "health": row["health"],
+                        "overall_weak": row["overall_weak"],
+                        "candidates": candidates,
+                    }
+                )
         return {"items": items, "next_cursor": items[-1]["snapshot_id"] if items else None}
 
     @router.get("/outcomes")

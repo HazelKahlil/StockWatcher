@@ -47,11 +47,13 @@ from stock_watcher.runtime import (
     AutomationTaskState,
     AutomationTaskType,
     CandidateOutcomeTracker,
+    CandidateRepeatTracker,
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
     MarketSessionSchedule,
     OutcomeActionReport,
+    RepeatProjection,
     RuntimeUniverseCache,
     ScanOutcome,
     TushareBootstrapLoader,
@@ -66,6 +68,7 @@ from stock_watcher.runtime import (
 )
 from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
 from stock_watcher.runtime.post_close_report_model import LocalFallbackReport
+from stock_watcher.runtime.repeat_tracker import REPEAT_BACKFILL_VERSION
 from stock_watcher.storage import SQLiteStore
 
 from .command_service import CommandService, CommandStatus, CommandType
@@ -291,6 +294,8 @@ class StockWatcherService:
         self._outcome_initial_backfill_retry_at: datetime | None = None
         self._outcome_unresolved_retry_at: datetime | None = None
         self._outcome_executor_closed = False
+        self._repeat_tracker = CandidateRepeatTracker(store)
+        self._repeat_backfill_done = False
         self._command_context = threading.local()
         self._holder_id = ""
         self._fencing_token = 0
@@ -763,6 +768,7 @@ class StockWatcherService:
 
     def _tick_locked(self, now: datetime) -> TickResult:
         self._prune_history_if_due(now)
+        self._backfill_repeat_occurrences()
         self._detect_scan_stall(now)
         due_tasks = self._prepare_automation_tasks(now)
         summary_task = next(
@@ -901,7 +907,7 @@ class StockWatcherService:
             else self._schedule.crossed_fixed_trigger(now, completed_at)
         )
         snapshot_id = (
-            self._persist_scan_snapshot(completed_at)
+            self._persist_scan_snapshot(completed_at, source_type=requested_trigger)
             if outcome.health is HealthState.HEALTHY and outcome.batch is not None
             else None
         )
@@ -1136,6 +1142,22 @@ class StockWatcherService:
         with self.store.transaction() as connection:
             if snapshot_id is None:
                 snapshot_id = self.store.record_batch_in(connection, self.batch)
+                if self.state is HealthState.HEALTHY:
+                    self._repeat_tracker.observe_batch_in(
+                        connection,
+                        batch=self.batch,
+                        snapshot_id=snapshot_id,
+                        seen_at=now,
+                        source_type=trigger.value,
+                    )
+            else:
+                self._repeat_tracker.note_source_in(
+                    connection,
+                    batch=self.batch,
+                    snapshot_id=snapshot_id,
+                    seen_at=now,
+                    source_type=trigger.value,
+                )
             self._snapshot_id = snapshot_id
             alert_id = self.store.record_alert_event_in(
                 connection,
@@ -1157,7 +1179,7 @@ class StockWatcherService:
                     )
                 )
                 self.store.create_candidate_outcomes_in(connection, outcome_entries)
-            candidates = self._candidate_payload(self.batch)
+            candidates = self._candidate_payload(self.batch, connection=connection)
             triggering_codes = (
                 [str(detail["trigger_symbol"])]
                 if detail and detail.get("trigger_symbol")
@@ -1176,6 +1198,7 @@ class StockWatcherService:
                     "funds_unconfirmed": (
                         alert_detail.get("funds_unconfirmed")
                     ),
+                    "candidates": candidates,
                 },
                 source_kind="alert",
                 source_id=str(alert_id),
@@ -1186,7 +1209,7 @@ class StockWatcherService:
                 state_version=state_version,
                 snapshot_id=snapshot_id,
                 source_ts=self.batch.source_ts.isoformat(),
-                payload=self._public_payload(now, event_id=event_id),
+                payload=self._public_payload(now, event_id=event_id, connection=connection),
             )
         if created_snapshot:
             self._emit(
@@ -1210,13 +1233,25 @@ class StockWatcherService:
         )
         return snapshot_id
 
-    def _persist_scan_snapshot(self, now: datetime) -> int | None:
+    def _persist_scan_snapshot(
+        self,
+        now: datetime,
+        *,
+        source_type: str = "automatic",
+    ) -> int | None:
         """Persist every healthy automatic result for factor-level audit."""
         if self.batch is None or len(self.batch.candidates) != 3:
             return None
         with self.store.transaction() as connection:
             snapshot_id = self.store.record_batch_in(connection, self.batch)
             self._snapshot_id = snapshot_id
+            self._repeat_tracker.observe_batch_in(
+                connection,
+                batch=self.batch,
+                snapshot_id=snapshot_id,
+                seen_at=now,
+                source_type=source_type,
+            )
             state_version = self._bump_state_version()
             event_id = self._outbox.append(
                 connection,
@@ -1226,7 +1261,7 @@ class StockWatcherService:
                     "state_version": state_version,
                     "source_ts": self.batch.source_ts.isoformat(),
                     "overall_weak": self.batch.overall_weak,
-                    "candidates": self._candidate_payload(self.batch),
+                    "candidates": self._candidate_payload(self.batch, connection=connection),
                 },
                 source_kind="snapshot",
                 source_id=str(snapshot_id),
@@ -1236,11 +1271,21 @@ class StockWatcherService:
                 state_version=state_version,
                 snapshot_id=snapshot_id,
                 source_ts=self.batch.source_ts.isoformat(),
-                payload=self._public_payload(now, event_id=event_id),
+                payload=self._public_payload(now, event_id=event_id, connection=connection),
             )
         return snapshot_id
 
-    def _candidate_payload(self, batch: CandidateBatch) -> list[dict[str, Any]]:
+    def _candidate_payload(
+        self,
+        batch: CandidateBatch,
+        *,
+        connection: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        codes = [candidate.code for candidate in batch.candidates]
+        if connection is not None:
+            projections = self._repeat_tracker.projections_for_codes(connection, codes)
+        else:
+            projections = self._repeat_tracker.projections_from_store(codes)
         return [
             {
                 "rank": index,
@@ -1255,6 +1300,7 @@ class StockWatcherService:
                 "sector_type": getattr(candidate, "sector_type", "industry"),
                 "total_score": candidate.total_score,
                 "source_ts": batch.source_ts.isoformat(),
+                **projections.get(candidate.code, RepeatProjection()).as_fields(),
             }
             for index, candidate in enumerate(batch.candidates, start=1)
         ]
@@ -1814,13 +1860,22 @@ class StockWatcherService:
         with self.store.transaction() as connection:
             snapshot_id = self.store.record_batch_in(connection, self.batch)
             self._snapshot_id = snapshot_id
+            if self.state is HealthState.HEALTHY:
+                self._repeat_tracker.observe_batch_in(
+                    connection,
+                    batch=self.batch,
+                    snapshot_id=snapshot_id,
+                    seen_at=now,
+                    source_type="manual",
+                )
             state_version = self._bump_state_version()
+            candidates = self._candidate_payload(self.batch, connection=connection)
             self.store.upsert_public_state(
                 connection,
                 state_version=state_version,
                 snapshot_id=snapshot_id,
                 source_ts=self.batch.source_ts.isoformat(),
-                payload=self._public_payload(now),
+                payload=self._public_payload(now, connection=connection),
             )
         self._emit(
             event_type="candidates.updated",
@@ -1829,7 +1884,7 @@ class StockWatcherService:
                 "state_version": state_version,
                 "source_ts": self.batch.source_ts.isoformat(),
                 "overall_weak": self.batch.overall_weak,
-                "candidates": self._candidate_payload(self.batch),
+                "candidates": candidates,
             },
             source_kind="snapshot",
             source_id=str(snapshot_id),
@@ -2055,14 +2110,24 @@ class StockWatcherService:
         self._state_version += 1
         return self._state_version
 
-    def _public_payload(self, now: datetime, *, event_id: int | None = None) -> dict[str, Any]:
+    def _public_payload(
+        self,
+        now: datetime,
+        *,
+        event_id: int | None = None,  # noqa: ARG002 - kept for outbox-aware callers
+        connection: Any | None = None,
+    ) -> dict[str, Any]:
         batch = self.batch
         return {
             "service_state": self.state.value.casefold(),
             "market_state": self._market_state_label(now),
             "state_version": self._state_version,
             "snapshot_id": self._snapshot_id,
-            "candidates": self._candidate_payload(batch) if batch is not None else [],
+            "candidates": (
+                self._candidate_payload(batch, connection=connection)
+                if batch is not None
+                else []
+            ),
             "overall_weak": bool(batch.overall_weak) if batch is not None else False,
             "source_ts": batch.source_ts.isoformat() if batch is not None else None,
             "fund_module": (
@@ -2099,7 +2164,7 @@ class StockWatcherService:
                 state_version=state_version,
                 snapshot_id=snapshot_id,
                 source_ts=self.batch.source_ts.isoformat() if self.batch is not None else None,
-                payload=self._public_payload(now),
+                payload=self._public_payload(now, connection=connection),
             )
         self._emit(
             event_type="state.changed",
@@ -2129,6 +2194,34 @@ class StockWatcherService:
             )
         except Exception:
             return 0
+
+    def _backfill_repeat_occurrences(self) -> None:
+        if self._repeat_backfill_done:
+            return
+        existing = self.store.get_app_setting("candidate_repeat_backfill_status")
+        if (
+            isinstance(existing, dict)
+            and existing.get("status") == "completed"
+            and existing.get("version") == REPEAT_BACKFILL_VERSION
+        ):
+            self._repeat_backfill_done = True
+            return
+        try:
+            report = self._repeat_tracker.backfill()
+            self.store.set_app_setting(
+                "candidate_repeat_backfill_status",
+                {
+                    "status": "completed",
+                    "version": REPEAT_BACKFILL_VERSION,
+                    "snapshots": report.snapshots,
+                    "occurrences": report.occurrences,
+                    "activated": report.activated,
+                    "skipped": report.skipped,
+                },
+            )
+            self._repeat_backfill_done = True
+        except Exception as error:  # noqa: BLE001 - sidecar must not fail the scan
+            logger.warning("candidate repeat backfill failed: %s", type(error).__name__)
 
     def _prune_history_if_due(self, now: datetime) -> None:
         if self._history_pruned_date == now.date():

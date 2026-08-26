@@ -6,7 +6,7 @@ import re
 import shutil
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -29,7 +29,7 @@ class SQLiteStore:
     read_only: bool = False
     recovery_backup_dirs: tuple[Path, ...] = ()
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 9
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 10
 
     _SQLITE_MAGIC = b"SQLite format 3\x00"
     _OUTCOME_COLUMNS: ClassVar[tuple[str, ...]] = (
@@ -430,7 +430,7 @@ class SQLiteStore:
         staging.replace(backup)
 
     def _migrate_to_current(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9):
             raise RuntimeError(f"unsupported schema version: {version}")
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -452,6 +452,8 @@ class SQLiteStore:
                 self._apply_v8_migration(connection)
             if version <= 8:
                 self._apply_v9_migration(connection)
+            if version <= 9:
+                self._apply_v10_migration(connection)
             connection.execute("DELETE FROM schema_version")
             connection.execute(
                 "INSERT INTO schema_version VALUES (?, datetime('now'))",
@@ -889,6 +891,58 @@ class SQLiteStore:
             "ON candidate_outcomes(code, entry_trade_date DESC)"
         )
 
+    @staticmethod
+    def _apply_v10_migration(connection: sqlite3.Connection) -> None:
+        """Add independent repeat-occurrence tables without touching scoring data."""
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS candidate_repeat_days ("
+            "id INTEGER PRIMARY KEY, "
+            "code TEXT NOT NULL, "
+            "name TEXT NOT NULL, "
+            "trade_date TEXT NOT NULL, "
+            "first_seen_at TEXT NOT NULL, "
+            "last_seen_at TEXT NOT NULL, "
+            "first_snapshot_id INTEGER, "
+            "last_snapshot_id INTEGER, "
+            "source_types_json TEXT NOT NULL DEFAULT '[]', "
+            "formal_seen INTEGER NOT NULL DEFAULT 0 CHECK (formal_seen IN (0, 1)), "
+            "supplement_seen INTEGER NOT NULL DEFAULT 0 CHECK (supplement_seen IN (0, 1)), "
+            "count_after INTEGER NOT NULL DEFAULT 0 CHECK (count_after >= 0), "
+            "span_days_after INTEGER NOT NULL DEFAULT 0 CHECK (span_days_after >= 0), "
+            "active_after INTEGER NOT NULL DEFAULT 0 CHECK (active_after IN (0, 1)), "
+            "created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL, "
+            "UNIQUE(code, trade_date))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_repeat_days_date "
+            "ON candidate_repeat_days(trade_date, code)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_repeat_days_active "
+            "ON candidate_repeat_days(active_after, trade_date)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS candidate_repeat_states ("
+            "code TEXT PRIMARY KEY, "
+            "name TEXT NOT NULL, "
+            "active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)), "
+            "window_started_on TEXT, "
+            "window_expires_on TEXT, "
+            "sequence_started_on TEXT, "
+            "occurrence_count INTEGER NOT NULL DEFAULT 0 CHECK (occurrence_count >= 0), "
+            "span_days INTEGER NOT NULL DEFAULT 0 CHECK (span_days >= 0), "
+            "activated_at TEXT, "
+            "activated_trade_date TEXT, "
+            "last_seen_on TEXT, "
+            "last_seen_at TEXT, "
+            "last_snapshot_id INTEGER, "
+            "updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_candidate_repeat_states_active "
+            "ON candidate_repeat_states(active, last_seen_on)"
+        )
 
     @staticmethod
     def _assert_integrity(connection: sqlite3.Connection) -> None:
@@ -924,6 +978,8 @@ class SQLiteStore:
             "web_public_state",
             "web_audit_log",
             "candidate_outcomes",
+            "candidate_repeat_days",
+            "candidate_repeat_states",
         }
         tables = {
             str(row[0])
@@ -2310,6 +2366,7 @@ class SQLiteStore:
         from_date: str | None = None,
         to_date: str | None = None,
         code: str | None = None,
+        repeat_active: bool | None = None,
     ) -> list[dict[str, Any]]:
         """Page candidate snapshots newest-first with optional date/code filters.
 
@@ -2335,6 +2392,15 @@ class SQLiteStore:
                 "WHERE code = ?)"
             )
             values.append(code)
+        if repeat_active:
+            clauses.append(
+                "EXISTS ("
+                "SELECT 1 FROM candidate_items AS i "
+                "JOIN candidate_repeat_days AS d "
+                "ON d.code = i.code AND d.trade_date = substr(s.source_ts, 1, 10) "
+                "WHERE i.snapshot_id = s.id AND d.active_after = 1"
+                ")"
+            )
         query = (
             "SELECT s.id, s.source_ts, s.generated_at, s.health, s.overall_weak, "
             "s.provider_version, s.config_version, s.app_version, s.payload_json "
@@ -2360,6 +2426,41 @@ class SQLiteStore:
             }
             for row in rows
         ]
+
+    def query_snapshot_items(self, snapshot_ids: Sequence[int]) -> dict[int, list[dict[str, Any]]]:
+        """Load displayed Top3 rows for a page of snapshots, grouped by id."""
+        if not snapshot_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in snapshot_ids)
+        query = (
+            "SELECT snapshot_id, rank, code, name, level, is_formal, is_supplement, "
+            "price, change_pct, sector_code, sector_name, fund_label, explanation "
+            f"FROM candidate_items WHERE snapshot_id IN ({placeholders}) "
+            "ORDER BY snapshot_id, rank"
+        )
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(int(item) for item in snapshot_ids)).fetchall()
+        grouped: dict[int, list[dict[str, Any]]] = {int(item): [] for item in snapshot_ids}
+        keys = (
+            "snapshot_id",
+            "rank",
+            "code",
+            "name",
+            "level",
+            "is_formal",
+            "is_supplement",
+            "price",
+            "change_pct",
+            "sector_code",
+            "sector_name",
+            "fund_label",
+            "explanation",
+        )
+        for row in rows:
+            payload = dict(zip(keys, row))
+            snapshot_id = int(payload.pop("snapshot_id"))
+            grouped.setdefault(snapshot_id, []).append(payload)
+        return grouped
 
     def get_snapshot_detail(self, snapshot_id: int, code: str) -> dict[str, Any] | None:
         """Return one immutable snapshot plus the requested candidate row."""

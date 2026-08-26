@@ -2,6 +2,15 @@ import { apiJson, esc, fmtTime } from './app.js?v=6';
 
 let cursor = null;
 
+function candidateCell(candidate) {
+  const badge = candidate.repeat_active && candidate.repeat_label
+    ? ` <span class="repeat-badge">${esc(candidate.repeat_label)}</span>`
+    : '';
+  const name = candidate.name || '待确认';
+  const code = candidate.code || '—';
+  return `${esc(name)} <span class="muted">${esc(code)}</span>${badge}`;
+}
+
 function render(rows, append = false) {
   const wrap = document.getElementById('history');
   if (!rows.length) {
@@ -17,7 +26,7 @@ function render(rows, append = false) {
           <td>#${row.snapshot_id}</td>
           <td>${fmtTime(row.source_ts)}</td>
           <td>${esc(row.health)}${row.overall_weak ? ' <span class="weak-note">整体偏弱</span>' : ''}</td>
-          <td>${esc((row.candidates || []).map((candidate) => `${candidate.rank}.${candidate.code}`).join('；'))}</td>
+          <td>${(row.candidates || []).map(candidateCell).join('<br>')}</td>
         </tr>`).join('')}
     </tbody>
   </table>`;
@@ -31,9 +40,11 @@ async function load(append = false) {
   const from = document.getElementById('from').value;
   const to = document.getElementById('to').value;
   const code = document.getElementById('code').value.trim();
+  const repeatOnly = document.getElementById('repeat-only').checked;
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   if (code) params.set('code', code);
+  if (repeatOnly) params.set('repeat_active', 'true');
   const payload = await apiJson(`/api/v1/history?${params}`);
   render(payload.items, append);
   cursor = payload.next_cursor;
@@ -43,6 +54,10 @@ async function load(append = false) {
 document.addEventListener('DOMContentLoaded', () => {
   load();
   document.getElementById('filter-btn').addEventListener('click', () => {
+    cursor = null;
+    load();
+  });
+  document.getElementById('repeat-only').addEventListener('change', () => {
     cursor = null;
     load();
   });

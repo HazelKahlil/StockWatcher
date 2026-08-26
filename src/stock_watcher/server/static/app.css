@@ -1649,6 +1649,21 @@ button:hover,
 .strong-alert-mini-identity { min-width: 0; }
 .strong-alert-mini-name { margin: 0; font-size: 0.95rem; }
 .strong-alert-mini-code { margin: 0.1rem 0 0; font-family: var(--font-sans); font-size: 0.7rem; }
+.repeat-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  background: #6b3aa0;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  vertical-align: 0.08em;
+  white-space: nowrap;
+}
+.repeat-filter { display: inline-flex; align-items: center; gap: 0.35rem; }
+#history td .repeat-badge { margin-left: 0.4rem; }
 .strong-alert-mini-pct { color: #df3c3c; font-family: var(--font-sans); font-size: 1rem; font-weight: 780; }
 .strong-alert-mini-price { color: #667487; font-family: var(--font-sans); font-size: 0.72rem; opacity: 1; }
 .strong-alert-mini-card .level-tag {

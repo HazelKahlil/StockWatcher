@@ -38,6 +38,13 @@ from .post_close_review import (
     render_post_close_markdown,
     write_post_close_report,
 )
+from .repeat_tracker import (
+    CandidateRepeatTracker,
+    RepeatBackfillReport,
+    RepeatProjection,
+    empty_repeat_fields,
+    format_repeat_label,
+)
 from .scan_coordinator import (
     FullMarketScanCoordinator,
     IncompleteScanError,
@@ -73,10 +80,13 @@ __all__ = [
     "ScanInProgressError",
     "MarketSessionSchedule",
     "CandidateOutcomeTracker",
+    "CandidateRepeatTracker",
     "OutcomeActionReport",
     "OutcomeProvider",
     "PostCloseDataProvider",
     "PostCloseReviewCollection",
+    "RepeatBackfillReport",
+    "RepeatProjection",
     "RuntimeUniverse",
     "RuntimeUniverseCache",
     "RUNTIME_UNIVERSE_CACHE_VERSION",
@@ -88,6 +98,8 @@ __all__ = [
     "alert_timeline_records",
     "application_summary_record",
     "candidate_outcome_rows",
+    "empty_repeat_fields",
+    "format_repeat_label",
     "build_local_fallback_report",
     "collect_post_close_review",
     "LOCAL_FALLBACK_RENDERER_VERSION",

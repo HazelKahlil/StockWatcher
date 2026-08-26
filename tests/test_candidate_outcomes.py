@@ -1740,7 +1740,7 @@ def test_v7_to_v9_migration_persists_outcome_retry_state_and_backup(tmp_path: Pa
     migrated = SQLiteStore(path)
     migrated.initialize()
     with closing(sqlite3.connect(path)) as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
         columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(candidate_outcomes)")
         }
@@ -1836,7 +1836,7 @@ def test_v8_to_v9_migration_preserves_web_accounts_sessions_commands_and_events(
     SQLiteStore(path).initialize()
 
     with closing(sqlite3.connect(path)) as connection:
-        assert connection.execute("SELECT version FROM schema_version").fetchone() == (9,)
+        assert connection.execute("SELECT version FROM schema_version").fetchone() == (10,)
         assert connection.execute("SELECT username FROM web_users").fetchone() == ("tester",)
         assert connection.execute("SELECT user_id FROM web_sessions").fetchone() == (1,)
         assert connection.execute("SELECT command_id FROM web_commands").fetchone() == (

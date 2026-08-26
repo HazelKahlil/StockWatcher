@@ -18,15 +18,12 @@
 
 原因：
 
-1. 当前 macOS worktree 的完整 pytest 为 `513 passed, 25 skipped, 2 deselected`；Murphy 定向回归为
-   `32 passed`，完整门在 `-W error` 下零告警。Ruff、Mypy（142 source files）、workspace validator
-   （29 个必需文件）、JavaScript syntax check 全部通过，生产与全锁定依赖
-   审计沿用上一轮无已知漏洞证据。
-2. Web、唯一 Worker、Caddy/Tunnel 当前在 Mac Docker Desktop 运行；Schema v9、公网
-   `app.css?v=14`、部署前/恢复后备份、数据库完整性与公网入口均已验证。
-3. 桌面视觉与提醒生命周期返修已经部署。以上仍是 Mac 本地托管与浏览器/接口证据，不等于
-   真实交易日的固定提醒、同点结算/
-   重试和全日运行验收。
+1. 当前 macOS worktree 的完整 pytest、Ruff、Mypy 与 workspace validator 在
+   `feat/web-candidate-repeat` 上已通过；这仍是离线工程门，不等于真实交易日验收。
+2. Web Schema 目标为 v10（`candidate_repeat_days` / `candidate_repeat_states`）。
+   当前 Mac Docker 运行源码仍为 `34ce825` / Schema v9，直到完成本版受控部署。
+3. 「近期多次出现」已在本 worktree 实现：计数 sidecar、历史回算、强异动弹窗紫色徽标、
+   历史页当时状态与「只看紫色标记」。首页与 09:45/14:45 弹窗保持原样。
 4. 当前部署依赖 Mac 开机、联网及 Docker Desktop；VPS 已由 Human Owner 明确后置，本基准
    不把 Mac 托管写成独立服务器部署。
 
@@ -35,7 +32,8 @@
 - FastAPI/Jinja2/原生 CSS/ES modules/WebSocket。
 - 唯一 headless Worker；lease 防重复 Worker；Web 不复制 CandidateEngine、StableTop3 或自动调度。
 - REST/API、Admin/Tester、Argon2id session、CSRF、RBAC、AES-256-GCM Token 存储边界和全局 redaction。
-- SQLite WAL v9、备份/恢复 CLI、Compose/Caddy 及运维脚本。
+- SQLite WAL v10、备份/恢复 CLI、Compose/Caddy 及运维脚本。v10 新增独立重复出现表，
+  不改写候选快照、评分或提醒状态机。
 - 自动恢复会递归识别运维备份目录中的 `stockwatcher.sqlite3`，不会因文件名和目录层级不同而
   静默回退到较旧迁移备份；在线备份只以只读连接接入 live DB，不再创建额外 WAL writer。
 - 认证只读 outcomes API、近一月摘要/完整页、桌面 App 浅色视觉与右下角非模态自动提醒。

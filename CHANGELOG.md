@@ -99,6 +99,14 @@
 
 ## [Unreleased]
 
+### Web
+
+- 2026-08-26：Web 独立线增加「近期多次出现」观察提示。同一展示 Top3 股票按不同交易日
+  计数；连续 14 个自然日内第三次出现后永久激活紫色，文案为「近 n 天第 m 次」。
+  Schema v9→v10 新增 `candidate_repeat_days` / `candidate_repeat_states`。本次只在盘中
+  强异动弹窗和历史记录页显示徽标。评分、排名、Stable Top3 和强异动算法保持原路径。
+  Web 继续 `BLOCKED / NOT_ACCEPTED`。
+
 ### Mainline
 
 - 2026-08-12：在 `0.6.0a3` 修正次日同点复盘的生产交易日历 wire endpoint 契约：
