@@ -1,6 +1,8 @@
 """Container healthchecks must remain read-only against the shared SQLite DB."""
 from __future__ import annotations
 
+import os
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -23,7 +25,18 @@ def _settings(tmp_path: Path) -> ServerSettings:
         db_path=db,
         report_dir=tmp_path / "reports",
         public_origin="http://testserver",
+        source_commit="a" * 40,
     )
+
+
+def _open_fd_count() -> int:
+    proc = Path(f"/proc/{os.getpid()}/fd")
+    if proc.is_dir():
+        return len(os.listdir(proc))
+    try:
+        return len(os.listdir("/dev/fd"))
+    except OSError:
+        return 0
 
 
 def test_web_healthcheck_opens_read_only_store(
@@ -128,6 +141,14 @@ def _seed_live_worker(store: SQLiteStore, now: datetime) -> str:
     return session_id
 
 
+def _ready_client(tmp_path: Path) -> tuple[TestClient, ServerSettings, SQLiteStore, str]:
+    settings = _settings(tmp_path)
+    app = create_app(settings)
+    now = datetime.now(SHANGHAI)
+    session_id = _seed_live_worker(app.state.store, now)
+    return TestClient(app), settings, app.state.store, session_id
+
+
 def test_worker_readiness_rejects_stalled_scan_even_when_lease_is_fresh(
     tmp_path: Path,
 ) -> None:
@@ -146,3 +167,166 @@ def test_worker_readiness_rejects_stalled_scan_even_when_lease_is_fresh(
     assert not ready
     assert status["worker_lease_held"] is True
     assert status["reason"] == "Worker scan stalled"
+
+
+def test_health_live_stays_ok_without_worker(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    response = TestClient(create_app(settings)).get("/health/live")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_http_ready_200_when_schema_and_worker_are_fresh(tmp_path: Path) -> None:
+    client, _, _, _ = _ready_client(tmp_path)
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_http_ready_uses_asyncio_to_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _, _, _ = _ready_client(tmp_path)
+    seen: list[object] = []
+    original = __import__("asyncio").to_thread
+
+    async def spy(fn: object, *args: object, **kwargs: object) -> object:
+        seen.append(fn)
+        return await original(fn, *args, **kwargs)
+
+    monkeypatch.setattr("asyncio.to_thread", spy)
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    from stock_watcher.server.web import _readiness_status
+
+    assert _readiness_status in seen
+
+
+def test_http_ready_503_when_schema_mismatches(tmp_path: Path) -> None:
+    client, _, store, _session_id = _ready_client(tmp_path)
+    with store.transaction() as connection:
+        connection.execute("DELETE FROM schema_version")
+        connection.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+            (9, datetime.now(SHANGHAI).isoformat()),
+        )
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+
+
+def test_http_ready_503_when_runtime_heartbeat_stale(tmp_path: Path) -> None:
+    client, settings, store, session_id = _ready_client(tmp_path)
+    stale = datetime.now(SHANGHAI) - timedelta(
+        seconds=settings.worker_loop_stale_seconds + 20
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE runtime_sessions SET last_heartbeat_at = ? WHERE session_id = ?",
+            (stale.isoformat(), session_id),
+        )
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+
+
+def test_http_ready_503_when_worker_loop_stale(tmp_path: Path) -> None:
+    client, settings, store, session_id = _ready_client(tmp_path)
+    stale = datetime.now(SHANGHAI) - timedelta(
+        seconds=settings.worker_loop_stale_seconds + 20
+    )
+    store.record_runtime_event(
+        session_id=session_id,
+        occurred_at=stale.isoformat(),
+        event_type="worker.loop",
+        detail={},
+    )
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+
+
+def test_http_ready_503_when_scan_stalled(tmp_path: Path) -> None:
+    client, settings, store, session_id = _ready_client(tmp_path)
+    stalled_at = datetime.now(SHANGHAI) - timedelta(
+        seconds=settings.worker_scan_timeout_seconds + 1
+    )
+    store.record_runtime_event(
+        session_id=session_id,
+        occurred_at=stalled_at.isoformat(),
+        event_type="worker.scan_started",
+        detail={"kind": "automatic"},
+    )
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+
+
+def test_http_ready_200_during_in_progress_scan(tmp_path: Path) -> None:
+    client, _, store, session_id = _ready_client(tmp_path)
+    started = datetime.now(SHANGHAI) - timedelta(seconds=5)
+    store.record_runtime_event(
+        session_id=session_id,
+        occurred_at=started.isoformat(),
+        event_type="worker.scan_started",
+        detail={"kind": "automatic"},
+    )
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_http_ready_sqlite_error_stays_minimal_and_logs_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, settings, _, _ = _ready_client(tmp_path)
+    secret = "super-secret-token-value"
+
+    def explode(self: SQLiteStore) -> sqlite3.Connection:
+        raise sqlite3.OperationalError(
+            f"unable to open database file: {settings.db_path} token={secret}"
+        )
+
+    monkeypatch.setattr(SQLiteStore, "connect", explode)
+    with caplog.at_level("ERROR", logger="stock_watcher.server"):
+        response = client.get(
+            "/health/ready",
+            headers={
+                "x-request-id": "corr-ready-1",
+                "cookie": "sw_session=secret-cookie-value",
+                "authorization": "Bearer secret-header-token",
+            },
+        )
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "event=web_readiness_failed" in text
+    assert "OperationalError" in text
+    assert "failure_stage=" in text
+    assert "corr-ready-1" in text
+    assert str(settings.db_path) not in text
+    assert secret not in text
+    assert "secret-cookie-value" not in text
+    assert "secret-header-token" not in text
+    assert "Bearer" not in text
+
+
+def test_http_ready_repeated_calls_do_not_leak_fds(tmp_path: Path) -> None:
+    client, _, _, _ = _ready_client(tmp_path)
+    for _ in range(5):
+        assert client.get("/health/ready").status_code == 200
+    baseline = _open_fd_count()
+    for _ in range(40):
+        assert client.get("/health/ready").status_code == 200
+    assert _open_fd_count() - baseline <= 5
+
+
+def test_worker_cli_ready_when_seeded(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    store = SQLiteStore(settings.db_path)
+    _seed_live_worker(store, datetime.now(SHANGHAI))
+    assert healthcheck.check_worker(settings) == 0
+    assert healthcheck.check_web(settings) == 0

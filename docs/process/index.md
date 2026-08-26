@@ -41,6 +41,7 @@
 | 日期 | 坑 | 根因 | 结论 |
 | --- | --- | --- | --- |
 | 2026-07-22 | 原始 Markdown 的 4 张图引用运行时 `/mnt/data/` 绝对路径 | 交接文件来自一次性生成环境 | 入库时改为同目录相对路径，并用自动检查阻止绝对路径回归 |
+| 2026-08-26 | Web `/health/ready` 把任意异常压成 `{"status":"not_ready"}`，Docker 只看到 503 | 安全提交缩小了公网正文，服务器未留分阶段日志 | 公网正文保持最小；`logger` 必须记录 `event=web_readiness_failed`、exception_type、failure_stage；探测用短生命周期只读连接并 `PRAGMA busy_timeout` |
 
 ## 决策记录
 

@@ -56,6 +56,8 @@
 | 2026-08-26 | Schema v10 / CandidateRepeatTracker / API / 弹窗与历史 UI | 本地完成 |
 | 2026-08-26 | `uv run pytest`、`ruff check .`、`mypy src tests`、`python3 scripts/validate_workspace.py` | 通过 |
 | 2026-08-26 | 备份 Schema v9 → 镜像 `stockwatcher-web:web-repeat-4b1e79e` → live 迁到 v10 → 公网静态验证 | 完成 |
+| 2026-08-26 | 零回归终验包 `docs/visions/v0.7-web-candidate-repeat/audit/`；旁路数据/算法门通过；现网 `/health/ready` 503 使整包签收门未齐 | 记录 |
+| 2026-08-26 | 独立分支 `fix/web-readiness-503`：公开 503 仍为 `{"status":"not_ready"}`，服务器记录分阶段脱敏日志；HTTP readiness 使用短生命周期只读连接 | 进行中 |
 
 ## 实现要点
 

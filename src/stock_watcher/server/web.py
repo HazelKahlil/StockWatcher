@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import traceback
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -45,7 +47,13 @@ from .auth import (
     csrf_value_for_session,
 )
 from .config import ServerSettings
-from .healthcheck import worker_readiness
+from .healthcheck import (
+    health_connection,
+    readiness_stage,
+    set_readiness_stage,
+    worker_readiness,
+)
+from .redaction import redact
 from .security import (
     RequestBodyLimitMiddleware,
     origin_matches,
@@ -267,7 +275,11 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/health/ready")
-    async def health_ready() -> JSONResponse:
+    async def health_ready(request: Request) -> JSONResponse:
+        request_id = (
+            str(request.headers.get("x-request-id") or "").strip()
+            or uuid.uuid4().hex[:16]
+        )
         try:
             ready = await asyncio.to_thread(
                 _readiness_status,
@@ -279,7 +291,13 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
                 status_code=200 if ready else 503,
                 content={"status": "ready" if ready else "not_ready"},
             )
-        except Exception:
+        except Exception as exc:
+            _log_readiness_failure(
+                exc,
+                settings=app_settings,
+                expected_schema_version=store.CURRENT_SCHEMA_VERSION,
+                request_id=request_id,
+            )
             return JSONResponse(
                 status_code=503,
                 content={"status": "not_ready"},
@@ -378,18 +396,61 @@ def _csrf_for_session(token: str | None) -> str:
     return csrf_value_for_session(token)
 
 
+def _log_readiness_failure(
+    exc: BaseException,
+    *,
+    settings: ServerSettings,
+    expected_schema_version: int,
+    request_id: str,
+) -> None:
+    """Record a redacted stack for operators; the public body stays minimal."""
+    commit = (
+        settings.source_commit
+        if settings.source_commit != "unknown"
+        else source_commit()
+    )
+    stack = traceback.format_exc()
+    stack = stack.replace(str(settings.db_path), "<db_path>")
+    if settings.master_key_file is not None:
+        stack = stack.replace(str(settings.master_key_file), "<master_key_file>")
+    stack = redact(stack)
+    logger.error(
+        "event=web_readiness_failed exception_type=%s failure_stage=%s "
+        "source_commit=%s expected_schema_version=%s request_id=%s "
+        "read_only_probe=true traceback=%s",
+        type(exc).__name__,
+        readiness_stage(),
+        commit,
+        expected_schema_version,
+        request_id,
+        stack,
+    )
+
+
 def _readiness_status(
     read_store: SQLiteStore,
     settings: ServerSettings,
     expected_schema_version: int,
 ) -> bool:
-    with read_store.connect() as connection:
+    """Probe Schema + Worker liveness on a fresh read-only store.
+
+    The long-lived application ``read_store`` is shared with REST/WebSocket
+    projections. HTTP readiness opens its own ephemeral reader so a leftover
+    connection or WAL snapshot on that object cannot disagree with a new
+    ``worker_readiness()`` call in another process.
+    """
+    set_readiness_stage("open_read_store")
+    probe = SQLiteStore(read_store.path, read_only=True)
+    set_readiness_stage("read_schema_version")
+    with health_connection(probe) as connection:
         version = connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
+    set_readiness_stage("validate_schema_version")
     if version is None or int(version[0]) != expected_schema_version:
         return False
-    worker_ready, _worker_status = worker_readiness(read_store, settings)
+    worker_ready, _worker_status = worker_readiness(probe, settings)
+    set_readiness_stage("build_response")
     return worker_ready
 
 
