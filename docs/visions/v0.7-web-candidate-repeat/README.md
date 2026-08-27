@@ -82,7 +82,8 @@
 | live Schema | v10，`integrity_check=ok` |
 | 回算 | `status=completed version=1 snapshots=5278 occurrences=1618 activated=90 skipped=0` |
 | 公网验证 | `/health/ready` 200 `{"status":"ready"}`；登录页 200；Web Docker healthy |
-| GitHub | 未 push；远端未包含本提交 |
+| GitHub | 已按 alpha4 Web 模式同步：`publish/web-v0.7-candidate-repeat`（`c60c28c`）push 至 origin；GitHub main 不含 Web 线 |
+| 合入 main | 2026-08-27 Human Owner 确认遵守既有门（`docs/tracks/web.md` / `branch-and-worktree-policy.md`）：等真实交易日现场验收通过后再决定受控集成；本地 `main` 保持 `6a81825` 未动 |
 
 ## 回滚
 
