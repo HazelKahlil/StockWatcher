@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -273,7 +274,9 @@ def run(
     terminal_path: Path | None = None,
 ) -> int:
     if sys.platform == "win32" and not acquire_app_mutex():
-        raise_existing_window()
+        thread = threading.Thread(target=raise_existing_window, daemon=True)
+        thread.start()
+        thread.join(0.4)
         os._exit(0)
     recorder = StartupRecorder()
     try:
