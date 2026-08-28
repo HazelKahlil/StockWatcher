@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $env:LOCALAPPDATA = $WorkRoot
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 . (Join-Path $projectRoot "scripts\windows\stockwatcher.ps1") -LoadFunctionsOnly

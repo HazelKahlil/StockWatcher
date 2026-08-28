@@ -4,13 +4,14 @@ import ast
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
+
+from tests.powershell_utf8 import run_powershell_script
 
 
 def _function_body(powershell: str, name: str) -> str:
@@ -21,13 +22,6 @@ def _function_body(powershell: str, name: str) -> str:
     )
     assert function is not None
     return function.group("body")
-
-
-def _powershell() -> str:
-    executable = os.environ.get("STOCKWATCHER_PWSH") or shutil.which("pwsh")
-    if executable is None:
-        pytest.skip("PowerShell runtime is unavailable on this host")
-    return executable
 
 
 def _create_directory_alias(alias: Path, target: Path) -> None:
@@ -43,21 +37,14 @@ def _create_directory_alias(alias: Path, target: Path) -> None:
 
 
 def _run_powershell_harness(*arguments: str) -> dict[str, object]:
-    completed = subprocess.run(
-        [
-            _powershell(),
-            "-NoLogo",
-            "-NoProfile",
-            "-File",
-            "tests/powershell/stockwatcher_contract_harness.ps1",
-            *arguments,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
+    completed = run_powershell_script(
+        "tests/powershell/stockwatcher_contract_harness.ps1",
+        *arguments,
     )
-    return cast(dict[str, object], json.loads(completed.stdout.strip().splitlines()[-1]))
+    stdout = completed.stdout or ""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    assert lines, "PowerShell harness produced no UTF-8 JSON line"
+    return cast(dict[str, object], json.loads(lines[-1]))
 
 
 def _check(name: str, status: str, message: str, reason: str | None = None) -> dict[str, object]:
