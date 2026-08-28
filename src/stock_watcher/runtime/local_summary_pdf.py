@@ -17,7 +17,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .post_close_pdf import _register_fonts
+from .post_close_pdf import registered_font_names
 from .post_close_report_model import (
     LOCAL_FALLBACK_RENDERER_VERSION,
     LocalFallbackReport,
@@ -31,14 +31,12 @@ _LINE = colors.HexColor("#DCE3EB")
 _SOFT = colors.HexColor("#F4F7FA")
 _BLUE = colors.HexColor("#2457A6")
 _AMBER = colors.HexColor("#B7791F")
-_FONT = "StockWatcherSans"
-_FONT_MEDIUM = "StockWatcherSansMedium"
 
 
 def render_local_fallback_pdf(report: LocalFallbackReport, output_path: Path) -> Path:
     """Render the local-only report without pretending it is a full market review."""
     validate_local_fallback_report(report)
-    _register_fonts()
+    registered_font_names()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document = SimpleDocTemplate(
         str(output_path),
@@ -327,16 +325,17 @@ def _status_box(
 
 
 def _styles() -> dict[str, ParagraphStyle]:
-    base = ParagraphStyle("local-base", fontName=_FONT, fontSize=8.7, leading=12, textColor=_INK)
+    font, font_medium = registered_font_names()
+    base = ParagraphStyle("local-base", fontName=font, fontSize=8.7, leading=12, textColor=_INK)
     return {
         "brand": ParagraphStyle(
-            "local-brand", parent=base, fontName=_FONT_MEDIUM, fontSize=8.5, textColor=_BLUE
+            "local-brand", parent=base, fontName=font_medium, fontSize=8.5, textColor=_BLUE
         ),
         "date": ParagraphStyle("local-date", parent=base, alignment=2, textColor=_MUTED),
         "title": ParagraphStyle(
             "local-title",
             parent=base,
-            fontName=_FONT_MEDIUM,
+            fontName=font_medium,
             fontSize=17,
             leading=22,
             spaceBefore=4,
@@ -348,7 +347,7 @@ def _styles() -> dict[str, ParagraphStyle]:
         "notice": ParagraphStyle(
             "local-notice",
             parent=base,
-            fontName=_FONT_MEDIUM,
+            fontName=font_medium,
             fontSize=9.2,
             leading=14,
             textColor=_AMBER,
@@ -356,19 +355,19 @@ def _styles() -> dict[str, ParagraphStyle]:
         "section": ParagraphStyle(
             "local-section",
             parent=base,
-            fontName=_FONT_MEDIUM,
+            fontName=font_medium,
             fontSize=11.5,
             leading=15,
             spaceBefore=2,
         ),
         "head": ParagraphStyle(
-            "local-head", parent=base, fontName=_FONT_MEDIUM, fontSize=8.1, leading=11
+            "local-head", parent=base, fontName=font_medium, fontSize=8.1, leading=11
         ),
         "value": ParagraphStyle("local-value", parent=base, fontSize=8.2, leading=11),
         "table_head": ParagraphStyle(
             "local-table-head",
             parent=base,
-            fontName=_FONT_MEDIUM,
+            fontName=font_medium,
             fontSize=7.7,
             leading=10,
             textColor=colors.white,
@@ -381,12 +380,13 @@ def _styles() -> dict[str, ParagraphStyle]:
 
 
 def _decorate_page(canvas: Any, document: Any) -> None:
+    font, _ = registered_font_names()
     canvas.saveState()
     canvas.setStrokeColor(_LINE)
     canvas.setLineWidth(0.5)
     canvas.line(16 * mm, 13 * mm, A4[0] - 16 * mm, 13 * mm)
     canvas.setFillColor(_MUTED)
-    canvas.setFont(_FONT, 7.5)
+    canvas.setFont(font, 7.5)
     canvas.drawString(16 * mm, 8.5 * mm, "StockWatcher | 本地运行总结")
     canvas.drawRightString(A4[0] - 16 * mm, 8.5 * mm, f"{canvas.getPageNumber()}")
     canvas.restoreState()

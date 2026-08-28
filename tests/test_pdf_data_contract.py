@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
+from stock_watcher.runtime.local_summary_pdf import render_local_fallback_pdf
+from stock_watcher.runtime.post_close_pdf import registered_font_names, render_post_close_pdf
 from stock_watcher.runtime.post_close_report_model import (
     LocalFallbackReport,
     build_local_fallback_report,
@@ -270,3 +271,71 @@ def test_local_fallback_reports_trading_gap_even_when_lunch_is_longer(
     assert "90分8秒" not in report.continuity
     assert "最长交易时段无扫描间隔42分13秒" in report.summary_text
     assert "90分8秒" not in report.summary_text
+
+
+def _reset_registered_pdf_fonts() -> None:
+    from reportlab.pdfbase import pdfmetrics
+
+    import stock_watcher.runtime.post_close_pdf as pdf_mod
+
+    fonts = getattr(pdfmetrics, "_fonts")
+    if isinstance(fonts, dict):
+        fonts.pop("StockWatcherSans", None)
+        fonts.pop("StockWatcherSansMedium", None)
+    pdf_mod._FONT = "StockWatcherSans"
+    pdf_mod._FONT_MEDIUM = "StockWatcherSansMedium"
+
+
+def test_local_fallback_pdf_renders_when_all_ttf_candidates_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_is_file = Path.is_file
+
+    def hide_ttf_candidates(self: Path) -> bool:
+        text = str(self)
+        if any(
+            token in text for token in ("STHeiti", "msyh", "NotoSansCJK", "NotoSerifCJK")
+        ):
+            return False
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", hide_ttf_candidates)
+    _reset_registered_pdf_fonts()
+    try:
+        output = tmp_path / "fallback.pdf"
+        render_local_fallback_pdf(
+            LocalFallbackReport(
+                trade_date="2026-08-28",
+                generated_at="2026-08-28T15:30:00+08:00",
+                report_mode="local_fallback",
+                source_version="daily-summary-local-fallback-v2",
+                source_generated_at="2026-08-28T15:30:00+08:00",
+                source_commit="a" * 40,
+                alert_count=0,
+                top3=(),
+                top3_source=None,
+                alerts=(),
+                scan_count=1,
+                healthy_scan_count=1,
+                minimum_coverage=None,
+                maximum_coverage=None,
+                runtime_session_count=1,
+                restart_count=0,
+                sleep_count=0,
+                wake_count=0,
+                concept_status="已加载",
+                continuity="本地运行连续。",
+                market_limitation="盘后增强数据未取得。",
+                fund_summary="资金未确认。",
+                summary_text="本地总结。",
+            ),
+            output,
+        )
+        assert output.is_file()
+        assert output.read_bytes()[:4] == b"%PDF"
+        font, font_medium = registered_font_names()
+        assert font == "STSong-Light"
+        assert font_medium == "STSong-Light"
+    finally:
+        _reset_registered_pdf_fonts()

@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from stock_watcher.domain import SHANGHAI, HealthState
 from stock_watcher.engine import AlertTrigger, Candidate
 from stock_watcher.engine.candidates import CandidateBatch
-from stock_watcher.runtime import ScanOutcome
+from stock_watcher.runtime import AutomationTaskState, ScanOutcome
 from stock_watcher.services.public_state import PublicStateBuilder
-from stock_watcher.services.stockwatcher_service import StockWatcherService
+from stock_watcher.services.stockwatcher_service import ServiceConfig, StockWatcherService
 from stock_watcher.storage import SQLiteStore
 
 
@@ -222,3 +225,159 @@ def test_automatic_tick_skips_while_manual_scan_holds_shared_lock(tmp_path: Path
         assert service.tick(now=now).skipped_reason == "scan-in-progress"
     finally:
         service._scan_lock.release()  # noqa: SLF001
+
+
+class _FailedCoverageRuntime:
+    universe = None
+
+    def scan_once(self) -> ScanOutcome:
+        return ScanOutcome(
+            HealthState.STOPPED,
+            "覆盖率不足",
+            None,
+            None,
+            None,
+            1.0,
+            0.5,
+            failure_reason="coverage",
+        )
+
+    def reset_for_external_recovery(self) -> None:
+        return
+
+
+def _stub_failed_coverage_scan(service: StockWatcherService) -> None:
+    service._runtime = _FailedCoverageRuntime()  # type: ignore[assignment]  # noqa: SLF001
+    service._ensure_runtime = lambda _now: True  # type: ignore[assignment]  # noqa: SLF001
+    service._secret_getter = lambda: "configured"  # type: ignore[method-assign]  # noqa: SLF001
+    service._universe_is_current = lambda _now: True  # type: ignore[assignment]  # noqa: SLF001
+
+
+def _automation_events(service: StockWatcherService, task_key: str) -> list[dict[str, object]]:
+    return [
+        event
+        for event in service._outbox.read_since(0)  # noqa: SLF001
+        if event["event_type"] == "automation.updated" and event["source_id"] == task_key
+    ]
+
+
+def test_fixed_task_succeeds_when_today_alert_exists_despite_failed_scan(tmp_path: Path) -> None:
+    now = datetime(2026, 8, 3, 14, 45, 16, tzinfo=SHANGHAI)
+    store = SQLiteStore(tmp_path / "fixed-success.sqlite3")
+    store.initialize()
+    service = StockWatcherService(store, clock=lambda: now)
+    service.batch = make_batch(now - timedelta(minutes=1), "跨界")
+    service.state = HealthState.HEALTHY
+    snapshot_id = service._record_alert(  # noqa: SLF001
+        now - timedelta(seconds=8),
+        AlertTrigger.SCHEDULED_1445,
+        "scheduled",
+        "14:45 观察提醒",
+        "当前最新3只",
+    )
+    _stub_failed_coverage_scan(service)
+
+    service.tick(now=now)
+
+    task = store.get_automation_task("2026-08-03:scheduled-14:45")
+    assert task is not None
+    assert task["state"] == AutomationTaskState.SUCCEEDED.value
+    assert task["snapshot_id"] == snapshot_id
+
+
+def test_fixed_task_fails_when_scan_fails_and_today_alert_is_missing(tmp_path: Path) -> None:
+    now = datetime(2026, 8, 3, 14, 45, 16, tzinfo=SHANGHAI)
+    store = SQLiteStore(tmp_path / "fixed-fail.sqlite3")
+    store.initialize()
+    service = StockWatcherService(store, clock=lambda: now)
+    service.batch = make_batch(now - timedelta(minutes=1), "旧批次")
+    service.state = HealthState.HEALTHY
+    _stub_failed_coverage_scan(service)
+
+    service.tick(now=now)
+
+    task = store.get_automation_task("2026-08-03:scheduled-14:45")
+    assert task is not None
+    assert task["state"] == AutomationTaskState.FAILED.value
+    assert store.list_alert_history(now=now, days=1) == []
+
+
+def test_expired_failed_task_is_not_remarked_on_later_tick(tmp_path: Path) -> None:
+    now = datetime(2026, 8, 3, 14, 50, tzinfo=SHANGHAI)
+    failed_at = datetime(2026, 8, 3, 14, 48, tzinfo=SHANGHAI)
+    store = SQLiteStore(tmp_path / "expire.sqlite3")
+    store.initialize()
+    service = StockWatcherService(store, clock=lambda: now)
+    store.ensure_automation_task(
+        {
+            "task_key": "2026-08-03:scheduled-14:45",
+            "task_type": "scheduled-14:45",
+            "trade_date": "2026-08-03",
+            "target_at": datetime(2026, 8, 3, 14, 45, tzinfo=SHANGHAI).isoformat(),
+            "deadline_at": datetime(2026, 8, 3, 14, 46, 30, tzinfo=SHANGHAI).isoformat(),
+            "state": AutomationTaskState.PLANNED.value,
+            "updated_at": datetime(2026, 8, 3, 14, 45, tzinfo=SHANGHAI).isoformat(),
+            "detail": "等待目标时间。",
+        }
+    )
+    service._mark_task(  # noqa: SLF001
+        "2026-08-03:scheduled-14:45",
+        state=AutomationTaskState.FAILED,
+        now=failed_at,
+        detail="超过产品截止时间仍未成功；保留失败证据。",
+    )
+    saved = store.get_automation_task("2026-08-03:scheduled-14:45")
+    assert saved is not None
+    events_before = _automation_events(service, "2026-08-03:scheduled-14:45")
+    _stub_failed_coverage_scan(service)
+
+    service.tick(now=now)
+
+    updated = store.get_automation_task("2026-08-03:scheduled-14:45")
+    assert updated is not None
+    assert updated["state"] == AutomationTaskState.FAILED.value
+    assert updated["updated_at"] == saved["updated_at"]
+    assert _automation_events(service, "2026-08-03:scheduled-14:45") == events_before
+
+
+def test_summary_artifact_write_failure_logs_warning_and_retries(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    now = datetime(2026, 8, 3, 15, 30, tzinfo=SHANGHAI)
+    store = SQLiteStore(tmp_path / "summary.sqlite3")
+    store.initialize()
+    store.record_daily_summary(
+        {
+            "trade_date": "2026-08-03",
+            "generated_at": now.isoformat(),
+            "alert_count": 1,
+            "top_sectors": [],
+            "repeated_candidates": [],
+            "closing_performance": [],
+            "fund_summary": "资金未确认",
+            "health_summary": "本地运行连续",
+            "summary_text": "本地总结",
+            "version": "daily-summary-local-fallback-v1",
+        }
+    )
+    service = StockWatcherService(
+        store,
+        config=ServiceConfig(report_dir=tmp_path / "reports"),
+        clock=lambda: now,
+        auto_start_session=False,
+    )
+
+    def boom(_summary: dict[str, object]) -> None:
+        raise RuntimeError("disk full")
+
+    service._write_local_summary_report = boom  # type: ignore[assignment]  # noqa: SLF001
+    with caplog.at_level(logging.WARNING, logger="stock_watcher.service"):
+        assert service.generate_summary(now) is False
+    assert service._summary_retry_at == now + timedelta(seconds=60)  # noqa: SLF001
+    assert any(
+        record.levelno == logging.WARNING
+        and "stage=local_report_write" in record.getMessage()
+        and record.exc_info is not None
+        for record in caplog.records
+    )

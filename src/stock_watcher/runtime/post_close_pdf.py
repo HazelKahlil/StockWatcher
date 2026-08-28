@@ -1133,6 +1133,12 @@ def _styles() -> dict[str, ParagraphStyle]:
     }
 
 
+def registered_font_names() -> tuple[str, str]:
+    """Return the font names actually registered for PDF rendering."""
+    _register_fonts()
+    return (_FONT, _FONT_MEDIUM)
+
+
 def _register_fonts() -> None:
     global _FONT, _FONT_MEDIUM
     if _FONT in pdfmetrics.getRegisteredFontNames():
@@ -1149,6 +1155,12 @@ def _register_fonts() -> None:
             Path("C:/Windows/Fonts/msyhbd.ttc"),
             0,
             0,
+        ),
+        (
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+            2,
+            2,
         ),
     )
     for regular_path, medium_path, regular_index, medium_index in candidates:
@@ -1174,7 +1186,8 @@ def _register_fonts() -> None:
             continue
     _FONT = "STSong-Light"
     _FONT_MEDIUM = _FONT
-    pdfmetrics.registerFont(UnicodeCIDFont(_FONT))
+    if _FONT not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(UnicodeCIDFont(_FONT))
 
 
 def _decorate_page(canvas: Any, document: Any) -> None:

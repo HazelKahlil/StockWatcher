@@ -401,7 +401,10 @@ class StockWatcherService:
 
     def _expire_automation_tasks(self, now: datetime) -> None:
         for task in self.store.list_automation_tasks(now.date().isoformat()):
-            if task["state"] == AutomationTaskState.SUCCEEDED.value:
+            if task["state"] in {
+                AutomationTaskState.SUCCEEDED.value,
+                AutomationTaskState.FAILED.value,
+            }:
                 continue
             deadline = _parsed_datetime(task.get("deadline_at"))
             if deadline is None or now <= deadline:
@@ -931,7 +934,33 @@ class StockWatcherService:
         )
         snapshot_id = alert_snapshot_id or snapshot_id
         if fixed_task is not None:
-            if snapshot_id is not None:
+            existing_alert = next(
+                (
+                    row
+                    for row in self._today_alerts(completed_at)
+                    if row.get("trigger_type") == fixed_task.task_type.value
+                ),
+                None,
+            )
+            if existing_alert is not None:
+                existing_snapshot_id = existing_alert.get("snapshot_id")
+                completed_snapshot_id = (
+                    existing_snapshot_id
+                    if isinstance(existing_snapshot_id, int)
+                    else None
+                )
+                self._mark_task(
+                    fixed_task.task_key,
+                    state=AutomationTaskState.SUCCEEDED,
+                    now=completed_at,
+                    detail=(
+                        "任务已完成。"
+                        if completed_snapshot_id is not None
+                        else "提醒已在跨界扫描中发出。"
+                    ),
+                    snapshot_id=completed_snapshot_id,
+                )
+            elif snapshot_id is not None:
                 self._mark_task(
                     fixed_task.task_key,
                     state=AutomationTaskState.SUCCEEDED,
@@ -1000,8 +1029,6 @@ class StockWatcherService:
             return None
         fixed = forced_fixed or self._schedule.fixed_trigger(now)
         if fixed is not None:
-            if self.state is not HealthState.HEALTHY:
-                return None
             existing = next(
                 (row for row in self._today_alerts(now) if row.get("trigger_type") == fixed.value),
                 None,
@@ -1009,6 +1036,8 @@ class StockWatcherService:
             if existing is not None:
                 existing_snapshot_id = existing.get("snapshot_id")
                 return existing_snapshot_id if isinstance(existing_snapshot_id, int) else None
+            if self.state is not HealthState.HEALTHY:
+                return None
             decision = self._alert_policy.decide(self.batch, now, fixed)
             if decision.should_alert:
                 title = (
@@ -1479,6 +1508,10 @@ class StockWatcherService:
                     self._emit_summary_ready(trade_date, "full_market")
                     return True
                 except Exception:
+                    logger.warning(
+                        "post-close summary failed stage=full_json_render",
+                        exc_info=True,
+                    )
                     self._set_summary_retry(now)
                     return False
             if local_json.is_file():
@@ -1499,10 +1532,17 @@ class StockWatcherService:
                         self._emit_summary_ready(trade_date, "local_fallback")
                         return True
                 except Exception:
-                    pass
+                    logger.warning(
+                        "post-close summary failed stage=local_json_reuse",
+                        exc_info=True,
+                    )
             try:
                 self._write_local_summary_report(existing_summary)
             except Exception:
+                logger.warning(
+                    "post-close summary failed stage=local_report_write",
+                    exc_info=True,
+                )
                 self._set_summary_retry(now)
                 return False
             self._summary_date = trade_date
@@ -1525,6 +1565,10 @@ class StockWatcherService:
                     generated_at=now,
                 )
             except Exception:
+                logger.warning(
+                    "post-close summary failed stage=provider_collection",
+                    exc_info=True,
+                )
                 collection = None
         if collection is not None:
             try:
@@ -1544,6 +1588,10 @@ class StockWatcherService:
                     alert_timeline=alert_timeline_records(history),
                 )
             except Exception:
+                logger.warning(
+                    "post-close summary failed stage=full_market_write",
+                    exc_info=True,
+                )
                 collection = None
         if collection is None:
             observations = self._local_summary_observations(trade_date)
@@ -1568,6 +1616,10 @@ class StockWatcherService:
                 self.store.record_daily_summary(summary)
                 self._write_local_summary_report(summary)
             except Exception:
+                logger.warning(
+                    "post-close summary failed stage=local_report_write",
+                    exc_info=True,
+                )
                 self._set_summary_retry(now)
                 return False
         self.store.prune_daily_summaries(before=now.date() - timedelta(days=30))
