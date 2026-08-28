@@ -47,7 +47,7 @@ class SingleInstanceGuard(QObject):
         app_path: str | None = None,
         source_commit: str | None = None,
         activation_handler: Callable[[dict[str, object]], Mapping[str, object]] | None = None,
-        ack_timeout_ms: int = 1_500,
+        ack_timeout_ms: int = 4_000,
     ) -> None:
         super().__init__(parent)
         self.name = name or _default_instance_name()
@@ -77,6 +77,11 @@ class SingleInstanceGuard(QObject):
         handler: Callable[[dict[str, object]], Mapping[str, object]],
     ) -> None:
         self._activation_handler = handler
+
+    def activate_existing(self) -> bool:
+        """Ask a running primary to restore its window without becoming primary."""
+        self.last_role = "secondary"
+        return self._request_activation()
 
     def acquire(self) -> bool:
         """Become primary, or request activation from an already-running app."""

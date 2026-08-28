@@ -22,7 +22,7 @@ from .main_window import MainWindow, ReplaySession, UiSession
 from .single_instance import SingleInstanceGuard
 from .tushare_session import TushareDiagnosticSession
 from .tushare_v1_session import TushareV1Session
-from .windows_runtime import acquire_app_mutex
+from .windows_runtime import acquire_app_mutex, raise_existing_window
 
 STYLE_SHEET = """
 QWidget { color: #172231; }
@@ -310,8 +310,9 @@ def run(
             app.setWindowIcon(QIcon(str(icon_path)))
         app.setStyleSheet(STYLE_SHEET)
         recorder.stage("qapplication-created")
+        mutex_primary = True
         if sys.platform == "win32":
-            acquire_app_mutex()
+            mutex_primary = acquire_app_mutex()
         instance_guard: SingleInstanceGuard | None = None
         if sys.platform in {"darwin", "win32"}:
             recorder.stage("single-instance-check")
@@ -320,6 +321,21 @@ def run(
                 app_path=recorder.data.get("app_path", ""),
                 source_commit=source_commit(),
             )
+            if sys.platform == "win32" and not mutex_primary:
+                activated = instance_guard.activate_existing()
+                raised = raise_existing_window()
+                recorder.stage(
+                    "secondary_activated" if activated or raised else "secondary_activation_failed",
+                    activation_status=instance_guard.last_activation_status,
+                    ack=instance_guard.last_activation_ack,
+                    window_raised=raised,
+                )
+                if not activated and not raised:
+                    _show_secondary_failure(instance_guard, recorder.log_path)
+                    recorder.finish(1, "secondary_activation_failed")
+                    return 1
+                recorder.finish(0, "secondary_activated")
+                return 0
             if not instance_guard.acquire():
                 recorder.stage(
                     "secondary_activated"
