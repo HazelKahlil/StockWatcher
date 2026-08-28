@@ -945,7 +945,11 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         record = getattr(self.session, "record_window_activation", None)
         if callable(record):
-            record()
+            threading.Thread(
+                target=record,
+                name="stockwatcher-window-activation",
+                daemon=True,
+            ).start()
 
     def set_secondary_notification_sender(
         self,
@@ -1182,8 +1186,16 @@ class MainWindow(QMainWindow):
             return
         self._shutdown_complete = True
         shutdown = getattr(self.session, "shutdown", None)
-        if callable(shutdown):
+        if not callable(shutdown):
+            return
+        if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
             shutdown()
+            return
+        threading.Thread(
+            target=shutdown,
+            name="stockwatcher-session-shutdown",
+            daemon=True,
+        ).start()
 
     def _schedule_shutdown_deadline(self) -> None:
         if self._shutdown_deadline_scheduled:

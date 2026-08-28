@@ -400,6 +400,12 @@ def run(
         recorder.stage("event-loop-entered")
         exit_code = app.exec()
         recorder.finish(exit_code, "normal-exit")
+        if (
+            sys.platform == "win32"
+            and not os.environ.get("PYTEST_CURRENT_TEST")
+            and "pytest" not in sys.modules
+        ):
+            os._exit(exit_code)
         return exit_code
     except BaseException as error:
         recorder.fatal(error, app_available=QApplication.instance() is not None)
