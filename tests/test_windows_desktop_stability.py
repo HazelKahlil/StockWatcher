@@ -32,6 +32,8 @@ def test_windows_app_enables_single_instance_and_app_mutex() -> None:
     assert "os._exit(exit_code)" in source
     installer = Path("packaging/windows/StockWatcher.iss").read_text(encoding="utf-8")
     assert "AppMutex=StockWatcher.AppMutex" in installer
+    assert "PrepareToInstall" in installer
+    assert "taskkill.exe" in installer
 
 
 def test_windows_font_preferences_do_not_force_macos_families() -> None:

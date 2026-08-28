@@ -47,6 +47,23 @@ Filename: "{app}\{#MyAppExeName}"; Description: "启动 StockWatcher"; Flags: no
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+function CloseRunningApp: Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM StockWatcher.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(2000);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM StockWatcher.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  NeedsRestart := False;
+  CloseRunningApp;
+  Result := '';
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
