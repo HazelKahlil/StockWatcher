@@ -18,12 +18,12 @@
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
   "candidate_outcomes": {
-    "python_version": "0.6.0a5",
-    "package_version": "0.6.0-alpha.5",
+    "python_version": "0.6.0a6",
+    "package_version": "0.6.0-alpha.6",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
     "source_branch": "fix/windows-desktop-stability",
     "implementation_commit": "ed63106c467637c3518df7821b2c32ae3c683ab7",
-    "status": "alpha5_windows_desktop_stability_offline_candidate",
+    "status": "alpha6_windows_desktop_stability_offline_candidate",
     "schema_version": 8,
     "validation": "417 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation, secret scan and diff check passed on macOS",
     "real_trading_time_validation": false,

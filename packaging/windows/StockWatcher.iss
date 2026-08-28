@@ -1,5 +1,5 @@
 #define MyAppName "StockWatcher"
-#define MyAppVersion "0.6.0-alpha.5"
+#define MyAppVersion "0.6.0-alpha.6"
 #define MyAppPublisher "StockWatcher"
 #define MyAppExeName "StockWatcher.exe"
 #define MyAppIcon "..\..\src\stock_watcher\ui\assets\stockwatcher.ico"
@@ -22,7 +22,7 @@ AppMutex=StockWatcher.AppMutex
 CloseApplications=yes
 RestartApplications=no
 OutputDir={#StockWatcherOutputDir}
-OutputBaseFilename=StockWatcher-0.6.0-alpha.5-setup
+OutputBaseFilename=StockWatcher-0.6.0-alpha.6-setup
 Compression=lzma2
 SolidCompression=yes
 SetupIconFile={#MyAppIcon}

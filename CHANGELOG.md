@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0-alpha.6] - 2026-08-28
+
+### Fixed
+
+- Windows 测试在代码页 936 下用 UTF-8 解码 PowerShell 输出，不再因 GBK 字节流崩溃。
+- 关闭窗口后限时停止后台线程并退出进程，安装器通过 `AppMutex` 检测运行中实例。
+- capability executor shutdown 后不再 `submit` 新任务，避免 `RuntimeError`。
+- Windows 与 macOS 共用单实例护卫，二次启动激活已有窗口。
+
+### Packaging
+
+- Windows 安装器候选提升为 `0.6.0-alpha.6`，用于覆盖升级与产物区分。
+
 ## [0.6.0-alpha.5] - 2026-08-23
 
 ### Fixed

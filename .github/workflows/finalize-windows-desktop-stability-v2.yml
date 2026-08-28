@@ -58,12 +58,12 @@ jobs:
           python -m json.tool CURRENT_RELEASES.json > /dev/null
           git diff --check
 
-      - name: Assert alpha.5 contracts and temporary-file cleanup
+      - name: Assert alpha.6 contracts and temporary-file cleanup
         run: |
-          grep -F 'dist/StockWatcher-0.6.0-alpha.5-portable.zip' .github/workflows/governance.yml
-          grep -F 'dist/StockWatcher-0.6.0-alpha.5-portable.zip' tests/test_windows_package.py
-          grep -F '#define MyAppVersion "0.6.0-alpha.5"' packaging/windows/StockWatcher.iss
-          grep -F 'version = "0.6.0a5"' pyproject.toml
+          grep -F 'dist/StockWatcher-0.6.0-alpha.6-portable.zip' .github/workflows/governance.yml
+          grep -F 'dist/StockWatcher-0.6.0-alpha.6-portable.zip' tests/test_windows_package.py
+          grep -F '#define MyAppVersion "0.6.0-alpha.6"' packaging/windows/StockWatcher.iss
+          grep -F 'version = "0.6.0a6"' pyproject.toml
           test ! -e scripts/_patch_windows_ui.py
           test ! -e .github/workflows/apply-windows-desktop-stability.yml
           test ! -e .github/workflows/fix-alpha5-test-contract.yml
