@@ -10,17 +10,19 @@ from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer
 from PySide6.QtGui import QFontDatabase, QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceConfigRepository, DataSourceMode
 from stock_watcher.paths import runtime_paths
 from stock_watcher.startup import StartupRecorder
 
-from .macos import MacApplicationLifecycle, SingleInstanceGuard
+from .macos import MacApplicationLifecycle
 from .main_window import MainWindow, ReplaySession, UiSession
+from .single_instance import SingleInstanceGuard
 from .tushare_session import TushareDiagnosticSession
 from .tushare_v1_session import TushareV1Session
+from .windows_runtime import acquire_app_mutex
 
 STYLE_SHEET = """
 QWidget { color: #172231; }
@@ -308,8 +310,10 @@ def run(
             app.setWindowIcon(QIcon(str(icon_path)))
         app.setStyleSheet(STYLE_SHEET)
         recorder.stage("qapplication-created")
+        if sys.platform == "win32":
+            acquire_app_mutex()
         instance_guard: SingleInstanceGuard | None = None
-        if sys.platform == "darwin":
+        if sys.platform in {"darwin", "win32"}:
             recorder.stage("single-instance-check")
             instance_guard = SingleInstanceGuard(
                 parent=app,
@@ -374,8 +378,9 @@ def run(
         window = MainWindow(session)
         recorder.stage("window-created")
         if instance_guard is not None:
-            lifecycle = MacApplicationLifecycle(app, window)
-            window.set_secondary_notification_sender(lifecycle.show_notification)
+            if sys.platform == "darwin":
+                lifecycle = MacApplicationLifecycle(app, window)
+                window.set_secondary_notification_sender(lifecycle.show_notification)
 
             def handle_activation(request: dict[str, object]) -> dict[str, object]:
                 recorder.stage(
@@ -424,6 +429,13 @@ def _show_secondary_failure(
             f"后台 PID：{primary_pid}\n路径：{primary_path}\nCommit：{primary_commit}\n"
             f"原因：{error_reason}\n日志：{log_path}"
         )
+    if sys.platform == "win32":
+        box = QMessageBox()
+        box.setWindowTitle("StockWatcher 已在运行")
+        box.setText(message)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.exec()
+        return
     if sys.platform == "darwin":
         try:
             subprocess.Popen(
