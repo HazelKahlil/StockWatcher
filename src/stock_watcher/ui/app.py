@@ -331,7 +331,7 @@ def run(
                     window_raised=raised,
                 )
                 recorder.finish(0, "secondary_activated")
-                return 0
+                return _exit_secondary(0)
             if not instance_guard.acquire():
                 recorder.stage(
                     "secondary_activated"
@@ -343,9 +343,9 @@ def run(
                 if instance_guard.last_activation_status != "success":
                     _show_secondary_failure(instance_guard, recorder.log_path)
                     recorder.finish(1, "secondary_activation_failed")
-                    return 1
+                    return _exit_secondary(1)
                 recorder.finish(0, "secondary_activated")
-                return 0
+                return _exit_secondary(0)
             recorder.stage("primary_started")
         paths = runtime_paths()
         paths.create()
@@ -423,6 +423,16 @@ def run(
         recorder.fatal(error, app_available=QApplication.instance() is not None)
         recorder.finish(1, "fatal-startup-error")
         return 1
+
+
+def _exit_secondary(code: int) -> int:
+    if (
+        sys.platform == "win32"
+        and not os.environ.get("PYTEST_CURRENT_TEST")
+        and "pytest" not in sys.modules
+    ):
+        os._exit(code)
+    return code
 
 
 def _show_secondary_failure(
