@@ -322,12 +322,9 @@ def run(
                 source_commit=source_commit(),
             )
             if sys.platform == "win32" and not mutex_primary:
-                instance_guard.activate_existing()
                 raised = raise_existing_window()
                 recorder.stage(
                     "secondary_activated",
-                    activation_status=instance_guard.last_activation_status,
-                    ack=instance_guard.last_activation_ack,
                     window_raised=raised,
                 )
                 recorder.finish(0, "secondary_activated")
