@@ -21,12 +21,22 @@ def acquire_app_mutex() -> bool:
     if _mutex_handle is not None:
         return True
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenMutexW.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.LPCWSTR,
+    ]
+    kernel32.OpenMutexW.restype = wintypes.HANDLE
     kernel32.CreateMutexW.argtypes = [
         wintypes.LPVOID,
         wintypes.BOOL,
         wintypes.LPCWSTR,
     ]
     kernel32.CreateMutexW.restype = wintypes.HANDLE
+    existing = kernel32.OpenMutexW(0x00100000, False, APP_MUTEX_NAME)
+    if existing:
+        _mutex_handle = existing
+        return False
     handle = kernel32.CreateMutexW(None, False, APP_MUTEX_NAME)
     if not handle:
         return True
