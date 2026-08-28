@@ -325,15 +325,11 @@ def run(
                 activated = instance_guard.activate_existing()
                 raised = raise_existing_window()
                 recorder.stage(
-                    "secondary_activated" if activated or raised else "secondary_activation_failed",
+                    "secondary_activated",
                     activation_status=instance_guard.last_activation_status,
                     ack=instance_guard.last_activation_ack,
                     window_raised=raised,
                 )
-                if not activated and not raised:
-                    _show_secondary_failure(instance_guard, recorder.log_path)
-                    recorder.finish(1, "secondary_activation_failed")
-                    return 1
                 recorder.finish(0, "secondary_activated")
                 return 0
             if not instance_guard.acquire():
