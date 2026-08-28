@@ -45,8 +45,7 @@ def test_windows_app_enables_single_instance_and_app_mutex() -> None:
     assert "raise_existing_window()" in source
     assert "os._exit(exit_code)" in source
     runtime = Path("src/stock_watcher/ui/windows_runtime.py").read_text(encoding="utf-8")
-    assert "ERROR_ALREADY_EXISTS" in runtime
-    assert "OpenMutexW" in runtime
+    assert "instance.lock" in runtime
     assert "EnumWindows" in runtime
     installer = Path("packaging/windows/StockWatcher.iss").read_text(encoding="utf-8")
     assert "AppMutex=StockWatcher.AppMutex" in installer

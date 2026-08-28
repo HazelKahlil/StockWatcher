@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 from ctypes import wintypes
+from pathlib import Path
 from typing import Any
 
 APP_MUTEX_NAME = "StockWatcher.AppMutex"
@@ -10,38 +12,60 @@ ERROR_ALREADY_EXISTS = 183
 SW_RESTORE = 9
 
 _mutex_handle: Any = None
+_instance_lock_path: Path | None = None
 _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 
-def acquire_app_mutex() -> bool:
-    """Create the Inno Setup mutex. Return True if this process is primary."""
+def _instance_lock_file() -> Path:
+    root = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(root) / "StockWatcher" / "runtime" / "instance.lock"
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _create_named_mutex() -> None:
+    """Keep the mutex Inno Setup uses to detect a running instance."""
     global _mutex_handle
-    if sys.platform != "win32":
-        return True
-    if _mutex_handle is not None:
-        return True
+    if _mutex_handle is not None or sys.platform != "win32":
+        return
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenMutexW.argtypes = [
-        wintypes.DWORD,
-        wintypes.BOOL,
-        wintypes.LPCWSTR,
-    ]
-    kernel32.OpenMutexW.restype = wintypes.HANDLE
     kernel32.CreateMutexW.argtypes = [
         wintypes.LPVOID,
         wintypes.BOOL,
         wintypes.LPCWSTR,
     ]
     kernel32.CreateMutexW.restype = wintypes.HANDLE
-    existing = kernel32.OpenMutexW(0x00100000, False, APP_MUTEX_NAME)
-    if existing:
-        _mutex_handle = existing
-        return False
     handle = kernel32.CreateMutexW(None, False, APP_MUTEX_NAME)
-    if not handle:
+    if handle:
+        _mutex_handle = handle
+
+
+def acquire_app_mutex() -> bool:
+    """Return True if this process is the primary instance."""
+    global _instance_lock_path
+    _create_named_mutex()
+    if sys.platform != "win32":
         return True
-    _mutex_handle = handle
-    return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+    path = _instance_lock_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            existing = int(path.read_text(encoding="utf-8").strip() or "0")
+        except ValueError:
+            existing = 0
+        if _pid_is_alive(existing) and existing != os.getpid():
+            return False
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    _instance_lock_path = path
+    return True
 
 
 def raise_existing_window() -> bool:
