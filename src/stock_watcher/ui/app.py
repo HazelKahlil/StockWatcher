@@ -272,6 +272,9 @@ def run(
     preflight_verified: bool = False,
     terminal_path: Path | None = None,
 ) -> int:
+    if sys.platform == "win32" and not acquire_app_mutex():
+        raise_existing_window()
+        os._exit(0)
     recorder = StartupRecorder()
     try:
         parser = argparse.ArgumentParser(description="StockWatcher desktop application")
