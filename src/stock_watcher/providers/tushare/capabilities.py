@@ -116,6 +116,7 @@ class CapabilityCheckCoordinator:
         )
         self._owns_executor = executor is None
         self._lock = Lock()
+        self._closed = False
         self._in_flight = False
         self._future: Future[None] | None = None
         self._sample_codes: tuple[str, ...] = ()
@@ -219,10 +220,14 @@ class CapabilityCheckCoordinator:
         order: tuple[ProviderCapability, ...],
     ) -> bool:
         with self._lock:
-            if self._in_flight or not self._has_due_check_locked(order):
+            if self._closed or self._in_flight or not self._has_due_check_locked(order):
                 return False
             self._in_flight = True
-            self._future = self._executor.submit(self._run_loop, order)
+            try:
+                self._future = self._executor.submit(self._run_loop, order)
+            except RuntimeError:
+                self._in_flight = False
+                return False
             return True
 
     def run_until_blocked(self) -> None:
@@ -287,6 +292,10 @@ class CapabilityCheckCoordinator:
         return self.start_background()
 
     def shutdown(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
         if self._owns_executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
 

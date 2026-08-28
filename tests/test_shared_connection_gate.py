@@ -803,3 +803,15 @@ def test_native_realtime_preserves_supplier_retry_after() -> None:
     assert raised.value.reason is ProviderFailureReason.RATE_LIMITED
     assert raised.value.retry_after_seconds == 17.0
     assert budget.cooldown_remaining() == 17.0
+
+
+def test_capability_start_background_after_shutdown_returns_false() -> None:
+    coordinator = CapabilityCheckCoordinator(
+        cast(ProProxyTransport, SequenceTransport([])),
+        cast(NativeRealtimeTransport, SequenceTransport([])),
+        request_budget=ApplicationRequestBudget(),
+    )
+    coordinator.shutdown()
+    assert coordinator.start_background() is False
+    assert coordinator.start_realtime_background() is False
+    coordinator.shutdown()
