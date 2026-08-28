@@ -18,6 +18,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
+AppMutex=StockWatcher.AppMutex
 CloseApplications=yes
 RestartApplications=no
 OutputDir={#StockWatcherOutputDir}

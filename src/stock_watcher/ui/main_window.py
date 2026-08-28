@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
+import os
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
@@ -51,6 +54,9 @@ from .presenter import (
     format_time,
     snapshot_from_batch,
 )
+
+_logger = logging.getLogger(__name__)
+_SHUTDOWN_DEADLINE_MS = 5_000
 
 
 class CandidateCard(QFrame):
@@ -417,6 +423,7 @@ class MainWindow(QMainWindow):
         self._shutdown_requested = False
         self._shutdown_complete = False
         self._close_after_worker = False
+        self._shutdown_deadline_scheduled = False
         self.setWindowTitle(session.window_title)
         self.resize(1000, 720)
         self.setMinimumSize(700, 420)
@@ -1086,7 +1093,7 @@ class MainWindow(QMainWindow):
             self._finalize_shutdown()
             if self._close_after_worker:
                 self._close_after_worker = False
-                QTimer.singleShot(0, self.close)
+                QTimer.singleShot(0, self._quit_event_loop)
             return
         if self._queued_manual_fetch:
             self._queued_manual_fetch = False
@@ -1124,13 +1131,21 @@ class MainWindow(QMainWindow):
         """Write the runtime heartbeat independently of scan success."""
         heartbeat = getattr(self.session, "heartbeat", None)
         if callable(heartbeat):
-            heartbeat()
+            threading.Thread(
+                target=heartbeat,
+                name="stockwatcher-heartbeat",
+                daemon=True,
+            ).start()
 
     def _summary_check_tick(self) -> None:
         """Decoupled 15:30 scheduler entry; never blocks on the scan loop."""
         check = getattr(self.session, "check_automation_tasks", None)
         if callable(check):
-            check()
+            threading.Thread(
+                target=check,
+                name="stockwatcher-summary-check",
+                daemon=True,
+            ).start()
 
     def _clear_initial_data_source_dialog(self, _result: int) -> None:
         self._initial_data_source_dialog = None
@@ -1170,6 +1185,35 @@ class MainWindow(QMainWindow):
         if callable(shutdown):
             shutdown()
 
+    def _schedule_shutdown_deadline(self) -> None:
+        if self._shutdown_deadline_scheduled:
+            return
+        self._shutdown_deadline_scheduled = True
+        QTimer.singleShot(_SHUTDOWN_DEADLINE_MS, self._on_shutdown_deadline)
+
+    def _quit_event_loop(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def _on_shutdown_deadline(self) -> None:
+        if not self._closing or self._mac_window_close_policy.should_hide_on_close:
+            return
+        alive = [
+            thread.name
+            for thread in threading.enumerate()
+            if thread.is_alive() and thread is not threading.main_thread()
+        ]
+        _logger.warning(
+            "shutdown deadline exceeded; forcing process exit remaining_threads=%s",
+            alive,
+        )
+        self._finalize_shutdown()
+        self._quit_event_loop()
+        if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+            return
+        QTimer.singleShot(100, lambda: os._exit(0))
+
     def closeEvent(self, event: QCloseEvent) -> None:
         # A spontaneous close is the user clicking the macOS red button (hide);
         # a non-spontaneous close is QApplication::closeAllWindows(), which is
@@ -1187,6 +1231,7 @@ class MainWindow(QMainWindow):
 
         self._prepare_for_close()
         self._request_session_shutdown()
+        self._schedule_shutdown_deadline()
         thread = self._operation_thread
         if thread is not None and thread.isRunning():
             # Never block the GUI thread on requests/SDK work. The window closes
@@ -1200,3 +1245,4 @@ class MainWindow(QMainWindow):
 
         self._finalize_shutdown()
         event.accept()
+        self._quit_event_loop()

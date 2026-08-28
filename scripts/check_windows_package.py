@@ -191,6 +191,8 @@ def main() -> int:
         errors.append("installer must use the StockWatcher application icon")
     if "PrivilegesRequired=lowest" not in installer:
         errors.append("installer must use per-user, non-admin installation")
+    if "AppMutex=StockWatcher.AppMutex" not in installer:
+        errors.append("installer must declare the Windows application mutex")
     if "CloseApplications=yes" not in installer or "RestartApplications=no" not in installer:
         errors.append("installer upgrade must close locked app files without auto-restarting")
     if "UninstallDelete" not in installer:
