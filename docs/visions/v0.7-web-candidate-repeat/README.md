@@ -58,6 +58,7 @@
 | 2026-08-26 | 备份 Schema v9 → 镜像 `stockwatcher-web:web-repeat-4b1e79e` → live 迁到 v10 → 公网静态验证 | 完成 |
 | 2026-08-26 | 零回归终验包 `docs/visions/v0.7-web-candidate-repeat/audit/`；旁路数据/算法门通过；现网 `/health/ready` 503 使整包签收门未齐 | 记录 |
 | 2026-08-26 | 独立分支 `fix/web-readiness-503`：公开 503 仍为 `{"status":"not_ready"}`，服务器记录分阶段脱敏日志；HTTP readiness 使用短生命周期只读连接；镜像 `web-repeat-ready-db10869` 已替换 live Web | 完成 |
+| 2026-08-28 | 独立分支 `fix/web-summary-pdf-and-task-ledger`：容器盘后 PDF CID fallback 可渲染；固定提醒已送达则任务 SUCCEEDED；过期 FAILED 只标一次；web/worker 统一镜像 `web-summary-fix-d84c3c7`。证据见 [summary-pdf-and-task-ledger-repair.md](summary-pdf-and-task-ledger-repair.md) | 完成 |
 
 ## 实现要点
 
@@ -72,20 +73,26 @@
 
 | 项 | 值 |
 | --- | --- |
-| 本地分支 | `fix/web-readiness-503`（repeat 实现仍在 `4b1e79e`） |
-| 实现提交 | `4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997` |
-| 镜像标签 | `stockwatcher-web:web-repeat-ready-db10869`（Web）；Worker 仍为 `web-repeat-4b1e79e` |
-| 镜像 Id | `sha256:1fdcf4f420d8097fb3e14ad4ab2053e7c2c3850c5964bbd7cfe97717889803d5` |
+| 本地分支 | `fix/web-summary-pdf-and-task-ledger` |
+| 实现提交 | 盘后 PDF / 任务账本 `d84c3c77a0e33be9790697c969f311dff5e9ea8c`；repeat 实现仍在 `4b1e79e1250bc1bc8b4beff41f9f5bfbeb9b5997` |
+| 镜像标签 | `stockwatcher-web:web-summary-fix-d84c3c7`（Web 与 Worker 已统一） |
+| 镜像 Id | `sha256:4e836255f292d9d8a673d8f2aa120c9240a7b5943d6091252d29717118bb12a2` |
 | 部署环境 | macOS Docker Desktop + Cloudflare Tunnel，`stock.hazelkahlil.com` |
 | 迁移前备份 | `~/StockWatcherBackups/auto-20260826T040404Z`（Schema v9 / `34ce825`） |
 | 容器内备份 | `/backups/auto-20260826T040404Z/stockwatcher-20260826T120405Z` |
 | live Schema | v10，`integrity_check=ok` |
 | 回算 | `status=completed version=1 snapshots=5278 occurrences=1618 activated=90 skipped=0` |
 | 公网验证 | `/health/ready` 200 `{"status":"ready"}`；登录页 200；Web Docker healthy |
-| GitHub | 已按 alpha4 Web 模式同步：`publish/web-v0.7-candidate-repeat`（`c60c28c`）push 至 origin；GitHub main 不含 Web 线 |
+| GitHub | 盘后 PDF / 任务账本修复未 push；既有审核分支仍停在 `publish/web-v0.7-candidate-repeat`（`c60c28c`）；GitHub main 不含 Web 线 |
 | 合入 main | 2026-08-27 Human Owner 确认遵守既有门（`docs/tracks/web.md` / `branch-and-worktree-policy.md`）：等真实交易日现场验收通过后再决定受控集成；本地 `main` 保持 `6a81825` 未动 |
 
 ## 回滚
+
+盘后 PDF / 任务账本镜像回退（保留 v10 数据；Web 与 Worker 一起回）：
+
+1. `.env.tunnel` 的 `IMAGE_TAG` / `BUILD_VERSION` 改回 `web-repeat-ready-db10869`，`SOURCE_COMMIT` 改回 `db10869def7242ecfd66975eb0cb97d0c4203d29`（Worker 若需回到更旧的 `web-repeat-4b1e79e`，单独改 worker 的 image override）。
+2. `docker compose -f docker-compose.yml -f docker-compose.tunnel.yml --env-file .env.tunnel up -d --no-deps web worker`
+3. 跑 `deploy/scripts/tunnel-healthcheck.sh`。
 
 Web readiness 镜像回退（保留 v10 数据）：
 
@@ -117,6 +124,7 @@ Web readiness 镜像回退（保留 v10 数据）：
 | 计数发生在健康快照写入事务 | 提醒只补充当天来源，不能反向驱动次数 |
 | Web 继续 `BLOCKED / NOT_ACCEPTED` | 本功能上线后仍为内部测试，不宣称生产稳定 |
 | Worker `secret-prune` FOREIGN KEY 告警 | 启动日志可见，与重复出现表无关；未在本版处理 |
+| 桌面 `tushare_v1_session.py` 过期重标与总结吞异常 | 2026-08-28 Web 账本/PDF 返修未改桌面线，列为已知欠账 |
 
 ## Session Handoff 索引
 
@@ -125,6 +133,6 @@ Web readiness 镜像回退（保留 v10 数据）：
 ## 封版记录
 
 - 验证结果：离线工程门通过；Mac 内测隧道已部署 Schema v10。等待真实交易日看盘中强异动弹窗与历史紫色。
-- 遗留问题：GitHub 未同步；真实交易日页面交互验收未做；Worker `secret-prune` 外键告警仍在。
+- 遗留问题：本次盘后 PDF / 任务账本未 push；真实交易日页面交互验收未做；Worker `secret-prune` 外键告警仍在；桌面 `tushare_v1_session.py` 过期重标与总结吞异常未改。
 - 三账终态：实施完成，版本未封。
 - 同步债 / successor：需要时从本分支出 `publish/` 同步 PR。
