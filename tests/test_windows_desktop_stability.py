@@ -25,6 +25,19 @@ from stock_watcher.security import (
 from stock_watcher.ui.tushare_v1_session import TushareV1Session
 
 
+def test_windows_single_instance_name_is_stable_across_pids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stock_watcher.ui.single_instance import _default_instance_name
+
+    monkeypatch.setattr(os, "getpid", lambda: 111)
+    first = _default_instance_name()
+    monkeypatch.setattr(os, "getpid", lambda: 222)
+    second = _default_instance_name()
+    assert first == second
+    assert first.startswith("stockwatcher-")
+
+
 def test_windows_app_enables_single_instance_and_app_mutex() -> None:
     source = Path(app_module.__file__).read_text(encoding="utf-8")
     assert 'sys.platform in {"darwin", "win32"}' in source

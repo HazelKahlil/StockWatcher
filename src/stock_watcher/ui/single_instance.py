@@ -342,6 +342,9 @@ def _timestamp() -> str:
 
 
 def _default_instance_name() -> str:
-    identifier = f"StockWatcher:{getattr(os, 'getuid', lambda: os.getpid())()}"
+    if hasattr(os, "getuid"):
+        identifier = f"StockWatcher:{os.getuid()}"
+    else:
+        identifier = f"StockWatcher:{os.environ.get('USERNAME', os.environ.get('USER', 'user'))}"
     digest = hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:16]
     return f"stockwatcher-{digest}"
