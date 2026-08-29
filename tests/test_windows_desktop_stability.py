@@ -166,5 +166,17 @@ def test_session_shutdown_request_cancels_scan_and_is_idempotent(tmp_path: Path)
     session.request_shutdown()
     assert session.shutdown_requested
     assert runtime.cancellations == 1
+
+    class CallbackFuture:
+        def cancel(self) -> bool:
+            acquired = session._outcome_future_lock.acquire(timeout=0.2)
+            if acquired:
+                session._outcome_future_lock.release()
+            assert acquired, "outcome cancel ran while the future lock was held"
+            return True
+
+    session._shutdown_event.clear()
+    session._outcome_futures.add(cast(Any, CallbackFuture()))
+    session.request_shutdown()
     session.shutdown()
     session.shutdown()

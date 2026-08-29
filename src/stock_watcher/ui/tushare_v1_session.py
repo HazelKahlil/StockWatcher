@@ -404,8 +404,9 @@ class TushareV1Session:
         if future is not None:
             future.cancel()
         with self._outcome_future_lock:
-            for outcome_future in self._outcome_futures:
-                outcome_future.cancel()
+            pending_outcomes = list(self._outcome_futures)
+        for outcome_future in pending_outcomes:
+            outcome_future.cancel()
 
     def stop(self) -> None:
         self.state = HealthState.STOPPED
@@ -1454,7 +1455,9 @@ class TushareV1Session:
         fallback_key: str | None = None,
     ) -> None:
         try:
-            report = future.result()
+            if future.cancelled():
+                return
+            report = future.result(timeout=0)
             if fallback_key is not None and report.pending:
                 self._outcome_issue = "outcome-retry-scheduled"
         except Exception as error:  # noqa: BLE001 - background sidecar stays isolated
@@ -2445,8 +2448,9 @@ class TushareV1Session:
             self.capability_checks.shutdown()
         self._universe_executor.shutdown(wait=False, cancel_futures=True)
         with self._outcome_future_lock:
-            for future in self._outcome_futures:
-                future.cancel()
+            pending_outcomes = list(self._outcome_futures)
+        for future in pending_outcomes:
+            future.cancel()
         self._outcome_executor.shutdown(wait=False, cancel_futures=True)
 
     def _set_missing_credential(self) -> None:
