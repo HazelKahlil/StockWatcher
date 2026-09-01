@@ -241,6 +241,7 @@ class TushareV1Session:
         if recovery:
             self._runtime_audit_issue = f"db-recovery:{recovery.get('source_backup', 'unknown')}"
         self.last_scan_succeeded_at: datetime | None = None
+        self.last_scan_finished_at: datetime | None = None
         self._recovery_round = 0
         self._stall_threshold_seconds = 90.0
         self.app_badge = "Mac V1" if sys.platform == "darwin" else "Windows V1"
@@ -864,6 +865,7 @@ class TushareV1Session:
             self.candidate_gate_label = "保留上次结果" if self.batch else "无新结果"
             self.status_issues = ("本轮未生成新候选。",)
         completed_at = _shanghai(self._clock())
+        self.last_scan_finished_at = completed_at
         if outcome.health is HealthState.HEALTHY:
             self.last_scan_succeeded_at = completed_at
             self._recovery_round += 1
@@ -1935,6 +1937,7 @@ class TushareV1Session:
         self.connection_detail = reason
         self.health_detail = reason
         self.status_issues = ("旧实时基线已清理；需连续3轮新鲜完整数据后恢复。",)
+        self.last_scan_finished_at = _shanghai(self._clock())
         return True
 
     def _is_network_interrupted(self) -> bool:
@@ -1949,10 +1952,11 @@ class TushareV1Session:
             cancel()
 
     def _detect_scan_stall(self, now: datetime) -> None:
-        """Rebuild the scan loop when no scan succeeded for > 90s in a session.
+        """Rebuild the scan loop when no scan finishes for > 90s in a session.
 
-        Only applies during trading hours without a pending sleep/wake or
-        network recovery; a sleep gap is explained by sleep events instead.
+        A finished WARMING or STOPPED round still counts as activity. Using only
+        HEALTHY here re-triggers recovery every tick after the first miss and
+        never lets three warmup rounds complete.
         """
         universe = getattr(self._runtime, "universe", None)
         open_dates = (
@@ -1963,18 +1967,23 @@ class TushareV1Session:
         with self._platform_recovery_lock:
             if self._platform_recovery_reason is not None or self._network_interrupted:
                 return
-        if self.last_scan_succeeded_at is None:
+        activity_at = self.last_scan_finished_at or self.last_scan_succeeded_at
+        if activity_at is None:
             return
         # The lunch break (11:30-13:00) and the pre-open gap are legitimate
         # pauses; only a stall inside the same trading block is actionable.
-        if _trading_block(now) != _trading_block(self.last_scan_succeeded_at):
+        if _trading_block(now) != _trading_block(activity_at):
             return
-        gap_seconds = (now - self.last_scan_succeeded_at).total_seconds()
+        gap_seconds = (now - activity_at).total_seconds()
         if gap_seconds <= self._stall_threshold_seconds:
             return
-        detail = {
-            "stall_started_at": self.last_scan_succeeded_at.isoformat(),
-            "last_success_at": self.last_scan_succeeded_at.isoformat(),
+        detail: dict[str, object] = {
+            "stall_started_at": activity_at.isoformat(),
+            "last_success_at": (
+                self.last_scan_succeeded_at.isoformat()
+                if self.last_scan_succeeded_at is not None
+                else None
+            ),
             "gap_seconds": round(gap_seconds, 1),
             "active_request": self._active_scan_attempt_id is not None,
         }

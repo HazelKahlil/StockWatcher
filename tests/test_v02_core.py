@@ -547,6 +547,30 @@ def test_scan_stall_records_event_and_enters_recovery(tmp_path: Path) -> None:
         session.shutdown(exit_reason="menu_quit")
 
 
+def test_scan_stall_ignores_recent_warming_finish(tmp_path: Path) -> None:
+    """Warmup rounds must not retrigger stall just because HEALTHY is old."""
+    now = datetime(2026, 8, 6, 10, 30, 0, tzinfo=SHANGHAI)
+    session = TushareV1Session(
+        tmp_path / "stall-warming.sqlite3",
+        credential_store=MemoryCredentialStore(),
+        runtime_factory=lambda _settings, _store: (
+            cast(TushareV1Runtime, object()),
+            cast(Tushare15000Provider, object()),
+        ),
+        clock=lambda: now,
+    )
+    try:
+        session._runtime = cast(TushareV1Runtime, object())
+        session.last_scan_succeeded_at = now - timedelta(minutes=3)
+        session.last_scan_finished_at = now - timedelta(seconds=8)
+        session._run(force=True, manual_request=False)
+        events = session.store.list_runtime_events(session._runtime_session_id)
+        assert all(event["event_type"] != "scan_stalled" for event in events)
+        assert session._platform_recovery_reason is None
+    finally:
+        session.shutdown(exit_reason="menu_quit")
+
+
 def _seed_healthy_scan_run(
     store: SQLiteStore,
     trade_date: str,
