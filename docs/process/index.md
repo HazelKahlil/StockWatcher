@@ -1,6 +1,6 @@
 # 过程规则与踩坑索引
 
-> 最后更新：2026-07-30
+> 最后更新：2026-09-01
 > 每条规则必须有“为什么”；后续 session 先从路由表定位必读规则。
 
 ## 硬边界
@@ -41,6 +41,9 @@
 | 日期 | 坑 | 根因 | 结论 |
 | --- | --- | --- | --- |
 | 2026-07-22 | 原始 Markdown 的 4 张图引用运行时 `/mnt/data/` 绝对路径 | 交接文件来自一次性生成环境 | 入库时改为同目录相对路径，并用自动检查阻止绝对路径回归 |
+| 2026-09-01 | Windows 二次进程残留约 46MB Qt | 入口先 `import PySide6` 再判实例；PID 文件锁非原子 | 冻结入口在导入 Qt 前 `CreateFileW` share=0；失败则 `os._exit` |
+| 2026-09-01 | 盘中停滞自救把预热卡在 1/3 | 只把 HEALTHY 当活动，失败轮反复重置 warmup | 用 `last_scan_finished_at`；WARMING/STOPPED 也算活动 |
+| 2026-09-01 | Windows Ctrl+Q 测不出来 | `StandardKey.Quit` 在 Windows 不是 Ctrl+Q | 显式 `QKeySequence("Ctrl+Q")` + `ApplicationShortcut` |
 
 ## 决策记录
 
