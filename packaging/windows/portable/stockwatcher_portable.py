@@ -301,18 +301,14 @@ def launch_tdx_diagnostic_ui(
     return int(app.run(preflight_verified=True, terminal_path=terminal))
 
 
-class _SingleInstance:
-    def __init__(self) -> None:
-        self._handle: int | None = None
-
-    def acquire(self) -> bool:
-        if sys.platform != "win32":
-            return True
-        kernel32 = ctypes.windll.kernel32
-        self._handle = int(
-            kernel32.CreateMutexW(None, False, "Local\\StockWatcherInternalPortable")
-        )
-        return bool(self._handle) and kernel32.GetLastError() != 183
+def _reject_secondary_instance() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        from stock_watcher.ui.windows_runtime import exit_if_secondary_instance
+    except ImportError:
+        return
+    exit_if_secondary_instance()
 
 
 def _message_box(text: str, title: str = "StockWatcher") -> None:
@@ -346,10 +342,7 @@ def launch_once(layout: PortableLayout | None = None) -> int:
 
 
 def main() -> int:
-    instance = _SingleInstance()
-    if not instance.acquire():
-        _message_box("StockWatcher 已经在运行。", "StockWatcher")
-        return 0
+    _reject_secondary_instance()
     try:
         return launch_once()
     except PortableLaunchError as error:

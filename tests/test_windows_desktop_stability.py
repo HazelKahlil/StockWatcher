@@ -46,11 +46,45 @@ def test_windows_app_enables_single_instance_and_app_mutex() -> None:
     assert "os._exit(exit_code)" in source
     runtime = Path("src/stock_watcher/ui/windows_runtime.py").read_text(encoding="utf-8")
     assert "instance.lock" in runtime
+    assert "CreateFileW" in runtime
+    assert "exit_if_secondary_instance()" in runtime
     assert "EnumWindows" in runtime
+    main_source = Path("src/stock_watcher/__main__.py").read_text(encoding="utf-8")
+    assert main_source.index("exit_if_secondary_instance()") < main_source.index(
+        "from stock_watcher.ui.app import run"
+    )
+    portable = Path("packaging/windows/portable/stockwatcher_portable.py").read_text(
+        encoding="utf-8"
+    )
+    assert "exit_if_secondary_instance" in portable
+    assert "StockWatcherInternalPortable" not in portable
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows exclusive instance lock")
+def test_acquire_app_mutex_rejects_a_second_opener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stock_watcher.ui import windows_runtime as runtime
+
+    monkeypatch.setattr(runtime, "_instance_lock_file", lambda: tmp_path / "instance.lock")
+    runtime._instance_lock_handle = None
+    runtime._instance_lock_path = None
+    assert runtime.acquire_app_mutex() is True
+    first_handle = runtime._instance_lock_handle
+    runtime._instance_lock_handle = None
+    assert runtime.acquire_app_mutex() is False
+    runtime._instance_lock_handle = first_handle
     installer = Path("packaging/windows/StockWatcher.iss").read_text(encoding="utf-8")
     assert "AppMutex=StockWatcher.AppMutex" in installer
     assert "PrepareToInstall" in installer
     assert "taskkill.exe" in installer
+
+
+def test_windows_quit_shortcut_includes_ctrl_q() -> None:
+    source = Path("src/stock_watcher/ui/main_window.py").read_text(encoding="utf-8")
+    assert 'QKeySequence("Ctrl+Q")' in source
+    assert "ApplicationShortcut" in source
 
 
 def test_windows_font_preferences_do_not_force_macos_families() -> None:

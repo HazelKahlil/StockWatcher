@@ -406,6 +406,7 @@ def test_pyinstaller_bundle_uses_strict_windows_entry() -> None:
     assert "stockwatcher_portable.py" in source
     assert 'src" / "stock_watcher" / "__main__.py' not in source
     assert '"stock_watcher.ui.app"' in source
+    assert '"stock_watcher.ui.windows_runtime"' in source
     assert "stockwatcher.ico" in source
     assert "stockwatcher.png" in source
 
