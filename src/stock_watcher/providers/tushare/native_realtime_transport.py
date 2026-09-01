@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from io import StringIO
+from queue import Empty, Queue
 from typing import Protocol, cast
 from zoneinfo import ZoneInfo
 
@@ -182,12 +183,54 @@ class NativeRealtimeTransport:
         self._monotonic = monotonic
         self._sleeper = sleeper
         self._lock = threading.Lock()
+        self._timed_out_thread: threading.Thread | None = None
         self._request_budget = request_budget or ApplicationRequestBudget(
             profile.min_interval_seconds,
             clock=monotonic,
             sleeper=sleeper,
         )
         self.version = f"tushare-{self._client.version}"
+
+    def _fetch_with_timeout(
+        self,
+        batch: tuple[str, ...],
+    ) -> list[dict[str, object]] | None:
+        """Run the third-party SDK on a bounded daemon thread.
+
+        The SDK does not expose a request timeout or cancellation handle. A daemon
+        wrapper keeps the Qt scan worker bounded; after a timeout, new calls fail
+        closed until the timed-out SDK invocation has actually returned.
+        """
+
+        result_queue: Queue[tuple[str, object]] = Queue(maxsize=1)
+
+        def invoke() -> None:
+            try:
+                rows = self._client.fetch(batch, source=self.profile.source)
+            except Exception as error:  # noqa: BLE001 - mapped to a safe provider reason
+                result_queue.put(("error", error))
+            else:
+                result_queue.put(("ok", rows))
+
+        thread = threading.Thread(
+            target=invoke,
+            name="stockwatcher-native-realtime-call",
+            daemon=True,
+        )
+        thread.start()
+        try:
+            state, payload = result_queue.get(
+                timeout=float(self.profile.request_timeout_seconds)
+            )
+        except Empty:
+            self._timed_out_thread = thread
+            raise ProviderError(ProviderFailureReason.TIMEOUT) from None
+        self._timed_out_thread = None
+        if state == "error":
+            if isinstance(payload, Exception):
+                raise payload
+            raise RuntimeError("native realtime call failed without an exception")
+        return cast(list[dict[str, object]] | None, payload)
 
     def execute(self, request: TransportRequest) -> TransportResult:
         if not request.realtime or request.api_name != "realtime_quote":
@@ -200,12 +243,17 @@ class NativeRealtimeTransport:
         started = self._monotonic()
         normalized: list[Record] = []
         with self._lock:
+            timed_out = self._timed_out_thread
+            if timed_out is not None:
+                if timed_out.is_alive():
+                    raise ProviderError(ProviderFailureReason.TIMEOUT)
+                self._timed_out_thread = None
             self._client.configure(token, str(self.profile.verify_url).rstrip("/"))
             for offset in range(0, len(codes), self.profile.batch_size):
                 batch = codes[offset : offset + self.profile.batch_size]
                 self._request_budget.acquire("realtime")
                 try:
-                    rows = self._client.fetch(batch, source=self.profile.source)
+                    rows = self._fetch_with_timeout(batch)
                 except Exception as exc:
                     reason = _safe_failure_reason(exc)
                     retry_after = (

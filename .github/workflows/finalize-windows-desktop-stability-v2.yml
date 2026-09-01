@@ -1,0 +1,154 @@
+name: Finalize Windows desktop stability PR v2
+
+on:
+  push:
+    branches: [fix/windows-desktop-stability]
+    paths:
+      - .github/workflows/finalize-windows-desktop-stability-v2.yml
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: finalize-windows-desktop-stability-v2
+  cancel-in-progress: false
+
+jobs:
+  verify-finalize-and-wait-for-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_BRANCH: fix/windows-desktop-stability
+      PR_NUMBER: "7"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-desktop-stability
+          fetch-depth: 0
+
+      - name: Reset to the latest branch head
+        run: |
+          sleep 30
+          git fetch origin "$TARGET_BRANCH"
+          git reset --hard "origin/$TARGET_BRANCH"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install the locked environment
+        run: uv sync --all-groups --frozen
+
+      - name: Run the complete offline engineering gate
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run pytest
+          uv run ruff check .
+          uv run mypy src tests
+          python scripts/validate_workspace.py
+          uv run python scripts/check_windows_package.py
+          python -m json.tool CURRENT_RELEASES.json > /dev/null
+          git diff --check
+
+      - name: Assert alpha.6 contracts and temporary-file cleanup
+        run: |
+          grep -F 'dist/StockWatcher-0.6.0-alpha.6-portable.zip' .github/workflows/governance.yml
+          grep -F 'dist/StockWatcher-0.6.0-alpha.6-portable.zip' tests/test_windows_package.py
+          grep -F '#define MyAppVersion "0.6.0-alpha.6"' packaging/windows/StockWatcher.iss
+          grep -F 'version = "0.6.0a6"' pyproject.toml
+          test ! -e scripts/_patch_windows_ui.py
+          test ! -e .github/workflows/apply-windows-desktop-stability.yml
+          test ! -e .github/workflows/fix-alpha5-test-contract.yml
+          if git grep -nE '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})' -- . \
+            ':!docs/reference' ':!uv.lock'; then
+            echo 'Credential-like material found; refusing to finalize.' >&2
+            exit 1
+          fi
+
+      - name: Remove one-shot workflows and publish the final source head
+        id: publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f --ignore-unmatch \
+            .github/workflows/finalize-windows-desktop-stability.yml \
+            .github/workflows/finalize-windows-desktop-stability-v2.yml
+          git commit -m "ci: remove one-shot PR finalizers"
+          git push origin HEAD:"$TARGET_BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for normal Governance on the final head
+        id: governance
+        env:
+          FINAL_SHA: ${{ steps.publish.outputs.sha }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          run_url=""
+          for attempt in $(seq 1 120); do
+            payload="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/actions/workflows/governance.yml/runs?event=pull_request&head_sha=$FINAL_SHA&per_page=20")"
+            run_id="$(jq -r '.workflow_runs[0].id // empty' <<<"$payload")"
+            if [ -n "$run_id" ]; then
+              status="$(jq -r '.workflow_runs[0].status' <<<"$payload")"
+              conclusion="$(jq -r '.workflow_runs[0].conclusion // empty' <<<"$payload")"
+              run_url="$(jq -r '.workflow_runs[0].html_url' <<<"$payload")"
+              echo "Governance run $run_id: status=$status conclusion=$conclusion"
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" != "success" ]; then
+                  gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed || true
+                  exit 1
+                fi
+                break
+              fi
+            else
+              echo "Waiting for Governance to start for $FINAL_SHA"
+            fi
+            sleep 15
+          done
+          test -n "$run_id" && test -n "$run_url"
+          final_status="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.status + ":" + (.conclusion // "")')"
+          test "$final_status" = "completed:success"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+
+      - name: Verify both Windows build artifacts exist
+        env:
+          RUN_ID: ${{ steps.governance.outputs.run_id }}
+        run: |
+          artifacts="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100")"
+          for expected in stockwatcher-windows-py3.11 stockwatcher-windows-py3.12; do
+            count="$(jq --arg name "$expected" '[.artifacts[] | select(.name == $name and .expired == false and .size_in_bytes > 0)] | length' <<<"$artifacts")"
+            test "$count" = "1" || {
+              echo "Missing or invalid artifact: $expected" >&2
+              exit 1
+            }
+          done
+
+      - name: Publish evidence and mark PR ready
+        env:
+          FINAL_SHA: ${{ steps.publish.outputs.sha }}
+          RUN_URL: ${{ steps.governance.outputs.run_url }}
+        run: |
+          body=$(cat <<EOF
+          Final automated verification completed on \`$FINAL_SHA\`.
+
+          - Ubuntu full offline pytest, Ruff, strict Mypy, workspace validator, Windows package contract, JSON and diff gates: PASS
+          - Normal Governance run: $RUN_URL
+          - Windows Python 3.11 and 3.12: tests, lint/types, PowerShell setup, fail-closed preflight, PyInstaller, Inno Setup and artifact upload: PASS
+          - Fresh non-empty artifacts: \`stockwatcher-windows-py3.11\` and \`stockwatcher-windows-py3.12\`
+
+          This is CI/build evidence only. Target-machine DPI, multi-monitor, title-bar close during a real scan, installation/upgrade/uninstall, notification behavior and real trading-session acceptance remain explicitly pending.
+          EOF
+          )
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock, Thread
 from typing import Any
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -28,6 +29,14 @@ from stock_watcher.storage import SQLiteStore
 
 
 class OutcomeReviewWorker(QThread):
+    """Backward-compatible one-shot reader used by older tests and integrations.
+
+    The interactive panel no longer owns this QThread: its close path uses a daemon
+    Python worker so closing the dialog never waits on a database query. Keeping the
+    small worker type preserves the existing public import without reintroducing the
+    blocking lifecycle.
+    """
+
     loaded = Signal(object, object, str)
 
     def __init__(self, path: Path, trading_days: int | None) -> None:
@@ -52,7 +61,12 @@ class OutcomeReviewPanel(QWidget):
     def __init__(self, path: Path, parent: Any = None) -> None:
         super().__init__(parent)
         self._path = path
-        self._worker: OutcomeReviewWorker | None = None
+        self._load_generation = 0
+        self._load_lock = Lock()
+        self._load_result: tuple[int, object, object, str] | None = None
+        self._load_timer = QTimer(self)
+        self._load_timer.setInterval(25)
+        self._load_timer.timeout.connect(self._poll_load)
         self._range_buttons: dict[int | None, QPushButton] = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 4, 0, 0)
@@ -130,27 +144,63 @@ class OutcomeReviewPanel(QWidget):
         self.load(20)
 
     def load(self, trading_days: int | None) -> None:
-        worker = self._worker
-        if worker is not None and worker.isRunning():
-            return
+        self._load_generation += 1
+        generation = self._load_generation
         self._status.setText("正在读取次日复盘…")
         for days, button in self._range_buttons.items():
             button.setChecked(days == trading_days)
             button.setEnabled(False)
-        worker = OutcomeReviewWorker(self._path, trading_days)
-        worker.loaded.connect(self._on_loaded)
-        worker.finished.connect(self._on_worker_finished)
-        self._worker = worker
-        worker.start()
+        with self._load_lock:
+            self._load_result = None
+        Thread(
+            target=self._read_outcomes,
+            args=(generation, trading_days),
+            name="stockwatcher-outcome-read",
+            daemon=True,
+        ).start()
+        self._load_timer.start()
 
-    def wait_for_worker(self, timeout_ms: int = 2000) -> None:
-        worker = self._worker
-        if worker is not None and worker.isRunning():
-            worker.wait(timeout_ms)
+    def _read_outcomes(self, generation: int, trading_days: int | None) -> None:
+        try:
+            store = SQLiteStore(self._path, read_only=True)
+            records = candidate_outcome_rows(store, trading_days=trading_days)
+            review: object = build_outcome_review(records)
+            backfill: object = store.get_app_setting("candidate_outcome_backfill_status")
+            error = ""
+        except Exception as exc:  # noqa: BLE001 - shown safely in the page
+            review = None
+            backfill = None
+            error = f"复盘暂不可读：{type(exc).__name__}"
+        with self._load_lock:
+            if generation == self._load_generation:
+                self._load_result = (generation, review, backfill, error)
 
-    def _on_worker_finished(self) -> None:
+    def _poll_load(self) -> None:
+        with self._load_lock:
+            result = self._load_result
+            self._load_result = None
+        if result is None:
+            return
+        generation, value, backfill, error = result
+        if generation != self._load_generation:
+            return
+        self._load_timer.stop()
         for button in self._range_buttons.values():
             button.setEnabled(True)
+        self._on_loaded(value, backfill, error)
+
+    def cancel_pending_loads(self) -> None:
+        self._load_generation += 1
+        self._load_timer.stop()
+        with self._load_lock:
+            self._load_result = None
+        for button in self._range_buttons.values():
+            button.setEnabled(True)
+
+    def wait_for_worker(self, timeout_ms: int = 2000) -> None:
+        # Backward-compatible API: cancellation is deliberately nonblocking.
+        del timeout_ms
+        self.cancel_pending_loads()
 
     def _on_loaded(self, value: object, backfill: object, error: str) -> None:
         if error:

@@ -84,6 +84,7 @@ analysis = Analysis(
         "stock_watcher.runtime.scan_coordinator",
         "stock_watcher.runtime.tushare_runtime",
         "stock_watcher.ui.app",
+        "stock_watcher.ui.windows_runtime",
         "stock_watcher.ui.daily_summary",
         "stock_watcher.ui.data_source_settings",
         "stock_watcher.ui.outcome_review",

@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from threading import Lock, Thread
 from typing import Any
 
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -25,6 +25,12 @@ from .outcome_review import OutcomeReviewPanel
 
 
 class HistoryWorker(QThread):
+    """Backward-compatible one-shot history reader.
+
+    HistoryDialog itself uses a daemon Python worker so its close path remains
+    nonblocking; this class is retained for existing imports and deterministic tests.
+    """
+
     loaded = Signal(object, str)
 
     def __init__(self, path: Path) -> None:
@@ -39,8 +45,8 @@ class HistoryWorker(QThread):
                 days=30,
             )
             self.loaded.emit(rows, "")
-        except Exception as error:  # noqa: BLE001 - surfaced in the dialog, not swallowed
-            self.loaded.emit([], f"历史暂不可读：{error}")
+        except Exception as error:  # noqa: BLE001 - expose only the safe class name
+            self.loaded.emit([], f"历史暂不可读：{type(error).__name__}")
 
 
 class HistoryDialog(QDialog):
@@ -48,7 +54,13 @@ class HistoryDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("历史记录")
         self.resize(860, 720)
-        self._worker = HistoryWorker(path)
+        self._path = path
+        self._load_generation = 0
+        self._load_lock = Lock()
+        self._load_result: tuple[int, object, str] | None = None
+        self._load_timer = QTimer(self)
+        self._load_timer.setInterval(25)
+        self._load_timer.timeout.connect(self._poll_history_load)
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 26, 30, 24)
         root.setSpacing(16)
@@ -89,14 +101,53 @@ class HistoryDialog(QDialog):
         close.setObjectName("secondaryButton")
         close.clicked.connect(self.reject)
         root.addWidget(close)
-        self._worker.loaded.connect(self._on_loaded)
-        self._worker.start()
+        self._start_history_load()
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
-        if self._worker.isRunning():
-            self._worker.wait(2000)
-        self._outcomes.wait_for_worker()
-        super().closeEvent(event)
+    def _start_history_load(self) -> None:
+        self._load_generation += 1
+        generation = self._load_generation
+        with self._load_lock:
+            self._load_result = None
+        Thread(
+            target=self._read_history,
+            args=(generation,),
+            name="stockwatcher-history-read",
+            daemon=True,
+        ).start()
+        self._load_timer.start()
+
+    def _read_history(self, generation: int) -> None:
+        try:
+            store = SQLiteStore(self._path, read_only=True)
+            rows: object = store.list_alert_history(
+                now=datetime.now(SHANGHAI),
+                days=30,
+            )
+            error = ""
+        except Exception as exc:  # noqa: BLE001 - expose only the safe class name
+            rows = []
+            error = f"历史暂不可读：{type(exc).__name__}"
+        with self._load_lock:
+            if generation == self._load_generation:
+                self._load_result = (generation, rows, error)
+
+    def _poll_history_load(self) -> None:
+        with self._load_lock:
+            result = self._load_result
+            self._load_result = None
+        if result is None:
+            return
+        generation, rows, error = result
+        if generation != self._load_generation:
+            return
+        self._load_timer.stop()
+        self._on_loaded(rows, error)
+
+    def done(self, result: int) -> None:
+        self._load_generation += 1
+        self._load_timer.stop()
+        self._outcomes.cancel_pending_loads()
+        super().done(result)
 
     def _on_loaded(self, rows: object, error: str) -> None:
         if error:

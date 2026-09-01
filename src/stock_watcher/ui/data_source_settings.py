@@ -4,20 +4,21 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from threading import Lock
+from threading import Lock, Thread
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -73,6 +74,8 @@ class DataSourceSettingsController:
     _pending: dict[str, PendingCredential] = field(default_factory=dict)
     _last_results: dict[str, CredentialTestResult] = field(default_factory=dict)
     _test_lock: Lock = field(default_factory=Lock)
+    _pending_state_lock: Lock = field(default_factory=Lock)
+    _pending_epoch: int = 0
 
     def __post_init__(self) -> None:
         if self.repository is not None:
@@ -166,11 +169,14 @@ class DataSourceSettingsController:
                 safe_reason="check_in_progress",
             )
         try:
+            with self._pending_state_lock:
+                pending_epoch = self._pending_epoch
             return self._test_candidate_locked(
                 name,
                 secret,
                 base_url=base_url,
                 use_system_proxy=use_system_proxy,
+                pending_epoch=pending_epoch,
             )
         finally:
             self._test_lock.release()
@@ -182,6 +188,7 @@ class DataSourceSettingsController:
         *,
         base_url: str,
         use_system_proxy: bool,
+        pending_epoch: int,
     ) -> CredentialTestResult:
         if not secret:
             result = CredentialTestResult(
@@ -192,7 +199,13 @@ class DataSourceSettingsController:
                 expires_at="未知",
                 safe_reason="credential_missing",
             )
-            self._last_results[name] = result
+            self._stage_test_result(
+                name,
+                secret,
+                result,
+                self.profile(name),
+                pending_epoch=pending_epoch,
+            )
             return result
         profile = HttpProfile.model_validate(
             {
@@ -202,16 +215,38 @@ class DataSourceSettingsController:
             }
         )
         result = self.tester.test(profile, secret)
-        self._last_results[name] = result
-        if result.success:
-            self._pending[name] = PendingCredential(
-                secret=secret,
-                result=result,
-                profile=profile,
-            )
-        else:
-            self._pending.pop(name, None)
+        self._stage_test_result(
+            name,
+            secret,
+            result,
+            profile,
+            pending_epoch=pending_epoch,
+        )
         return result
+
+    def _stage_test_result(
+        self,
+        name: str,
+        secret: str,
+        result: CredentialTestResult,
+        profile: HttpProfile,
+        *,
+        pending_epoch: int,
+    ) -> None:
+        with self._pending_state_lock:
+            if pending_epoch != self._pending_epoch:
+                return
+            self._last_results[name] = result
+            if result.success:
+                self._pending[name] = PendingCredential(
+                    secret=secret,
+                    result=result,
+                    profile=profile,
+                )
+            else:
+                pending = self._pending.pop(name, None)
+                if pending is not None:
+                    pending.secret = ""
 
     def commit_candidate(self, name: str, *, confirmed: bool) -> bool:
         pending = self._pending.get(name)
@@ -283,7 +318,10 @@ class DataSourceSettingsController:
         return result.success and self.commit_candidate("primary", confirmed=True)
 
     def clear_credential(self, name: str) -> bool:
-        self._pending.pop(name, None)
+        with self._pending_state_lock:
+            pending = self._pending.pop(name, None)
+            if pending is not None:
+                pending.secret = ""
         try:
             removed = self.store.delete(self.reference(name))
         except Exception:
@@ -304,9 +342,11 @@ class DataSourceSettingsController:
             self.on_provider_changed(mode)
 
     def discard_pending(self) -> None:
-        for pending in self._pending.values():
-            pending.secret = ""
-        self._pending.clear()
+        with self._pending_state_lock:
+            self._pending_epoch += 1
+            for pending in self._pending.values():
+                pending.secret = ""
+            self._pending.clear()
 
     def capability_statuses(
         self,
@@ -334,6 +374,12 @@ class _PrimaryEditor(QGroupBox):
         super().__init__("Tushare 数据接口", parent)
         self.setObjectName("dataSourceEditor")
         self.controller = controller
+        self._test_generation = 0
+        self._test_result_lock = Lock()
+        self._test_result: tuple[int, CredentialTestResult] | None = None
+        self._test_poll_timer = QTimer(self)
+        self._test_poll_timer.setInterval(25)
+        self._test_poll_timer.timeout.connect(self._poll_candidate_test)
         profile = controller.profile("primary")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 26, 22, 20)
@@ -481,21 +527,81 @@ class _PrimaryEditor(QGroupBox):
         self.advanced.setMaximumHeight(16777215 if checked else 28)
 
     def _test_and_save(self) -> None:
-        self.save_button.setEnabled(False)
-        result = self.controller.test_candidate(
-            "primary",
-            self.secret.text(),
-            base_url=(
-                self.address.text().strip()
-                if self.address is not None
-                else self._base_url
-            ),
-            use_system_proxy=(
-                bool(self.proxy.currentData())
-                if self.proxy is not None
-                else self._use_system_proxy
-            ),
+        secret = self.secret.text()
+        base_url = (
+            self.address.text().strip()
+            if self.address is not None
+            else self._base_url
         )
+        use_system_proxy = (
+            bool(self.proxy.currentData())
+            if self.proxy is not None
+            else self._use_system_proxy
+        )
+        if not secret:
+            result = self.controller.test_candidate(
+                "primary",
+                secret,
+                base_url=base_url,
+                use_system_proxy=use_system_proxy,
+            )
+            self._apply_candidate_test_result(result)
+            return
+        self._test_generation += 1
+        generation = self._test_generation
+        with self._test_result_lock:
+            self._test_result = None
+        self._set_test_busy(True)
+        self.status.setText("正在后台测试基础连接；窗口仍可关闭。")
+        Thread(
+            target=self._run_candidate_test,
+            args=(generation, secret, base_url, use_system_proxy),
+            name="stockwatcher-token-test",
+            daemon=True,
+        ).start()
+        self._test_poll_timer.start()
+
+    def _run_candidate_test(
+        self,
+        generation: int,
+        secret: str,
+        base_url: str,
+        use_system_proxy: bool,
+    ) -> None:
+        try:
+            result = self.controller.test_candidate(
+                "primary",
+                secret,
+                base_url=base_url,
+                use_system_proxy=use_system_proxy,
+            )
+        except Exception as error:  # noqa: BLE001 - publish only the safe class name
+            result = CredentialTestResult(
+                success=False,
+                tested_at=datetime.now().astimezone(),
+                status_text="基础连接测试异常，当前 Token 未被替换。",
+                permission_summary=f"安全存储或网络检查失败：{type(error).__name__}",
+                expires_at="未知",
+                safe_reason="business_error",
+            )
+        with self._test_result_lock:
+            if generation == self._test_generation:
+                self._test_result = (generation, result)
+
+    def _poll_candidate_test(self) -> None:
+        with self._test_result_lock:
+            value = self._test_result
+            self._test_result = None
+        if value is None:
+            return
+        generation, result = value
+        if generation != self._test_generation:
+            return
+        self._test_poll_timer.stop()
+        self._set_test_busy(False)
+        self._apply_candidate_test_result(result)
+
+    def _apply_candidate_test_result(self, result: CredentialTestResult) -> None:
         self.status.setText(result.status_text)
         self.last_test.setText(result.tested_at.strftime("%Y-%m-%d %H:%M:%S"))
         self.permission.setText(result.permission_summary)
@@ -515,7 +621,23 @@ class _PrimaryEditor(QGroupBox):
                 self._refresh_capabilities()
             elif answer == QMessageBox.StandardButton.Yes:
                 self.status.setText("保存失败；原 Token 保持不变")
-        self.save_button.setEnabled(True)
+        self._set_test_busy(False)
+
+    def _set_test_busy(self, busy: bool) -> None:
+        self.save_button.setEnabled(not busy)
+        self.secret.setEnabled(not busy)
+        if busy:
+            self.recheck_button.setEnabled(False)
+            self.clear_button.setEnabled(False)
+        else:
+            self._refresh_capabilities()
+
+    def cancel_pending_test(self) -> None:
+        self._test_generation += 1
+        self._test_poll_timer.stop()
+        with self._test_result_lock:
+            self._test_result = None
+        self._set_test_busy(False)
 
     def _recheck(self) -> None:
         if not self.controller.credential_present("primary"):
@@ -605,7 +727,7 @@ class DataSourceSettingsDialog(QDialog):
         super().__init__(parent)
         self.controller = controller or DataSourceSettingsController()
         self.setWindowTitle("数据接口")
-        self.setMinimumSize(680, 590)
+        self.setMinimumSize(680, 460)
         self.resize(760, 640)
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 26, 28, 24)
@@ -622,13 +744,17 @@ class DataSourceSettingsDialog(QDialog):
         description.setWordWrap(True)
         root.addWidget(title)
         root.addWidget(description)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 8, 0)
+        content_layout.setSpacing(14)
         show_advanced_diagnostics = platform != "darwin"
-        root.addWidget(
-            _PrimaryEditor(
-                self.controller,
-                show_advanced_settings=show_advanced_diagnostics,
-            )
+        self._primary_editor = _PrimaryEditor(
+            self.controller,
+            show_advanced_settings=show_advanced_diagnostics,
         )
+        content_layout.addWidget(self._primary_editor)
 
         if (
             not self.controller.credential_present("primary")
@@ -638,7 +764,7 @@ class DataSourceSettingsDialog(QDialog):
             migrate.setObjectName("secondaryButton")
             migrate.setToolTip("会先测试旧 Token，成功后才复制到统一凭据位置")
             migrate.clicked.connect(self._migrate_legacy)
-            root.addWidget(migrate)
+            content_layout.addWidget(migrate)
 
         self.mode: QComboBox | None = None
         if show_advanced_diagnostics:
@@ -660,8 +786,16 @@ class DataSourceSettingsDialog(QDialog):
             diagnostic_layout.addRow("运行方式", self.mode)
             self.mode.setVisible(False)
             diagnostics.toggled.connect(self.mode.setVisible)
-            root.addWidget(diagnostics)
-        root.addStretch()
+            content_layout.addWidget(diagnostics)
+        content_layout.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setObjectName("dataSourceScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
 
         close = QPushButton("关闭")
         close.setObjectName("secondaryButton")
@@ -689,9 +823,10 @@ class DataSourceSettingsDialog(QDialog):
         if isinstance(mode, DataSourceMode):
             self.controller.set_mode(mode)
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def done(self, result: int) -> None:
+        self._primary_editor.cancel_pending_test()
         self.controller.discard_pending()
-        super().closeEvent(event)
+        super().done(result)
 
 
 def runtime_data_source_controller(

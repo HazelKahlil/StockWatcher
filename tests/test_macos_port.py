@@ -741,7 +741,9 @@ def test_apple_event_quit_handler_degrades_safely_when_carbon_unavailable(
     assert install_apple_event_quit_handler(lambda: None) is False
 
 
-def test_macos_lifecycle_external_quit_records_graceful_and_exits() -> None:
+def test_macos_lifecycle_external_quit_records_graceful_and_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = application()
     window = _LifecycleWindow()
     calls: list[tuple[str, str]] = []
@@ -758,11 +760,13 @@ def test_macos_lifecycle_external_quit_records_graceful_and_exits() -> None:
         platform="darwin",
         network_information=cast(QNetworkInformation, _FakeNetworkInformation()),
     )
-    lifecycle._app.quit = lambda: quit_calls.append(True)  # type: ignore[method-assign]
+    monkeypatch.setattr(lifecycle._app, "quit", lambda: quit_calls.append(True))
     lifecycle._handle_external_quit()
     assert calls == [("shutdown", "apple_event_quit")]
     assert quit_calls == [True]
     assert lifecycle._quitting
+    lifecycle.deleteLater()
+    app.processEvents()
 
 
 def test_macos_close_event_programmatic_close_exits_not_hides(

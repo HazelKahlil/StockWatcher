@@ -1,5 +1,5 @@
 #define MyAppName "StockWatcher"
-#define MyAppVersion "0.6.0-alpha.4"
+#define MyAppVersion "0.6.0-alpha.6"
 #define MyAppPublisher "StockWatcher"
 #define MyAppExeName "StockWatcher.exe"
 #define MyAppIcon "..\..\src\stock_watcher\ui\assets\stockwatcher.ico"
@@ -18,8 +18,11 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
+AppMutex=StockWatcher.AppMutex
+CloseApplications=yes
+RestartApplications=no
 OutputDir={#StockWatcherOutputDir}
-OutputBaseFilename=StockWatcher-0.6.0-alpha.4-setup
+OutputBaseFilename=StockWatcher-0.6.0-alpha.6-setup
 Compression=lzma2
 SolidCompression=yes
 SetupIconFile={#MyAppIcon}
@@ -44,6 +47,23 @@ Filename: "{app}\{#MyAppExeName}"; Description: "启动 StockWatcher"; Flags: no
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+function CloseRunningApp: Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM StockWatcher.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(2000);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM StockWatcher.exe /F /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  NeedsRestart := False;
+  CloseRunningApp;
+  Result := '';
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then

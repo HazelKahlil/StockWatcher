@@ -245,9 +245,10 @@ def test_v1_main_window_prioritizes_candidate_area_over_status_copy(
         if button.text() == "重新检测"
     )
 
-    assert summary is not None and summary.maximumHeight() <= 88
-    assert interrupt is not None and interrupt.maximumHeight() <= 138
-    assert cards is not None and cards.minimumHeight() >= 280
+    assert summary is not None and summary.minimumHeight() >= 120
+    assert summary.maximumHeight() > 10_000
+    assert interrupt is not None and interrupt.maximumHeight() > 10_000
+    assert cards is not None and cards.minimumHeight() >= 180
     assert empty is not None and empty.minimumHeight() >= 150
     assert "固定显示3只观察股票" in empty.text()
     assert "说明：" not in " ".join(label.text() for label in window.findChildren(QLabel))

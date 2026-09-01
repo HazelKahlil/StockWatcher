@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-12",
+  "generated_at": "2026-08-23",
   "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
   "github_sync": {
@@ -18,12 +18,12 @@
     "note": "This is a rebuild and rollback baseline, not authoritative M0 or production acceptance."
   },
   "candidate_outcomes": {
-    "python_version": "0.6.0a4",
-    "package_version": "0.6.0-alpha.4",
+    "python_version": "0.6.0a6",
+    "package_version": "0.6.0-alpha.6",
     "base": "v0.4.0-alpha.2@e8df598c920a15dfb565bfc75e45a93d1eb48a07",
-    "source_branch": "fix/candidate-outcomes-p1-reliability",
+    "source_branch": "fix/windows-desktop-stability",
     "implementation_commit": "ed63106c467637c3518df7821b2c32ae3c683ab7",
-    "status": "local_code_complete_offline_verified_after_alpha4_reliability_fix",
+    "status": "alpha6_windows_desktop_stability_offline_candidate",
     "schema_version": 8,
     "validation": "417 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract, lock check, JSON validation, secret scan and diff check passed on macOS",
     "real_trading_time_validation": false,
@@ -86,12 +86,18 @@
     "source_baseline_commit": "b00221f2604f5410ffac383bccaa6a21f108c1e8",
     "status": "windows_smoke_pass",
     "authoritative_m0": false,
-    "governance_runs": [31478494946, 31479040103],
+    "governance_runs": [
+      31478494946,
+      31479040103
+    ],
     "ci": "Windows Python 3.11 and 3.12 tests, Ruff, Mypy, Setup, fail-closed Preflight, PyInstaller, Inno Setup and artifact upload passed",
     "installed_asset_matches_source_baseline": false,
     "alpha4_build_source_prepared": true,
     "alpha4_portable_built": false,
     "alpha4_installer_built": false,
-    "note": "The exact b00221f Windows fresh-build source ZIP is prepared, but no Windows host, PowerShell or Inno Setup is available in this session; portable/installer and target-machine smoke remain blocked and are not simulated on macOS."
+    "note": "The exact b00221f Windows fresh-build source ZIP is prepared, but no Windows host, PowerShell or Inno Setup is available in this session; portable/installer and target-machine smoke remain blocked and are not simulated on macOS.",
+    "alpha5_fix_branch": "fix/windows-desktop-stability",
+    "alpha5_target_machine_validation": false,
+    "alpha5_scope": "nonblocking close and cooperative cancellation; bounded native SDK call; Windows font/DPI layout; async settings/history/outcome reads; popup geometry; native Credential Manager enforcement"
   }
 }

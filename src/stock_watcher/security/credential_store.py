@@ -71,7 +71,11 @@ class KeyringCredentialStore:
 
     @property
     def storage_label(self) -> str:
-        return "系统钥匙串" if self.platform == "darwin" else "系统安全存储"
+        if self.platform == "darwin":
+            return "系统钥匙串"
+        if self.platform == "win32":
+            return "Windows 凭据管理器"
+        return "系统安全存储"
 
     def backend_status(self) -> CredentialStoreBackendStatus:
         backend = keyring.get_keyring()
@@ -79,6 +83,10 @@ class KeyringCredentialStore:
         if self.platform == "darwin" and not _is_macos_keychain_backend(backend):
             raise CredentialStoreBackendError(
                 "系统钥匙串不可用；请检查 macOS Keychain 后再保存 Token。"
+            )
+        if self.platform == "win32" and not _is_windows_credential_backend(backend):
+            raise CredentialStoreBackendError(
+                "Windows 凭据管理器不可用；请修复系统凭据后再保存 Token。"
             )
         return CredentialStoreBackendStatus(
             label=self.storage_label,
@@ -139,6 +147,18 @@ def _is_macos_keychain_backend(backend: object) -> bool:
     chained = getattr(backend, "backends", ())
     if isinstance(chained, (list, tuple)):
         return any(_is_macos_keychain_backend(item) for item in chained)
+    return False
+
+
+def _is_windows_credential_backend(backend: object) -> bool:
+    """Accept only the native Windows Credential Manager backend or a chainer containing it."""
+
+    module = type(backend).__module__.casefold()
+    if module.startswith("keyring.backends.windows"):
+        return True
+    chained = getattr(backend, "backends", ())
+    if isinstance(chained, (list, tuple)):
+        return any(_is_windows_credential_backend(item) for item in chained)
     return False
 
 

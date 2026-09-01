@@ -5,25 +5,28 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFontDatabase, QIcon
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from stock_watcher.build_info import source_commit
 from stock_watcher.config import DataSourceConfigRepository, DataSourceMode
 from stock_watcher.paths import runtime_paths
 from stock_watcher.startup import StartupRecorder
 
-from .macos import MacApplicationLifecycle, SingleInstanceGuard
+from .macos import MacApplicationLifecycle
 from .main_window import MainWindow, ReplaySession, UiSession
+from .single_instance import SingleInstanceGuard
 from .tushare_session import TushareDiagnosticSession
 from .tushare_v1_session import TushareV1Session
+from .windows_runtime import acquire_app_mutex, raise_existing_window
 
 STYLE_SHEET = """
-QWidget { font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #172231; }
+QWidget { color: #172231; }
 QMainWindow, QDialog { background: #f5f7fb; }
 QMenuBar { background: #f5f7fb; color: #667487; border: none; }
 QMenuBar::item:selected, QMenu::item:selected { background: #e8f1ff; color: #1670df; }
@@ -43,6 +46,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #summaryValue[state="not_applicable"] { color: #667487; }
 #candidateCard { min-height: 96px; }
 #candidateCard:hover { background: #fbfdff; border-color: #b8d4f8; }
+#pageScroll, #pageScroll > QWidget > QWidget, #pageHost,
 #cardsScroll, #cardsScroll > QWidget > QWidget, #cardsHost {
     background: transparent; border: none;
 }
@@ -80,7 +84,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #primaryButton:disabled { background: #9cbfe6; border-color: #9cbfe6; }
 #secondaryButton { background: #ffffff; border: 1px solid #d3dce8; color: #33445a; }
 #secondaryButton:hover { background: #eef5ff; border-color: #a8c7ee; }
-#secondaryButton:disabled { color: #a2acb9; background: #f5f7fa; }
+#secondaryButton:disabled { color: #6f7d91; background: #edf1f6; border-color: #cfd8e4; }
 #dangerButton { background: #ffffff; border: 1px solid #e2b8b8; color: #b64242; }
 #dangerButton:hover { background: #fff2f2; border-color: #d77878; }
 #dangerButton:disabled { color: #b4a3a3; background: #f7f7f7; border-color: #e4e4e4; }
@@ -164,6 +168,34 @@ QPushButton { border-radius: 9px; padding: 9px 14px; }
 """
 
 
+def application_font_candidates(platform: str = sys.platform) -> tuple[str, ...]:
+    """Return installed-family preferences for each supported desktop platform."""
+
+    if platform == "win32":
+        return ("Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI")
+    if platform == "darwin":
+        return ("PingFang SC", "Helvetica Neue")
+    return ("Noto Sans CJK SC", "Noto Sans", "DejaVu Sans")
+
+
+def configure_application_font(
+    app: QApplication,
+    *,
+    platform: str = sys.platform,
+) -> str:
+    """Select an installed native UI font without forcing a missing macOS family."""
+
+    installed = {family.casefold(): family for family in QFontDatabase.families()}
+    font = app.font()
+    for candidate in application_font_candidates(platform):
+        selected = installed.get(candidate.casefold())
+        if selected is not None:
+            font.setFamily(selected)
+            break
+    app.setFont(font)
+    return font.family()
+
+
 def application_icon_path() -> Path:
     assets = Path(__file__).with_name("assets")
     if sys.platform == "darwin":
@@ -241,6 +273,11 @@ def run(
     preflight_verified: bool = False,
     terminal_path: Path | None = None,
 ) -> int:
+    if sys.platform == "win32" and not acquire_app_mutex():
+        thread = threading.Thread(target=raise_existing_window, daemon=True)
+        thread.start()
+        thread.join(0.4)
+        os._exit(0)
     recorder = StartupRecorder()
     try:
         parser = argparse.ArgumentParser(description="StockWatcher desktop application")
@@ -273,19 +310,31 @@ def run(
         app = QApplication(sys.argv)
         app.setApplicationName("StockWatcher")
         app.setOrganizationName("StockWatcher")
+        configure_application_font(app)
         icon_path = application_icon_path()
         if icon_path.is_file():
             app.setWindowIcon(QIcon(str(icon_path)))
         app.setStyleSheet(STYLE_SHEET)
         recorder.stage("qapplication-created")
+        mutex_primary = True
+        if sys.platform == "win32":
+            mutex_primary = acquire_app_mutex()
         instance_guard: SingleInstanceGuard | None = None
-        if sys.platform == "darwin":
+        if sys.platform in {"darwin", "win32"}:
             recorder.stage("single-instance-check")
             instance_guard = SingleInstanceGuard(
                 parent=app,
                 app_path=recorder.data.get("app_path", ""),
                 source_commit=source_commit(),
             )
+            if sys.platform == "win32" and not mutex_primary:
+                raised = raise_existing_window()
+                recorder.stage(
+                    "secondary_activated",
+                    window_raised=raised,
+                )
+                recorder.finish(0, "secondary_activated")
+                return _exit_secondary(0)
             if not instance_guard.acquire():
                 recorder.stage(
                     "secondary_activated"
@@ -297,9 +346,9 @@ def run(
                 if instance_guard.last_activation_status != "success":
                     _show_secondary_failure(instance_guard, recorder.log_path)
                     recorder.finish(1, "secondary_activation_failed")
-                    return 1
+                    return _exit_secondary(1)
                 recorder.finish(0, "secondary_activated")
-                return 0
+                return _exit_secondary(0)
             recorder.stage("primary_started")
         paths = runtime_paths()
         paths.create()
@@ -344,8 +393,9 @@ def run(
         window = MainWindow(session)
         recorder.stage("window-created")
         if instance_guard is not None:
-            lifecycle = MacApplicationLifecycle(app, window)
-            window.set_secondary_notification_sender(lifecycle.show_notification)
+            if sys.platform == "darwin":
+                lifecycle = MacApplicationLifecycle(app, window)
+                window.set_secondary_notification_sender(lifecycle.show_notification)
 
             def handle_activation(request: dict[str, object]) -> dict[str, object]:
                 recorder.stage(
@@ -365,11 +415,27 @@ def run(
         recorder.stage("event-loop-entered")
         exit_code = app.exec()
         recorder.finish(exit_code, "normal-exit")
+        if (
+            sys.platform == "win32"
+            and not os.environ.get("PYTEST_CURRENT_TEST")
+            and "pytest" not in sys.modules
+        ):
+            os._exit(exit_code)
         return exit_code
     except BaseException as error:
         recorder.fatal(error, app_available=QApplication.instance() is not None)
         recorder.finish(1, "fatal-startup-error")
         return 1
+
+
+def _exit_secondary(code: int) -> int:
+    if (
+        sys.platform == "win32"
+        and not os.environ.get("PYTEST_CURRENT_TEST")
+        and "pytest" not in sys.modules
+    ):
+        os._exit(code)
+    return code
 
 
 def _show_secondary_failure(
@@ -394,6 +460,13 @@ def _show_secondary_failure(
             f"后台 PID：{primary_pid}\n路径：{primary_path}\nCommit：{primary_commit}\n"
             f"原因：{error_reason}\n日志：{log_path}"
         )
+    if sys.platform == "win32":
+        box = QMessageBox()
+        box.setWindowTitle("StockWatcher 已在运行")
+        box.setText(message)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.exec()
+        return
     if sys.platform == "darwin":
         try:
             subprocess.Popen(

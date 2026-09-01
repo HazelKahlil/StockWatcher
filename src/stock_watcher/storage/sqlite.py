@@ -82,9 +82,14 @@ class SQLiteStore:
 
     def connect(self) -> sqlite3.Connection:
         connection = (
-            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, factory=_ClosingConnection)
+            sqlite3.connect(
+                f"file:{self.path}?mode=ro",
+                uri=True,
+                factory=_ClosingConnection,
+                timeout=1.0,
+            )
             if self.read_only
-            else sqlite3.connect(self.path, factory=_ClosingConnection)
+            else sqlite3.connect(self.path, factory=_ClosingConnection, timeout=1.0)
         )
         if not self.read_only:
             connection.execute("PRAGMA journal_mode=WAL")

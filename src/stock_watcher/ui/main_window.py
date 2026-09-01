@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+import os
+import sys
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
@@ -7,7 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -20,6 +24,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -49,6 +54,9 @@ from .presenter import (
     format_time,
     snapshot_from_batch,
 )
+
+_logger = logging.getLogger(__name__)
+_SHUTDOWN_DEADLINE_MS = 5_000
 
 
 class CandidateCard(QFrame):
@@ -401,6 +409,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.session = session
         self._popup: AlertPopup | None = None
+        self._popup_generation = 0
         self._rows: dict[str, CandidateRow] = {}
         self._last_alert_signature: tuple[str, ...] | None = None
         self._operation_thread: QThread | None = None
@@ -411,9 +420,13 @@ class MainWindow(QMainWindow):
         self._secondary_notification: Callable[[str, str], bool] | None = None
         self._initial_data_source_dialog: DataSourceSettingsDialog | None = None
         self._closing = False
+        self._shutdown_requested = False
+        self._shutdown_complete = False
+        self._close_after_worker = False
+        self._shutdown_deadline_scheduled = False
         self.setWindowTitle(session.window_title)
-        self.resize(1040, 760)
-        self.setMinimumSize(880, 640)
+        self.resize(1000, 720)
+        self.setMinimumSize(700, 420)
         self._build()
         self._refresh()
         self._auto_check_timer = QTimer(self)
@@ -464,8 +477,10 @@ class MainWindow(QMainWindow):
 
     def _build(self) -> None:
         self._build_developer_menu()
-        central = QWidget()
-        root = QVBoxLayout(central)
+        page = QWidget()
+        page.setObjectName("pageHost")
+        page.setMinimumWidth(660)
+        root = QVBoxLayout(page)
         root.setContentsMargins(28, 22, 28, 18)
         root.setSpacing(10)
 
@@ -488,22 +503,30 @@ class MainWindow(QMainWindow):
 
         self._summary_card = QFrame()
         self._summary_card.setObjectName("summaryCard")
-        self._summary_card.setMaximumHeight(88)
+        self._summary_card.setMinimumHeight(128)
+        self._summary_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         summary_layout = QGridLayout(self._summary_card)
         summary_layout.setContentsMargins(18, 12, 18, 12)
         summary_layout.setHorizontalSpacing(20)
+        summary_layout.setVerticalSpacing(10)
         self._health = self._add_summary_item(summary_layout, "数据状态", 0, 0)
         self._updated = self._add_summary_item(summary_layout, "最后更新时间", 0, 1)
         self._connection = self._add_summary_item(
             summary_layout, f"{self.session.connection_name}连接 / 最近检测", 0, 2
         )
-        self._candidate_gate = self._add_summary_item(summary_layout, "候选状态", 0, 3)
-        self._phase = self._add_summary_item(summary_layout, "当前阶段", 0, 4)
+        self._candidate_gate = self._add_summary_item(summary_layout, "候选状态", 1, 0)
+        self._phase = self._add_summary_item(summary_layout, "当前阶段", 1, 1)
         root.addWidget(self._summary_card)
 
         self._interrupt_card = QFrame()
         self._interrupt_card.setObjectName("interruptCard")
-        self._interrupt_card.setMaximumHeight(138)
+        self._interrupt_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         interrupt_layout = QVBoxLayout(self._interrupt_card)
         interrupt_layout.setContentsMargins(18, 12, 18, 12)
         interrupt_layout.setSpacing(5)
@@ -543,7 +566,7 @@ class MainWindow(QMainWindow):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self._cards_scroll.setWidget(cards_host)
-        self._cards_scroll.setMinimumHeight(280)
+        self._cards_scroll.setMinimumHeight(180)
         root.addWidget(self._cards_scroll, 1)
 
         actions = QHBoxLayout()
@@ -564,6 +587,12 @@ class MainWindow(QMainWindow):
             actions.addWidget(self._primary_action, 1)
             actions.addWidget(self._manual_fetch_action, 1)
         actions.addWidget(self._secondary_action, 1)
+        for button in (
+            self._primary_action,
+            self._manual_fetch_action,
+            self._secondary_action,
+        ):
+            button.setMinimumHeight(44)
         root.addLayout(actions)
         self._primary_action.clicked.connect(self._primary_clicked)
         self._manual_fetch_action.clicked.connect(self._manual_fetch_tq)
@@ -585,7 +614,15 @@ class MainWindow(QMainWindow):
         self._footer.setObjectName("footer")
         footer.addWidget(self._footer)
         root.addLayout(footer)
-        self.setCentralWidget(central)
+        page_scroll = QScrollArea()
+        page_scroll.setObjectName("pageScroll")
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        page_scroll.setWidget(page)
+        self.setCentralWidget(page_scroll)
 
     def _add_summary_item(
         self,
@@ -598,9 +635,15 @@ class MainWindow(QMainWindow):
         cell.setSpacing(4)
         caption = QLabel(label)
         caption.setObjectName("summaryLabel")
+        caption.setWordWrap(True)
         value = QLabel()
         value.setObjectName("summaryValue")
         value.setWordWrap(True)
+        value.setMinimumHeight(38)
+        value.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         cell.addWidget(caption)
         cell.addWidget(value)
         layout.addLayout(cell, row, column)
@@ -615,6 +658,18 @@ class MainWindow(QMainWindow):
         summary = QAction("盘后回顾与PDF", self)
         summary.triggered.connect(self._open_daily_summary)
         settings.addAction(summary)
+        if sys.platform != "darwin":
+            settings.addSeparator()
+            quit_action = QAction("退出 StockWatcher", self)
+            quit_action.setShortcuts(
+                [
+                    QKeySequence(QKeySequence.StandardKey.Quit),
+                    QKeySequence("Ctrl+Q"),
+                ]
+            )
+            quit_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+            quit_action.triggered.connect(self._quit_application)
+            settings.addAction(quit_action)
 
         if not getattr(self.session, "advanced_diagnostics", True):
             return
@@ -665,7 +720,9 @@ class MainWindow(QMainWindow):
         elif self.session.is_replay:
             self._page_title.setText("当前观察" if healthy else "数据中断")
         elif connection is TqConnectionState.CONNECTED:
-            self._page_title.setText("当前观察" if healthy else "数据接口已连接")
+            self._page_title.setText(
+                "当前观察" if healthy else "数据接口已连接，正在准备"
+            )
         elif connection is TqConnectionState.CHECKING:
             self._page_title.setText(f"正在检测{self.session.connection_name}")
         else:
@@ -818,6 +875,18 @@ class MainWindow(QMainWindow):
         if snapshot.alert_allowed:
             self._show_alert(snapshot, title="09:45 观察提醒")
 
+    def _close_popup(self) -> None:
+        popup = self._popup
+        if popup is None:
+            return
+        self._popup_generation += 1
+        self._popup = None
+        try:
+            popup.close()
+        except RuntimeError:
+            # WA_DeleteOnClose may already have deleted the C++ object.
+            pass
+
     def _show_alert(
         self,
         snapshot: UiSnapshot,
@@ -827,28 +896,35 @@ class MainWindow(QMainWindow):
         force: bool = False,
     ) -> None:
         signature = tuple(row.code for row in snapshot.candidates)
-        if not force and signature == self._last_alert_signature and self._popup is not None:
-            return
         if not force and signature == self._last_alert_signature:
             return
         self._last_alert_signature = signature
-        if self._popup is not None:
-            self._popup.close()
+        self._close_popup()
         overall = (
             "偏弱"
             if snapshot.overall_label == "本轮整体偏弱"
             else snapshot.overall_label
         )
         alert_subtitle = subtitle or f"{format_time(snapshot.last_updated)} · {overall}"
-        self._popup = AlertPopup(
+        self._popup_generation += 1
+        generation = self._popup_generation
+        popup = AlertPopup(
             snapshot.candidates,
             title,
             alert_subtitle,
             self._open_detail_by_code,
             parent=self,
+            open_list_callback=self.restore_main_window,
         )
+
+        def clear_popup_reference(_destroyed: QObject | None = None) -> None:
+            if self._popup_generation == generation:
+                self._popup = None
+
+        popup.destroyed.connect(clear_popup_reference)
+        self._popup = popup
         QApplication.beep()
-        self._popup.show_at_bottom_right(preferred_screen=self.screen())
+        popup.show_at_bottom_right(preferred_screen=self.screen())
         if self._secondary_notification is not None:
             self._secondary_notification(title, alert_subtitle)
 
@@ -857,8 +933,12 @@ class MainWindow(QMainWindow):
         self._mac_window_close_policy.enable_background_close()
 
     def request_application_exit(self) -> None:
-        """Allow the explicit application-menu Quit action to close resources."""
+        """Allow an explicit Quit action to close resources."""
         self._mac_window_close_policy.request_application_exit()
+
+    def _quit_application(self) -> None:
+        self.request_application_exit()
+        self.close()
 
     def restore_main_window(self) -> None:
         if self.isMinimized():
@@ -869,7 +949,11 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         record = getattr(self.session, "record_window_activation", None)
         if callable(record):
-            record()
+            threading.Thread(
+                target=record,
+                name="stockwatcher-window-activation",
+                daemon=True,
+            ).start()
 
     def set_secondary_notification_sender(
         self,
@@ -900,9 +984,7 @@ class MainWindow(QMainWindow):
 
     def _stop_replay(self) -> None:
         self.session.stop()
-        if self._popup is not None:
-            self._popup.close()
-            self._popup = None
+        self._close_popup()
         self._refresh()
 
     def _primary_clicked(self) -> None:
@@ -982,6 +1064,8 @@ class MainWindow(QMainWindow):
     def _on_tq_operation_finished(self) -> None:
         self._operation_progress_timer.stop()
         self._active_operation = None
+        if self._closing:
+            return
         self._refresh()
         consume = getattr(self.session, "consume_pending_alert", None)
         pending = consume() if callable(consume) else None
@@ -1012,6 +1096,13 @@ class MainWindow(QMainWindow):
     def _on_tq_thread_finished(self) -> None:
         self._operation_thread = None
         self._operation_worker = None
+        if self._closing:
+            self._queued_manual_fetch = False
+            self._finalize_shutdown()
+            if self._close_after_worker:
+                self._close_after_worker = False
+                QTimer.singleShot(0, self._quit_event_loop)
+            return
         if self._queued_manual_fetch:
             self._queued_manual_fetch = False
             self._manual_fetch_tq()
@@ -1048,13 +1139,21 @@ class MainWindow(QMainWindow):
         """Write the runtime heartbeat independently of scan success."""
         heartbeat = getattr(self.session, "heartbeat", None)
         if callable(heartbeat):
-            heartbeat()
+            threading.Thread(
+                target=heartbeat,
+                name="stockwatcher-heartbeat",
+                daemon=True,
+            ).start()
 
     def _summary_check_tick(self) -> None:
         """Decoupled 15:30 scheduler entry; never blocks on the scan loop."""
         check = getattr(self.session, "check_automation_tasks", None)
         if callable(check):
-            check()
+            threading.Thread(
+                target=check,
+                name="stockwatcher-summary-check",
+                daemon=True,
+            ).start()
 
     def _clear_initial_data_source_dialog(self, _result: int) -> None:
         self._initial_data_source_dialog = None
@@ -1066,6 +1165,70 @@ class MainWindow(QMainWindow):
             if callable(controller_factory)
             else runtime_data_source_controller(self.session.provider_changed)
         )
+
+    def _prepare_for_close(self) -> None:
+        self._auto_check_timer.stop()
+        self._operation_progress_timer.stop()
+        self._heartbeat_timer.stop()
+        self._summary_check_timer.stop()
+        self._queued_manual_fetch = False
+        self._close_popup()
+        if self._initial_data_source_dialog is not None:
+            self._initial_data_source_dialog.close()
+            self._initial_data_source_dialog = None
+
+    def _request_session_shutdown(self) -> None:
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        request = getattr(self.session, "request_shutdown", None)
+        if callable(request):
+            request()
+
+    def _finalize_shutdown(self) -> None:
+        if self._shutdown_complete:
+            return
+        self._shutdown_complete = True
+        shutdown = getattr(self.session, "shutdown", None)
+        if not callable(shutdown):
+            return
+        if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+            shutdown()
+            return
+        threading.Thread(
+            target=shutdown,
+            name="stockwatcher-session-shutdown",
+            daemon=True,
+        ).start()
+
+    def _schedule_shutdown_deadline(self) -> None:
+        if self._shutdown_deadline_scheduled:
+            return
+        self._shutdown_deadline_scheduled = True
+        QTimer.singleShot(_SHUTDOWN_DEADLINE_MS, self._on_shutdown_deadline)
+
+    def _quit_event_loop(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def _on_shutdown_deadline(self) -> None:
+        if not self._closing or self._mac_window_close_policy.should_hide_on_close:
+            return
+        alive = [
+            thread.name
+            for thread in threading.enumerate()
+            if thread.is_alive() and thread is not threading.main_thread()
+        ]
+        _logger.warning(
+            "shutdown deadline exceeded; forcing process exit remaining_threads=%s",
+            alive,
+        )
+        self._finalize_shutdown()
+        self._quit_event_loop()
+        if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+            return
+        QTimer.singleShot(100, lambda: os._exit(0))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # A spontaneous close is the user clicking the macOS red button (hide);
@@ -1081,20 +1244,21 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.hide()
             return
-        self._auto_check_timer.stop()
-        self._operation_progress_timer.stop()
-        self._heartbeat_timer.stop()
-        self._summary_check_timer.stop()
-        self._queued_manual_fetch = False
-        if self._operation_thread is not None and self._operation_thread.isRunning():
-            self._operation_thread.quit()
-            self._operation_thread.wait(6000)
-        if self._popup is not None:
-            self._popup.close()
-        if self._initial_data_source_dialog is not None:
-            self._initial_data_source_dialog.close()
-            self._initial_data_source_dialog = None
-        shutdown = getattr(self.session, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
+
+        self._prepare_for_close()
+        self._request_session_shutdown()
+        self._schedule_shutdown_deadline()
+        thread = self._operation_thread
+        if thread is not None and thread.isRunning():
+            # Never block the GUI thread on requests/SDK work. The window closes
+            # visually at once and the cooperative cancellation path owns cleanup.
+            self._close_after_worker = True
+            event.ignore()
+            self.hide()
+            thread.requestInterruption()
+            thread.quit()
+            return
+
+        self._finalize_shutdown()
         event.accept()
+        self._quit_event_loop()

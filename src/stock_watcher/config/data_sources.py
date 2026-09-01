@@ -48,6 +48,7 @@ class NativeRealtimeProfile(BaseModel):
     source: Literal["sina"] = "sina"
     batch_size: int = Field(default=800, ge=1, le=800)
     min_interval_seconds: float = Field(default=1.0, ge=0.6, le=30)
+    request_timeout_seconds: float = Field(default=20.0, ge=5.0, le=60)
     stale_after_seconds: float = Field(default=60.0, gt=0, le=120)
 
     @field_validator("verify_url")
