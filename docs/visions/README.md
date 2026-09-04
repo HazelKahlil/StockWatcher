@@ -1,6 +1,6 @@
 # 版本索引
 
-> 最后更新：2026-08-12
+> 最后更新：2026-09-04
 > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
 
 ## 活跃版本
@@ -17,7 +17,8 @@
   Mac V1 真实数据、系统钥匙串、生命周期、通知、恢复与内部 `.app` 验证
   （状态：Mac V1 内部试用主线；新鲜固定时点、15:30 准点和 Windows 真实验收仍未完成）。
 - **[v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md)** —
-  Windows 全市场真实 Top3、稳定替换、提醒、历史与总结闭环（状态：Windows 真实验收未通过）。
+  Windows 全市场真实 Top3、稳定替换、提醒、历史与总结闭环（状态：PR #7 本机
+  `PASS_WITH_LIMITS`，09:45 待下周复测；不是 Windows 已验收）。
 - [v0.3.1-windows-tushare-data-gate](v0.3.1-windows-tushare-data-gate/README.md) —
   历史数据接入阶段；其 Super/Fast 默认路线已被 2026-07-29 V1 基线取代。
 - [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) — 已取得 Windows/TdxQuant
@@ -39,7 +40,7 @@
 | [v0.2-mac-local-alpha](v0.2-mac-local-alpha/README.md) | 交付基于 Mock/Replay 的 Mac 本地 Alpha | 本地完成，draft PR #2 待合入 | 2026-07-23 |
 | [v0.3-windows-data-gate](v0.3-windows-data-gate/README.md) | 以 Windows + 官方 TdxQuant 取得只读真实数据、授权和共享核心结论 | 进行中（HAZ-526 后继候选待 Windows live readback 与 ≥30 分钟 M0） | |
 | [v0.3.1-windows-tushare-data-gate](v0.3.1-windows-tushare-data-gate/README.md) | 跨平台 Tushare 兼容 HTTP 数据闸门，Windows 优先 | 进行中 | |
-| [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | Windows 全市场真实 Top3、提醒、历史与总结闭环 | 进行中 | |
+| [v0.4-v1-feature-complete](v0.4-v1-feature-complete/README.md) | Windows 全市场真实 Top3、提醒、历史与总结闭环 | 进行中；2026-09-04 本机 PASS_WITH_LIMITS，09:45 待复测 | |
 | [v0.4.1-shared-connection-gate](v0.4.1-shared-connection-gate/README.md) | 从冻结 Windows V1 基线提取的跨平台连接门、能力检测与限流返修 | 本地完成，已由 Mac 分支消费 | |
 | [v0.4.2-macos-v1-port](v0.4.2-macos-v1-port/README.md) | 用共享 Tushare 核心完成 Mac 真机数据、平台行为与内部 `.app` | Mac V1 内部试用主线；新鲜固定时点与15:30准点仍待验收 | |
 | [v0.4.0-alpha.2-internal-baseline](v0.4.0-alpha.2-internal-baseline/README.md) | 固定 Mac / Web / Windows 可重建内部试用基准 | 源码基准；Web 未接受、Windows 非权威 M0 | 2026-08-11 |
