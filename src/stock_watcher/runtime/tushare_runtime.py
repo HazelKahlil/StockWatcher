@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Protocol
 
+from stock_watcher import __version__
 from stock_watcher.domain import (
     SHANGHAI,
     DataQuality,
@@ -608,7 +609,7 @@ class TushareV1Runtime:
         self.movement_detector = movement_detector or StrongMovementDetector()
         self.candidate_config = candidate_config or CandidateConfig(
             version="v1-real-candidates-20260729",
-            app_version="0.6.0a4",
+            app_version=__version__,
         )
         self.universe_cache = universe_cache
         self.universe_seed_path = universe_seed_path

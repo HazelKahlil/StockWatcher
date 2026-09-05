@@ -21,7 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from stock_watcher.build_info import source_commit
+from stock_watcher import __version__
+from stock_watcher.build_info import display_version, source_commit
 from stock_watcher.services import CommandService, EventOutbox, SecretService
 from stock_watcher.services.public_state import PublicStateBuilder
 from stock_watcher.services.secret_service import load_master_key
@@ -191,7 +192,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="StockWatcher Web Internal Test",
-        version="1.0.0",
+        version=__version__,
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -251,6 +252,7 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
         app.include_router(router)
 
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+    templates.env.globals["product_version"] = display_version()
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # -- exception handling ----------------------------------------------
@@ -273,6 +275,17 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
     @app.get("/health/live")
     async def health_live() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/version")
+    async def health_version() -> dict[str, str]:
+        return {
+            "version": display_version(),
+            "source_commit": (
+                app_settings.source_commit
+                if app_settings.source_commit != "unknown"
+                else source_commit()
+            ),
+        }
 
     @app.get("/health/ready")
     async def health_ready(request: Request) -> JSONResponse:

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from stock_watcher.build_info import source_commit
+from stock_watcher.build_info import display_version, source_commit
 from stock_watcher.config import DataSourceMode
 from stock_watcher.domain import HealthState
 from stock_watcher.engine.candidates import CandidateBatch
@@ -300,6 +300,7 @@ class DeveloperInfoDialog(QDialog):
         form = QFormLayout()
         first = session.batch.candidates[0] if session.batch and session.batch.candidates else None
         fields = (
+            ("版本", display_version()),
             ("SOURCE_COMMIT", source_commit()),
             ("状态", session.state.value),
             (f"{session.connection_name}连接", session.connection_state.value),
@@ -797,7 +798,7 @@ class MainWindow(QMainWindow):
             dot_state = "warming"
         self._status_dot.setProperty("state", dot_state)
         self._repolish(self._status_dot)
-        self._footer.setText(self.session.footer_label)
+        self._footer.setText(f"{self.session.footer_label} · {display_version()}")
 
     @staticmethod
     def _format_status_time(value: datetime | None) -> str:
@@ -825,6 +826,7 @@ class MainWindow(QMainWindow):
         title: str,
         subtitle: str | None = None,
         force: bool = False,
+        repeat_labels: tuple[tuple[str, str], ...] = (),
     ) -> None:
         signature = tuple(row.code for row in snapshot.candidates)
         if not force and signature == self._last_alert_signature and self._popup is not None:
@@ -846,6 +848,7 @@ class MainWindow(QMainWindow):
             alert_subtitle,
             self._open_detail_by_code,
             parent=self,
+            repeat_labels=dict(repeat_labels),
         )
         QApplication.beep()
         self._popup.show_at_bottom_right(preferred_screen=self.screen())
@@ -1006,6 +1009,7 @@ class MainWindow(QMainWindow):
                 title=str(pending.title),
                 subtitle=str(pending.subtitle),
                 force=True,
+                repeat_labels=getattr(pending, "repeat_labels", ()),
             )
 
     @Slot()

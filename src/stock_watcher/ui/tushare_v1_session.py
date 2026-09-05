@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import uuid
@@ -55,6 +56,7 @@ from stock_watcher.runtime import (
     AutomationTaskState,
     AutomationTaskType,
     CandidateOutcomeTracker,
+    CandidateRepeatTracker,
     DataHealthConfig,
     DataHealthTracker,
     FullMarketScanCoordinator,
@@ -80,6 +82,7 @@ from stock_watcher.runtime.continuity import (
 from stock_watcher.runtime.post_close_pdf import render_post_close_pdf
 from stock_watcher.runtime.post_close_report_model import LocalFallbackReport
 from stock_watcher.runtime.post_close_review import PostCloseDataProvider
+from stock_watcher.runtime.repeat_tracker import REPEAT_BACKFILL_VERSION
 from stock_watcher.security import (
     FAST_CREDENTIAL,
     PRIMARY_CREDENTIAL,
@@ -91,12 +94,15 @@ from stock_watcher.storage import SQLiteStore
 
 from .connection_state import ConnectionState as TqConnectionState
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class PendingUiAlert:
     title: str
     subtitle: str
     trigger_type: str
+    repeat_labels: tuple[tuple[str, str], ...] = ()
 
 
 RuntimeFactory = Callable[
@@ -135,6 +141,30 @@ class TushareV1Session:
     ) -> None:
         self.store = SQLiteStore(store_path)
         self.store.initialize()
+        self._repeat_tracker = CandidateRepeatTracker(self.store)
+        self._last_scan_snapshot_id: int | None = None
+        self._summary_lock = Lock()
+        previous_backfill = self.store.get_app_setting("candidate_repeat_backfill_status")
+        if (
+            not isinstance(previous_backfill, dict)
+            or previous_backfill.get("status") != "completed"
+            or previous_backfill.get("version") != REPEAT_BACKFILL_VERSION
+        ):
+            try:
+                report = self._repeat_tracker.backfill()
+                self.store.set_app_setting(
+                    "candidate_repeat_backfill_status",
+                    {
+                        "status": "completed",
+                        "version": REPEAT_BACKFILL_VERSION,
+                        "snapshots": report.snapshots,
+                        "occurrences": report.occurrences,
+                        "activated": report.activated,
+                        "skipped": report.skipped,
+                    },
+                )
+            except Exception as error:
+                logger.warning("candidate repeat backfill failed: %s", type(error).__name__)
         self.credential_store = credential_store or KeyringCredentialStore()
         self.settings = settings or DataSourceSettings()
         self._credential_state = "unknown"
@@ -500,7 +530,9 @@ class TushareV1Session:
     def _publish_manual_result(self, outcome: ScanOutcome) -> None:
         if self.batch is None or len(self.batch.candidates) != 3:
             return
-        snapshot_id = self.store.record_batch(self.batch)
+        snapshot_id = self._last_scan_snapshot_id
+        if snapshot_id is None:
+            snapshot_id = self.store.record_batch(self.batch)
         audit = outcome.selection_audit
         confirmed = bool(audit is None or audit.display_velocity_ready)
         if confirmed:
@@ -829,6 +861,18 @@ class TushareV1Session:
             trigger_type=scan_trigger,
             task_key=fixed_task.task_key if fixed_task is not None else None,
         )
+        snapshot_id = None
+        if outcome.health is HealthState.HEALTHY and outcome.batch is not None:
+            with self.store.transaction() as connection:
+                snapshot_id = self.store.record_batch_in(connection, outcome.batch)
+                self._repeat_tracker.observe_batch_in(
+                    connection,
+                    batch=outcome.batch,
+                    snapshot_id=snapshot_id,
+                    seen_at=completed_at,
+                    source_type=scan_trigger,
+                )
+        self._last_scan_snapshot_id = snapshot_id
         crossed = (
             None
             if fixed_task is not None
@@ -847,6 +891,7 @@ class TushareV1Session:
             forced_fixed=effective_fixed,
             selection_audit=outcome.selection_audit,
             scan_run_id=scan_run_id,
+            snapshot_id=snapshot_id,
         )
         completed_fixed_task = fixed_task or _automation_spec_for_trigger(
             self._automation,
@@ -854,6 +899,23 @@ class TushareV1Session:
             completed_at.date(),
         )
         if completed_fixed_task is not None:
+            existing_alert = next(
+                (
+                    row
+                    for row in self._today_alerts(completed_at)
+                    if row.get("trigger_type") == completed_fixed_task.task_type.value
+                ),
+                None,
+            )
+            if existing_alert is not None:
+                existing_id = existing_alert.get("snapshot_id")
+                self._mark_task_succeeded(
+                    completed_fixed_task,
+                    completed_at,
+                    snapshot_id=existing_id if isinstance(existing_id, int) else None,
+                    detail="提醒已送达；任务记录已同步。",
+                )
+                return outcome
             if snapshot_id is not None:
                 self._mark_task_succeeded(
                     completed_fixed_task,
@@ -877,6 +939,7 @@ class TushareV1Session:
         forced_fixed: AlertTrigger | None = None,
         selection_audit: object | None = None,
         scan_run_id: int | None = None,
+        snapshot_id: int | None = None,
     ) -> int | None:
         if self.batch is None or len(self.batch.candidates) != 3:
             return None
@@ -887,8 +950,8 @@ class TushareV1Session:
                 None,
             )
             if existing is not None:
-                snapshot_id = existing.get("snapshot_id")
-                return snapshot_id if isinstance(snapshot_id, int) else None
+                existing_snapshot = existing.get("snapshot_id")
+                return existing_snapshot if isinstance(existing_snapshot, int) else None
             decision = self._alert_policy.decide(self.batch, now, fixed)
             if decision.should_alert:
                 title = (
@@ -905,6 +968,7 @@ class TushareV1Session:
                     decision.reason,
                     title,
                     subtitle,
+                    snapshot_id=snapshot_id,
                 )
             return None
         from stock_watcher.engine import StrongMovementEvent
@@ -973,6 +1037,7 @@ class TushareV1Session:
                 "盘中强异动",
                 subtitle,
                 detail=detail,
+                snapshot_id=snapshot_id,
             )
         return None
 
@@ -1058,7 +1123,10 @@ class TushareV1Session:
 
     def _expire_automation_tasks(self, now: datetime) -> None:
         for task in self.store.list_automation_tasks(now.date().isoformat()):
-            if task["state"] == AutomationTaskState.SUCCEEDED.value:
+            if task["state"] in {
+                AutomationTaskState.SUCCEEDED.value,
+                AutomationTaskState.FAILED.value,
+            }:
                 continue
             deadline = _parsed_datetime(task.get("deadline_at"))
             if deadline is None or now <= deadline:
@@ -1208,6 +1276,20 @@ class TushareV1Session:
         *,
         catch_up: bool = False,
     ) -> None:
+        if not self._summary_lock.acquire(blocking=False):
+            return
+        try:
+            self._execute_summary_task_unlocked(now, spec, catch_up=catch_up)
+        finally:
+            self._summary_lock.release()
+
+    def _execute_summary_task_unlocked(
+        self,
+        now: datetime,
+        spec: AutomationTaskSpec,
+        *,
+        catch_up: bool = False,
+    ) -> None:
         if self._summary_retry_at is not None and now < self._summary_retry_at:
             return
         self._mark_task_running(spec, now)
@@ -1238,21 +1320,41 @@ class TushareV1Session:
         subtitle: str,
         *,
         detail: dict[str, object] | None = None,
+        snapshot_id: int | None = None,
     ) -> int:
         assert self.batch is not None
-        snapshot_id = self.store.record_batch(self.batch)
-        alert_id = self.store.record_alert_event(
-            snapshot_id,
-            now.isoformat(),
-            decision,
-            self._alert_client_platform,
-            trigger_type=trigger.value,
-            detail=detail,
-        )
+        with self.store.transaction() as connection:
+            if snapshot_id is None:
+                snapshot_id = self.store.record_batch_in(connection, self.batch)
+            projections = (
+                self._repeat_tracker.observe_batch_in(
+                    connection,
+                    batch=self.batch,
+                    snapshot_id=snapshot_id,
+                    seen_at=now,
+                    source_type=trigger.value,
+                )
+                if self.state is HealthState.HEALTHY
+                else {}
+            )
+            alert_id = self.store.record_alert_event_in(
+                connection,
+                snapshot_id=snapshot_id,
+                displayed_at=now.isoformat(),
+                decision=decision,
+                channel=self._alert_client_platform,
+                trigger_type=trigger.value,
+                detail=detail,
+            )
         self.pending_alert = PendingUiAlert(
             title=title,
             subtitle=subtitle,
             trigger_type=trigger.value,
+            repeat_labels=tuple(
+                (code, projection.label)
+                for code, projection in projections.items()
+                if trigger is AlertTrigger.INTRADAY and projection.label is not None
+            ),
         )
         if self.state is HealthState.HEALTHY and trigger in {
             AlertTrigger.SCHEDULED_0945,
@@ -1451,7 +1553,8 @@ class TushareV1Session:
                         )
                     self._summary_date = trade_date
                     return True
-                except Exception:
+                except Exception as error:
+                    logger.warning("post-close summary stage failed: %s", type(error).__name__)
                     self._set_summary_retry(now)
                     return False
             if local_json.is_file():
@@ -1470,14 +1573,16 @@ class TushareV1Session:
                     ):
                         self._summary_date = trade_date
                         return True
-                except Exception:
+                except Exception as error:
+                    logger.warning("post-close summary stage failed: %s", type(error).__name__)
                     # Rebuild from the durable SQLite summary below.  A stale or
                     # malformed artifact must never be treated as a successful
                     # 15:30 report merely because the file exists.
                     pass
             try:
                 self._write_local_summary_report(existing_summary)
-            except Exception:
+            except Exception as error:
+                logger.warning("post-close summary stage failed: %s", type(error).__name__)
                 self._set_summary_retry(now)
                 return False
             self._summary_date = trade_date
@@ -1500,7 +1605,8 @@ class TushareV1Session:
                     trade_date=now.date(),
                     generated_at=now,
                 )
-            except Exception:
+            except Exception as error:
+                logger.warning("post-close summary stage failed: %s", type(error).__name__)
                 fallback = (
                     self._post_close_fallback_provider or self._build_super_post_close_provider()
                 )
@@ -1511,7 +1617,8 @@ class TushareV1Session:
                             trade_date=now.date(),
                             generated_at=now,
                         )
-                    except Exception:
+                    except Exception as error:
+                        logger.warning("post-close summary stage failed: %s", type(error).__name__)
                         collection = None
                     else:
                         collection = replace(
@@ -1544,7 +1651,8 @@ class TushareV1Session:
                     health_interruption_count=interruption_count,
                     alert_timeline=alert_timeline_records(history),
                 )
-            except Exception:
+            except Exception as error:
+                logger.warning("post-close summary stage failed: %s", type(error).__name__)
                 collection = None
 
         if collection is None:
@@ -1569,7 +1677,8 @@ class TushareV1Session:
             try:
                 self.store.record_daily_summary(summary)
                 self._write_local_summary_report(summary)
-            except Exception:
+            except Exception as error:
+                logger.warning("post-close summary stage failed: %s", type(error).__name__)
                 self._set_summary_retry(now)
                 return False
 

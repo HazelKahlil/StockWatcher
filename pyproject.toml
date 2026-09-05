@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stock-watcher"
-version = "0.6.0a4"
+dynamic = ["version"]
 description = "A-share market scanner with stable real-time Top3 candidates (headless service + Web internal test)"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -90,3 +90,6 @@ ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stock_watcher"]
+
+[tool.hatch.version]
+path = "src/stock_watcher/__init__.py"

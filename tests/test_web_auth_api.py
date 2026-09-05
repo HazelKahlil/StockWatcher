@@ -33,6 +33,22 @@ class TestClient(FastAPITestClient):
         super().__init__(app, headers=headers, **kwargs)
 
 
+def test_web_reports_the_shared_mac_product_version(
+    app_env: tuple[Any, SQLiteStore, Any, Any, Any],
+) -> None:
+    from stock_watcher import __version__
+    from stock_watcher.build_info import display_version
+    from stock_watcher.services.stockwatcher_service import ServiceConfig
+
+    app, _, _, _, _ = app_env
+    with TestClient(app) as client:
+        release = client.get("/health/version")
+        assert release.status_code == 200
+        assert release.json() == {"version": display_version(), "source_commit": "unknown"}
+        assert display_version() in client.get("/").text
+        assert app.version == ServiceConfig().app_version == __version__
+
+
 @pytest.fixture()
 def app_env(tmp_path: Path) -> tuple[Any, SQLiteStore, Any, Any, Any]:
     import base64

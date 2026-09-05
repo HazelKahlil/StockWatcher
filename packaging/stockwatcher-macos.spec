@@ -1,9 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import runpy
 import subprocess
 from pathlib import Path
 
 project_root = Path(SPECPATH).parent
+app_version = runpy.run_path(str(project_root / "src/stock_watcher/__init__.py"))["__version__"]
+display_version = app_version.replace("a", "-alpha.")
 assets_dir = project_root / "src" / "stock_watcher" / "ui" / "assets"
 macos_icon = assets_dir / "stockwatcher-macos.png"
 
@@ -110,11 +113,12 @@ app = BUNDLE(
     name="StockWatcher.app",
     icon=str(macos_icon),
     bundle_identifier="com.kahlilhazel.stockwatcher",
-    version="0.6.0a4",
+    version=display_version,
     info_plist={
         "CFBundleDevelopmentRegion": "zh_CN",
         "CFBundleDisplayName": "StockWatcher",
         "CFBundleName": "StockWatcher",
+        "CFBundleVersion": app_version.split("a")[0],
         "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,
         "NSSupportsAutomaticGraphicsSwitching": True,

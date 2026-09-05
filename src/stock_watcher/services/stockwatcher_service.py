@@ -20,6 +20,7 @@ from time import monotonic as monotonic_time
 from time import sleep as sleep_seconds
 from typing import Any
 
+from stock_watcher import __version__
 from stock_watcher.build_info import source_commit as default_source_commit
 from stock_watcher.config import DataSourceMode, DataSourceSettings
 from stock_watcher.domain import SHANGHAI, HealthState, OutcomeSlot, RealtimeQuote
@@ -185,7 +186,7 @@ def default_runtime_factory(
 class ServiceConfig:
     settings: DataSourceSettings = field(default_factory=DataSourceSettings)
     source_commit: str = field(default_factory=default_source_commit)
-    app_version: str = "0.6.0a4"
+    app_version: str = __version__
     report_dir: Path | None = None
     universe_cache_path: Path | None = None
     request_budget: ApplicationRequestBudget | None = None

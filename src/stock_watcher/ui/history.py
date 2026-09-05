@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from contextlib import closing
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from stock_watcher.domain import SHANGHAI
+from stock_watcher.runtime import CandidateRepeatTracker
 from stock_watcher.storage import SQLiteStore
 
 from .outcome_review import OutcomeReviewPanel
@@ -38,6 +40,26 @@ class HistoryWorker(QThread):
                 now=datetime.now(SHANGHAI),
                 days=30,
             )
+            tracker = CandidateRepeatTracker(store)
+            with closing(store.connect()) as connection:
+                for row in rows:
+                    payload = _json_dict(row.get("payload_json"))
+                    candidates = payload.get("candidates", [])
+                    labels = []
+                    if isinstance(candidates, list):
+                        for candidate in candidates:
+                            if not isinstance(candidate, dict):
+                                continue
+                            fields = tracker.historical_fields_for(
+                                connection,
+                                code=str(candidate.get("code", "")),
+                                trade_date=date.fromisoformat(str(row["displayed_at"])[:10]),
+                            )
+                            if fields["repeat_active"] and fields["repeat_label"]:
+                                labels.append(
+                                    f"{candidate.get('name', '')} · {fields['repeat_label']}"
+                                )
+                    row["repeat_labels"] = labels
             self.loaded.emit(rows, "")
         except Exception as error:  # noqa: BLE001 - surfaced in the dialog, not swallowed
             self.loaded.emit([], f"历史暂不可读：{error}")
@@ -133,6 +155,11 @@ class HistoryDialog(QDialog):
             names.setObjectName("historyCandidates")
             names.setWordWrap(True)
             layout.addWidget(names)
+            for text in record.get("repeat_labels", []):
+                repeat = QLabel(str(text))
+                repeat.setObjectName("repeatHint")
+                repeat.setWordWrap(True)
+                layout.addWidget(repeat)
             self._records.addWidget(card)
         self._status.setText("" if records else "暂无历史提醒记录")
 

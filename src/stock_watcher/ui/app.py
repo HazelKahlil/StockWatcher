@@ -123,6 +123,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #historyTime { font-size: 16px; font-weight: 700; }
 #historyOverall { color: #8a6b27; font-size: 14px; }
 #historyCandidates { color: #4e5d70; font-size: 15px; }
+#repeatHint { color: #7b4ab0; font-size: 12px; font-weight: 600; }
 #historyTabs::pane { border: none; background: transparent; }
 QTabBar::tab {
     background: #edf1f6; color: #607086; border: none; border-radius: 8px;

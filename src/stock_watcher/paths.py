@@ -20,7 +20,11 @@ class RuntimePaths:
 
 
 def runtime_paths(app_name: str = "StockWatcher") -> RuntimePaths:
-    if sys.platform == "win32":
+    isolated_root = os.environ.get("STOCKWATCHER_RUNTIME_ROOT", "").strip()
+    if isolated_root:
+        root = Path(isolated_root).expanduser().resolve()
+        logs = root / "logs"
+    elif sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
         root = base / app_name
         logs = root / "logs"

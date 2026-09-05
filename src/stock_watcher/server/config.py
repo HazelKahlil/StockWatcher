@@ -11,6 +11,8 @@ from ipaddress import ip_network
 from pathlib import Path
 from urllib.parse import urlparse
 
+from stock_watcher.build_info import display_version
+
 
 def _csv_env(name: str, default: str = "") -> tuple[str, ...]:
     return tuple(
@@ -147,7 +149,7 @@ class ServerSettings:
         "STOCKWATCHER_SOURCE_COMMIT", "unknown"
     )
     build_version: str = os.environ.get(
-        "STOCKWATCHER_BUILD_VERSION", "web-internal-test-v1"
+        "STOCKWATCHER_BUILD_VERSION", display_version()
     )
     # These are liveness controls for the unique Worker, not provider
     # credentials or business-rule parameters.  A scan may be slow, but it

@@ -1338,7 +1338,6 @@ wheels = [
 
 [[package]]
 name = "stock-watcher"
-version = "0.6.0a4"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

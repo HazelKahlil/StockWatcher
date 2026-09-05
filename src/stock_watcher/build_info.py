@@ -4,7 +4,14 @@ import os
 import sys
 from pathlib import Path
 
+from stock_watcher import __version__
+
 _UNKNOWN = "unknown"
+
+
+def display_version() -> str:
+    """Use the same product version on the desktop, Web and release artifacts."""
+    return __version__.replace("a", "-alpha.")
 
 
 def source_commit() -> str:

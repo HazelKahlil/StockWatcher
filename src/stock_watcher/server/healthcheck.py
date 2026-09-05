@@ -56,16 +56,18 @@ def health_connection(store: SQLiteStore) -> Iterator[sqlite3.Connection]:
 
 
 def _schema_ok(store: SQLiteStore) -> bool:
+    """Cheap readability probe for the 15s Docker healthcheck.
+
+    A full ``PRAGMA integrity_check`` on the live 300MB+ WAL database exceeds
+    the container timeout and restarts the Worker mid-session, which publishes
+    an empty warming dashboard. Recovery still runs integrity on initialize.
+    """
     with store.connect() as connection:
         row = connection.execute(
             "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
-    return (
-        row is not None
-        and int(row[0]) == store.CURRENT_SCHEMA_VERSION
-        and integrity == ("ok",)
-    )
+        connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+    return row is not None and int(row[0]) == store.CURRENT_SCHEMA_VERSION
 
 
 def check_web(settings: ServerSettings) -> int:

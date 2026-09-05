@@ -12,7 +12,14 @@ from .presenter import CandidateRow, format_change
 class AlertRow(QFrame):
     clicked = Signal(str)
 
-    def __init__(self, rank: int, row: CandidateRow, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        rank: int,
+        row: CandidateRow,
+        parent: QWidget | None = None,
+        *,
+        repeat_label: str | None = None,
+    ) -> None:
         super().__init__(parent)
         self.code = row.code
         self.setObjectName("alertRow")
@@ -33,6 +40,11 @@ class AlertRow(QFrame):
         code.setObjectName("popupCode")
         identity.addWidget(name)
         identity.addWidget(code)
+        if repeat_label:
+            repeat = QLabel(repeat_label)
+            repeat.setObjectName("repeatHint")
+            repeat.setWordWrap(True)
+            identity.addWidget(repeat)
         layout.addLayout(identity, 1)
         change = QLabel(format_change(row.change_pct))
         change.setObjectName("popupChange")
@@ -65,6 +77,8 @@ class AlertPopup(QWidget):
         subtitle: str,
         details_callback: Callable[[str], None],
         parent: QWidget | None = None,
+        *,
+        repeat_labels: dict[str, str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -80,6 +94,7 @@ class AlertPopup(QWidget):
         self.setFixedWidth(460)
         self._title = title
         self._settings = QSettings("StockWatcher", "StockWatcher")
+        self._repeat_labels = repeat_labels or {}
         self._build(rows, title, subtitle, details_callback)
 
     def _build(
@@ -106,7 +121,7 @@ class AlertPopup(QWidget):
         subtitle_label.setObjectName("popupSubtitle")
         root.addWidget(subtitle_label)
         for rank, row in enumerate(rows[:3], start=1):
-            panel = AlertRow(rank, row)
+            panel = AlertRow(rank, row, repeat_label=self._repeat_labels.get(row.code))
             panel.clicked.connect(details_callback)
             root.addWidget(panel)
 
@@ -124,8 +139,7 @@ class AlertPopup(QWidget):
     def show_at_bottom_right(self, *, preferred_screen: QScreen | None = None) -> None:
         stored = self._settings.value("alert/position")
         if isinstance(stored, QPoint) and any(
-            screen.availableGeometry().contains(stored)
-            for screen in QGuiApplication.screens()
+            screen.availableGeometry().contains(stored) for screen in QGuiApplication.screens()
         ):
             self.move(stored)
             self.show()

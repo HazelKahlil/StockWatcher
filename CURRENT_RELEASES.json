@@ -76,9 +76,39 @@
     "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
     "status": "windows_smoke_pass",
     "authoritative_m0": false,
-    "governance_runs": [31478494946, 31479040103],
+    "governance_runs": [
+      31478494946,
+      31479040103
+    ],
     "ci": "Windows Python 3.11 and 3.12 tests, Ruff, Mypy, Setup, fail-closed Preflight, PyInstaller, Inno Setup and artifact upload passed",
     "installed_asset_matches_source_baseline": false,
     "note": "The existing target-machine portable predates the final safe-recovery and alpha.2 packaging baseline; rebuild from the tag when a new Windows package is needed."
+  },
+  "mac_web_sync_candidate": {
+    "version": "0.7.0-alpha.1",
+    "python_version": "0.7.0a1",
+    "branch": "codex/mac-web-version-sync",
+    "base_commit": "b97381a5ba70c2e821a23ccecf8216b148c04a93",
+    "status": "offline_verified_build_pending",
+    "updated_at": "2026-09-05",
+    "tests": {
+      "passed": 587,
+      "skipped": 25,
+      "deselected": 2,
+      "environment": "macOS arm64; no live provider"
+    },
+    "mac_database_copy": {
+      "from_schema": 6,
+      "to_schema": 10,
+      "all_original_table_counts_preserved": true,
+      "integrity": "ok",
+      "foreign_key_errors": 0
+    },
+    "installed": false,
+    "deployed": false,
+    "merged_to_main": false,
+    "pushed": false,
+    "windows_updated": false,
+    "record": "docs/visions/v0.7-mac-web-sync/README.md"
   }
 }

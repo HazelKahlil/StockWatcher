@@ -5,6 +5,9 @@
 
 ## 活跃版本
 
+- **[v0.7-mac-web-sync](v0.7-mac-web-sync/README.md)** — Mac App 与 Web 从同一提交构建
+  `0.7.0-alpha.1`；本地候选验证中，现装 App/现网服务尚未切换，Windows 保持独立验收。
+
 - **[v0.7-web-candidate-repeat](v0.7-web-candidate-repeat/README.md)** —
   Web 最终展示 Top3 的「近期多次出现」紫色观察提示、Schema v10 与历史回算
   （状态：Mac 内测隧道已部署；Web 继续 `BLOCKED / NOT_ACCEPTED`）。
