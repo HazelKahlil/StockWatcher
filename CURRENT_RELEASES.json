@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-12",
+  "generated_at": "2026-09-05",
   "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
   "internal_baseline": {
@@ -89,7 +89,7 @@
     "python_version": "0.7.0a1",
     "branch": "codex/mac-web-version-sync",
     "base_commit": "b97381a5ba70c2e821a23ccecf8216b148c04a93",
-    "status": "offline_verified_build_pending",
+    "status": "paired_artifacts_and_fixture_ui_verified_install_pending",
     "updated_at": "2026-09-05",
     "tests": {
       "passed": 587,
@@ -109,6 +109,31 @@
     "merged_to_main": false,
     "pushed": false,
     "windows_updated": false,
-    "record": "docs/visions/v0.7-mac-web-sync/README.md"
-  }
+    "record": "docs/visions/v0.7-mac-web-sync/README.md",
+    "source_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
+    "mac_native_replay_ui_verified": true,
+    "web_image_browser_login_outcome_ui_verified": true,
+    "web_image": "stockwatcher-web:mac-web-0.7.0-alpha.1-8f34c32",
+    "production_mac_database_incident": {
+      "status": "awaiting_owner_restore_or_keep_choice",
+      "schema_before": 6,
+      "schema_after": 10,
+      "candidate_alert_summary_task_scan_original_rows_unchanged": true,
+      "one_old_runtime_session_marked_unclean_exit": true,
+      "backup_verified": true,
+      "integrity": "ok",
+      "foreign_key_errors": 0
+    },
+    "live_web_observation": {
+      "observed_at": "2026-09-05T21:58:00+08:00",
+      "time_precision": "approximate",
+      "image": "stockwatcher-web:web-summary-fix-d84c3c7",
+      "local_ready_http": 503,
+      "public_ready_http": 503,
+      "max_snapshot": 7862,
+      "latest_snapshot_at": "2026-09-04T15:00:06.806420+08:00",
+      "production_containers_changed_by_this_task": false
+    }
+  },
+  "historical_track_records_as_of": "2026-08-12; new mac_web_sync_candidate carries the September 5 verification"
 }
