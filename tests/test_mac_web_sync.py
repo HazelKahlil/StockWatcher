@@ -187,7 +187,8 @@ def test_candidate_card_keyboard_activation_preserves_code() -> None:
 
 
 def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> None:
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
 
     from stock_watcher.ui.main_window import CandidateCard, MainWindow, ReplaySession
 
@@ -204,14 +205,13 @@ def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> N
     app.processEvents()
     focused = window.focusWidget()
     assert isinstance(focused, CandidateCard) and focused.code == code
-    def close_detail() -> None:
-        dialog = QApplication.activeModalWidget()
-        assert dialog is not None
-        dialog.close()
-
-    QTimer.singleShot(0, close_detail)
     window._open_detail_by_code(code)
     app.processEvents()
+    dialog = window._candidate_detail_dialog
+    assert dialog is not None and dialog.isVisible()
+    QTest.keyClick(dialog, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert window._candidate_detail_dialog is None
     focused = window.focusWidget()
     assert isinstance(focused, CandidateCard) and focused.code == code
     window.close()

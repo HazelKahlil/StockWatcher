@@ -412,6 +412,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.session = session
         self._popup: AlertPopup | None = None
+        self._candidate_detail_dialog: CandidateDetailDialog | None = None
         self._rows: dict[str, CandidateRow] = {}
         self._last_alert_signature: tuple[str, ...] | None = None
         self._operation_thread: QThread | None = None
@@ -1044,9 +1045,22 @@ class MainWindow(QMainWindow):
 
     def _open_detail_by_code(self, code: str) -> None:
         row = self._rows.get(code)
-        if row is not None:
-            CandidateDetailDialog(row, self).exec()
+        if row is None:
+            return
+        if self._candidate_detail_dialog is not None:
+            self._candidate_detail_dialog.raise_()
+            self._candidate_detail_dialog.activateWindow()
+            return
+        dialog = CandidateDetailDialog(row, self)
+        self._candidate_detail_dialog = dialog
+
+        def finished(_result: int) -> None:
+            self._candidate_detail_dialog = None
+            dialog.deleteLater()
             self._focus_candidate(code)
+
+        dialog.finished.connect(finished)
+        dialog.open()
 
     def _open_history(self) -> None:
         HistoryDialog(self.session.store.path, self).exec()
