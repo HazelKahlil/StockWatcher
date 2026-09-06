@@ -116,6 +116,7 @@ class OutcomeReviewPanel(QWidget):
         portfolio_toggle.setObjectName("secondaryButton")
         portfolio_toggle.setCheckable(True)
         portfolio_toggle.setFixedHeight(32)
+        portfolio_toggle.setStyleSheet("padding: 2px 12px;")
         portfolio_toggle.toggled.connect(self._portfolio_days.setVisible)
         root.addWidget(portfolio_toggle)
         root.addWidget(self._portfolio_days)
