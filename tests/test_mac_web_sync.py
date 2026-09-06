@@ -187,7 +187,7 @@ def test_candidate_card_keyboard_activation_preserves_code() -> None:
 
 
 def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> None:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtTest import QTest
 
     from stock_watcher.ui.main_window import CandidateCard, MainWindow, ReplaySession
@@ -215,4 +215,7 @@ def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> N
     focused = window.focusWidget()
     assert isinstance(focused, CandidateCard) and focused.code == code
     window.close()
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
     session.store.close()

@@ -33,19 +33,19 @@
     "validation": "363 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract and lock check passed"
   },
   "app_mac": {
-    "source_baseline_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
+    "source_baseline_commit": "f3a31a35f717e528e3d68e9bac1205f58d59243e",
     "installed_path": "~/Applications/StockWatcher.app",
-    "installed_source_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
+    "installed_source_commit": "f3a31a35f717e528e3d68e9bac1205f58d59243e",
     "status": "internal_trial",
     "installed_matches_source_baseline": true,
     "provenance_note": "Installed from immutable paired Mac/Web build; local main is not integrated; production data kept at verified schema 10.",
     "architecture": "arm64",
     "signature": "ad-hoc",
-    "package_version": "0.7.0-alpha.1"
+    "package_version": "0.7.0-alpha.2"
   },
   "web": {
-    "branch": "codex/mac-web-version-sync",
-    "commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
+    "branch": "codex/ui-detail-refinement",
+    "commit": "f3a31a35f717e528e3d68e9bac1205f58d59243e",
     "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/app-mac-web-sync",
     "status": "blocked",
     "release_status": "not_accepted",
@@ -55,28 +55,28 @@
     "containers_observed_healthy": true,
     "pytest_full": {
       "status": "pass_on_macos_source_worktree",
-      "passed": 587,
+      "passed": 589,
       "skipped": 25,
       "deselected": 2,
       "environment": "macOS arm64; no live provider",
-      "observed_at": "2026-09-05"
+      "observed_at": "2026-09-06"
     },
     "ruff": "pass",
-    "mypy": "pass; 146 source files",
+    "mypy": "pass; 147 source files",
     "workspace_validator": "pass; 29 required files",
     "javascript_syntax": "pass",
     "schema_version": 10,
     "dependency_audit": "Historical alpha.4 record: production and all locked groups had no known vulnerabilities found; not rerun for this cutover.",
-    "deployed_image": "stockwatcher-web:mac-web-0.7.0-alpha.1-8f34c32",
+    "deployed_image": "stockwatcher-web:mac-web-0.7.0-alpha.2-f3a31a3",
     "can_merge_main": false,
-    "reason": "Paired Mac/Web installation and authenticated Chrome readback completed. Existing operational recovery/report-directory issues, display inconsistencies and live trading-day acceptance remain open; BLOCKED / NOT_ACCEPTED is unchanged. No main integration.",
-    "deployed_source_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
-    "deployed_source_branch": "codex/mac-web-version-sync",
+    "reason": "UI refinements installed from a paired immutable build and read back in authenticated Chrome. Operational recovery/report-directory issues and live trading-day acceptance remain open; BLOCKED / NOT_ACCEPTED is unchanged. No main integration.",
+    "deployed_source_commit": "f3a31a35f717e528e3d68e9bac1205f58d59243e",
+    "deployed_source_branch": "codex/ui-detail-refinement",
     "deployed_schema_version": 10,
-    "deployment_observed_at": "2026-09-06T08:35:00+08:00",
+    "deployment_observed_at": "2026-09-06T12:06:51.831483+08:00",
     "production_login_verification": "verified_in_owner_authenticated_chrome_session",
     "operations_branch": "fix/web-summary-pdf-and-task-ledger",
-    "production_login_verified_at": "2026-09-06T08:47:19+08:00",
+    "production_login_verified_at": "2026-09-06T12:06:51.831483+08:00",
     "operations_worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e"
   },
   "windows": {
@@ -196,7 +196,19 @@
       "real_trading_day_acceptance": false,
       "evidence": "Native Chrome accessibility and screenshots in this task tool transcript; no standalone screenshot path claimed."
     },
-    "deferred_owner": "Codex; follow-up shared Mac/Web operational fixes, not started by this version synchronization"
+    "deferred_owner": "Codex; follow-up shared Mac/Web operational fixes, not started by this version synchronization",
+    "superseded_by": "ui_refinement; alpha.1 cutover remains historical evidence"
   },
-  "historical_track_records_as_of": "Untouched baseline/candidate_outcomes/shared_core/Windows fields remain historical. app_mac, web deployment and mac_web_sync_candidate record the September 5-6 cutover; Windows is not updated."
+  "historical_track_records_as_of": "baseline/candidate_outcomes/shared_core/Windows/mac_web_sync_candidate are historical. app_mac, web and ui_refinement reflect the 2026-09-06 alpha.2 UI cutover. Windows was not updated.",
+  "ui_refinement": {
+    "package_version": "0.7.0-alpha.2",
+    "source_commit": "f3a31a35f717e528e3d68e9bac1205f58d59243e",
+    "status": "implemented_verified_installed",
+    "branch": "codex/ui-detail-refinement",
+    "source_not_merged_to_main": true,
+    "github_synced": false,
+    "schema_changed": false,
+    "acceptance_scope": "macOS packaged Replay, isolated browser flows and authenticated production Chrome readback; no Windows or live-market acceptance",
+    "record": "docs/visions/v0.7-ui-refinement/README.md"
+  }
 }
