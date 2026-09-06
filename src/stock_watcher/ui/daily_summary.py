@@ -38,6 +38,8 @@ from stock_watcher.runtime.post_close_report_model import (
 )
 from stock_watcher.storage import SQLiteStore
 
+from .background import TaskWorker, start_worker
+
 
 class DailySummaryDialog(QDialog):
     def __init__(
@@ -51,7 +53,9 @@ class DailySummaryDialog(QDialog):
         self._path = path
         self._today = today or datetime.now(SHANGHAI).date()
         self._reports_dir = report_directory_for_database(path)
-        self._summaries = self._load_recent(path)
+        self._summaries: dict[str, dict[str, Any]] = {}
+        self._dismissed = False
+        self.finished.connect(self._on_dismissed)
         self.setWindowTitle("盘后回顾")
         self.resize(760, 620)
         root = QVBoxLayout(self)
@@ -103,6 +107,25 @@ class DailySummaryDialog(QDialog):
         self.date_selector.currentIndexChanged.connect(self._render_selected)
         self.download.clicked.connect(self._download_selected)
         close.clicked.connect(self.accept)
+        self._section("正在读取报告…", "报告准备好后会显示在这里。")
+        worker = TaskWorker(lambda: self._load_recent(path))
+        worker.loaded.connect(self._on_recent_loaded)
+        start_worker(worker)
+
+    def _on_dismissed(self, _result: int) -> None:
+        self._dismissed = True
+
+    def _on_recent_loaded(self, value: object, error: str) -> None:
+        if self._dismissed:
+            return
+        self._clear_content()
+        if error:
+            self._section("报告暂时无法读取", "请关闭后重试。")
+            return
+        self._summaries = value if isinstance(value, dict) else {}
+        self.date_selector.blockSignals(True)
+        self._populate_dates()
+        self.date_selector.blockSignals(False)
         self._render_selected()
 
     def _populate_dates(self) -> None:
@@ -197,11 +220,22 @@ class DailySummaryDialog(QDialog):
         trade_date = self._selected_trade_date()
         if trade_date is None:
             return
-        try:
-            internal_pdf = self._ensure_internal_pdf(trade_date)
-        except (OSError, ValueError, TypeError) as exc:
-            QMessageBox.warning(self, "PDF生成失败", f"暂时无法生成这份报告：{exc}")
+        self.download.setEnabled(False)
+        self.download.setText("正在准备 PDF…")
+        worker = TaskWorker(lambda: self._ensure_internal_pdf(trade_date))
+        worker.loaded.connect(self._pdf_ready)
+        start_worker(worker)
+
+    def _pdf_ready(self, value: object, error: str) -> None:
+        if self._dismissed:
             return
+        self.download.setEnabled(True)
+        self.download.setText("下载 PDF")
+        if error or not isinstance(value, Path):
+            QMessageBox.warning(self, "PDF生成失败", "暂时无法生成这份报告，请重试。")
+            return
+        internal_pdf = value
+        trade_date = internal_pdf.name.split("-A股")[0]
         default = Path.home() / "Downloads" / f"{trade_date}-A股盘后回顾.pdf"
         selected, _ = QFileDialog.getSaveFileName(
             self,
@@ -214,12 +248,26 @@ class DailySummaryDialog(QDialog):
         destination = Path(selected)
         if destination.suffix.casefold() != ".pdf":
             destination = destination.with_suffix(".pdf")
-        try:
+        self.download.setEnabled(False)
+        self.download.setText("正在保存…")
+
+        def save() -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.resolve() != internal_pdf.resolve():
                 shutil.copy2(internal_pdf, destination)
-        except OSError as exc:
-            QMessageBox.warning(self, "下载失败", f"无法保存PDF：{exc}")
+            return destination
+
+        worker = TaskWorker(save)
+        worker.loaded.connect(self._pdf_saved)
+        start_worker(worker)
+
+    def _pdf_saved(self, destination: object, error: str) -> None:
+        if self._dismissed:
+            return
+        self.download.setEnabled(True)
+        self.download.setText("下载 PDF")
+        if error:
+            QMessageBox.warning(self, "下载失败", "无法保存 PDF，请检查目标目录后重试。")
             return
         QMessageBox.information(self, "下载完成", f"PDF已保存到：\n{destination}")
 

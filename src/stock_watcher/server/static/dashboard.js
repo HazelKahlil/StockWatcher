@@ -1,4 +1,5 @@
-import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=7';
+import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=8';
+import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
@@ -355,17 +356,29 @@ function renderState(state) {
   }
   if (cards) {
     const candidatesByRank = new Map(candidates.map((candidate) => [Number(candidate.rank), candidate]));
-    const cardsMarkup = [1, 2, 3].map((rank) => {
+    const oldCards = [...cards.querySelectorAll(':scope > article')];
+    const focused = cards.contains(document.activeElement) ? document.activeElement : null;
+    const used = new Set();
+    [1,2,3].forEach((rank, index) => {
       const candidate = candidatesByRank.get(rank);
-      return candidate ? cardFor(candidate, state) : placeholderCard(rank);
-    }).join('');
-    const markup = cardsMarkup + (state.overall_weak && candidates.length ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '');
-    if (cards.dataset.markup !== markup) {
-      const focusedCode = cards.contains(document.activeElement) ? document.activeElement.dataset.detail : null;
-      cards.innerHTML = markup;
-      cards.dataset.markup = markup;
-      if (focusedCode) cards.querySelector(`button[data-detail="${CSS.escape(focusedCode)}"]`)?.focus({preventScroll:true});
-    }
+      const template = document.createElement('template');
+      template.innerHTML = (candidate ? cardFor(candidate,state) : placeholderCard(rank)).trim();
+      const fresh = template.content.firstElementChild;
+      const previous = oldCards.find(card => !used.has(card) && card.dataset.detailCode === fresh.dataset.detailCode);
+      const card = previous || fresh;
+      if (previous) patchElement(previous, fresh);
+      used.add(card);
+      if (cards.children[index] !== card) cards.insertBefore(card, cards.children[index] || null);
+      if (!previous) enter(card);
+    });
+    oldCards.forEach(card => { if (!used.has(card)) card.remove(); });
+    if (focused?.isConnected && document.activeElement !== focused) focused.focus({preventScroll:true});
+    let weak = cards.querySelector('.weak-note');
+    if (state.overall_weak && candidates.length) {
+      if (!weak) { weak = document.createElement('p'); weak.className = 'weak-note'; cards.append(weak); }
+      weak.textContent = '本轮整体偏弱：正式候选不足三只，近/补位仅供参考';
+    } else weak?.remove();
+
   }
 }
 
@@ -381,7 +394,7 @@ async function showDetail(code, state) {
   detailOriginCode = code;
   box.innerHTML = '<p class="detail-loading" role="status">正在读取候选详情…</p>';
   box.setAttribute('aria-busy', 'true');
-  if (!overlay.open) overlay.showModal();
+  openDrawer(overlay);
   try {
     if (state?.snapshot_id == null) throw new Error('候选快照暂不可用，请刷新后再试。');
     const detail = await apiJson(`/api/v1/candidates/${encodeURIComponent(code)}?snapshot_id=${state.snapshot_id}`, {signal:controller.signal});
@@ -400,6 +413,8 @@ async function showDetail(code, state) {
         <p>快照 #${esc(detail.snapshot_id)}</p>
         <pre class="detail-factor-json">${esc(candidate.payload_json || '暂无因子明细')}</pre>
       </details>`;
+    enhanceDetails(box);
+    enter(box, 2);
   } catch (error) {
     if (controller.signal.aborted || !overlay.open) return;
     box.innerHTML = `<p class="error" role="alert">${error.status === 409 ? '候选列表已更新，请关闭后重新打开。' : '详情暂时无法读取，请重试。'}</p><button type="button" id="detail-retry" class="button-secondary">重新加载</button>`;
@@ -585,8 +600,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (card) void showDetail(card.dataset.detailCode, latestDashboardState);
   });
   const overlay = document.getElementById('drawer-overlay');
-  document.getElementById('close-drawer-btn').addEventListener('click', () => overlay.close());
-  overlay.addEventListener('click', event => { if (event.target === overlay) overlay.close(); });
+  document.getElementById('close-drawer-btn').addEventListener('click', () => closeDrawer(overlay));
+  overlay.addEventListener('click', event => { if (event.target === overlay) closeDrawer(overlay); });
+  overlay.addEventListener('dismissstart', () => detailRequest?.abort());
   overlay.addEventListener('close', () => {
     detailRequest?.abort();
     if (detailOriginCode) document.querySelector(`button[data-detail="${CSS.escape(detailOriginCode)}"]`)?.focus({preventScroll:true});

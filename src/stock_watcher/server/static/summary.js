@@ -1,4 +1,5 @@
-import { api, apiJson, esc, fmtTime } from './app.js?v=7';
+import { enhanceDetails, enter } from './motion.js?v=1';
+import { api, apiJson, esc, fmtTime } from './app.js?v=8';
 
 async function loadBody(panel, date) {
   const body = panel.querySelector('.report-body');
@@ -59,6 +60,8 @@ function render(items) {
       <details class="report-detail" data-date="${esc(item.trade_date)}"><summary>阅读总结</summary><div class="report-body" aria-live="polite"></div></details>
       <details class="report-diagnostics"><summary>报告信息</summary><p>来源版本：${esc(item.version || '未记录')}</p><a href="/api/v1/summaries/${esc(item.trade_date)}" target="_blank" rel="noopener">查看原始 JSON</a></details>
     </article>`).join('');
+  enhanceDetails(wrap);
+  enter(wrap, 2);
   wrap.querySelectorAll('[data-date]').forEach(panel => panel.addEventListener('toggle', () => {
     if (panel.open) void loadBody(panel, panel.dataset.date);
   }));

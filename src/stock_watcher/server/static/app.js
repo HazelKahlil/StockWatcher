@@ -1,3 +1,4 @@
+import './motion.js?v=1';
 // Shared StockWatcher Web client: CSRF, fetch helpers, WebSocket, notifications.
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
@@ -204,4 +205,18 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+});
+
+// Keep native navigation and auth boundaries; only add immediate navigation feedback.
+const motionRoutes = new Set(['/', '/alerts', '/history', '/outcomes', '/summary']);
+document.addEventListener('click', event => {
+  const link = event.target.closest?.('a[href]');
+  if (!link || event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target) return;
+  const url = new URL(link.href);
+  if (url.origin === location.origin && url.pathname !== location.pathname && motionRoutes.has(url.pathname)) link.setAttribute('aria-busy','true');
+});
+window.addEventListener('pageshow', () => document.querySelectorAll('a[aria-busy]').forEach(link => link.removeAttribute('aria-busy')));
+window.addEventListener('pageswap', event => {
+  const next = event.activation?.entry?.url;
+  if (event.viewTransition && (!motionRoutes.has(location.pathname) || !next || !motionRoutes.has(new URL(next).pathname))) event.viewTransition.skipTransition();
 });

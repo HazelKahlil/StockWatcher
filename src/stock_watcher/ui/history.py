@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -23,6 +22,7 @@ from stock_watcher.domain import SHANGHAI
 from stock_watcher.runtime import CandidateRepeatTracker
 from stock_watcher.storage import SQLiteStore
 
+from .background import start_worker
 from .outcome_review import OutcomeReviewPanel
 
 
@@ -103,22 +103,23 @@ class HistoryDialog(QDialog):
         note = QLabel("历史仅用于回看，不会影响当前结果。")
         note.setObjectName("historyNote")
         alerts_root.addWidget(note)
-        self._outcomes = OutcomeReviewPanel(path)
+        self._outcomes = OutcomeReviewPanel(path, autoload=False)
         tabs.addTab(alerts_page, "提醒记录")
         tabs.addTab(self._outcomes, "次日复盘")
+        tabs.currentChanged.connect(self._tab_changed)
+        self._outcomes_loaded = False
         root.addWidget(tabs, 1)
         close = QPushButton("关闭")
         close.setObjectName("secondaryButton")
         close.clicked.connect(self.reject)
         root.addWidget(close)
         self._worker.loaded.connect(self._on_loaded)
-        self._worker.start()
+        start_worker(self._worker)
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
-        if self._worker.isRunning():
-            self._worker.wait(2000)
-        self._outcomes.wait_for_worker()
-        super().closeEvent(event)
+    def _tab_changed(self, index: int) -> None:
+        if index == 1 and not self._outcomes_loaded:
+            self._outcomes_loaded = True
+            self._outcomes.load(20)
 
     def _on_loaded(self, rows: object, error: str) -> None:
         if error:
@@ -129,6 +130,16 @@ class HistoryDialog(QDialog):
             if isinstance(rows, list)
             else []
         )
+        self._pending_records = records
+        self._show_more = QPushButton("显示更多记录")
+        self._show_more.setObjectName("secondaryButton")
+        self._show_more.clicked.connect(self._append_records)
+        self._records.addWidget(self._show_more)
+        self._status.setText("" if records else "暂无历史提醒记录")
+        self._append_records()
+
+    def _append_records(self) -> None:
+        records, self._pending_records = self._pending_records[:18], self._pending_records[18:]
         for record in records:
             if not isinstance(record, dict):
                 continue
@@ -160,8 +171,9 @@ class HistoryDialog(QDialog):
                 repeat.setObjectName("repeatHint")
                 repeat.setWordWrap(True)
                 layout.addWidget(repeat)
-            self._records.addWidget(card)
-        self._status.setText("" if records else "暂无历史提醒记录")
+            self._records.insertWidget(self._records.count() - 1, card)
+        self._show_more.setVisible(bool(self._pending_records))
+        self._show_more.setText(f"显示更多记录（还有 {len(self._pending_records)} 条）")
 
 
 def _json_dict(value: object) -> dict[str, object]:

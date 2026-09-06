@@ -1,4 +1,4 @@
-import { apiJson, connectEvents, esc, fmtTime, onEvent } from './app.js?v=7';
+import { apiJson, connectEvents, esc, fmtTime, onEvent } from './app.js?v=8';
 
 const triggerLabels = {
   'scheduled-09:45': '09:45 观察',

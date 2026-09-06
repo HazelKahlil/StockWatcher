@@ -864,7 +864,7 @@ def test_desktop_app_theme_outcome_page_and_bottom_right_alert_contract() -> Non
     assert '.cards .ashare-pct[data-direction="up"]' in css
     assert "color: var(--top3-gain-red) !important" in css
     assert 'href="/static/app.css?v=16"' in base
-    assert 'src="/static/app.js?v=7"' in base
+    assert 'src="/static/app.js?v=8"' in base
     assert ".hero-action-button.btn-notify" in css
     assert ".dashboard-cards > .card {" in css
     assert "pointer-events: none" in css

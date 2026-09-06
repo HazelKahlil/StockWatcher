@@ -1,0 +1,34 @@
+:root { --motion-quick: 140ms; --motion-standard: 180ms; --motion-ease: cubic-bezier(.2,.75,.25,1); }
+html { scrollbar-gutter: stable; }
+button, .btn, .topbar a, input, select { transition: background-color var(--motion-quick), border-color var(--motion-quick), color var(--motion-quick), box-shadow var(--motion-quick); }
+button:active:not(:disabled), .btn:active { transform: translateY(1px); }
+.topbar nav a { position: relative; }
+.topbar nav a[aria-busy="true"]::after { content:''; position:absolute; height:2px; left:12px; right:12px; bottom:4px; background:currentColor; border-radius:2px; animation: pending-pulse 850ms ease-in-out infinite alternate; }
+@keyframes pending-pulse { from {opacity:.25} to {opacity:1} }
+.disclosure-clip { display:flow-root; }
+.disclosure-body { display:flow-root; }
+summary::marker { color:#7d8fa5; }
+.outcome-day > summary:hover, .report-detail > summary:hover { color:var(--focus); }
+.drawer-overlay[open]::backdrop { animation: backdrop-arrive 180ms ease-out; }
+@keyframes backdrop-arrive { from {background:rgba(24,37,54,0)} to {background:rgba(24,37,54,.28)} }
+#cards:empty { min-height:354px; border-radius:16px; background:repeating-linear-gradient(to bottom,#fff 0px,#fff 108px,transparent 108px,transparent 120px); }
+#outcome-page-summary:empty { min-height:128px; }
+#history[aria-busy="true"]:empty { min-height:240px; border-radius:14px; background:linear-gradient(#eef2f7 44px,#fff 44px); }
+.outcome-day-grid:empty { min-height:120px; }
+#refresh-progress { min-height:24px; }
+.record-filters { position:sticky; top:76px; z-index:2; box-shadow:0 4px 16px rgba(28,45,66,.035); }
+@media(max-width:1000px) { .record-filters { top:124px; } }
+@media(prefers-reduced-motion:no-preference) {
+  @view-transition { navigation:auto; }
+  .topbar { view-transition-name:site-header; }
+  ::view-transition-group(*) { animation-duration:180ms; animation-timing-function:var(--motion-ease); }
+  ::view-transition-old(root) { animation:page-out 140ms ease-out both; }
+  ::view-transition-new(root) { animation:page-in 180ms var(--motion-ease) both; }
+  @keyframes page-out { to {opacity:0} }
+  @keyframes page-in { from {opacity:0;transform:translateY(4px)} to {opacity:1;transform:none} }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*::before,*::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; }
+  button:active:not(:disabled),.btn:active { transform:none; }
+  @view-transition { navigation:none; }
+}

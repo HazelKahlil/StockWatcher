@@ -1,4 +1,4 @@
-import { apiJson, esc, fmtTime } from './app.js?v=7';
+import { apiJson, esc, fmtTime } from './app.js?v=8';
 
 let cursor = null;
 let controller = null;

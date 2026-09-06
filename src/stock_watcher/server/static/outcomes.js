@@ -1,4 +1,8 @@
-import { apiJson, esc } from './app.js?v=7';
+import { apiJson, esc } from './app.js?v=8';
+
+import { enhanceDetails } from './motion.js?v=1';
+
+const expandedDates = new Map();
 
 import { groupRecords } from './presentation.js?v=1';
 
@@ -65,6 +69,7 @@ function renderPortfolios(portfolio) {
 
 function renderRecords() {
   const target = document.getElementById('outcome-records');
+  target.querySelectorAll('details[data-date]').forEach(day => expandedDates.set(day.dataset.date, day.querySelector('summary').getAttribute('aria-expanded') === 'true'));
   const groups = groupRecords(currentRecords, document.getElementById('record-status').value, document.getElementById('record-search').value);
   const count = groups.reduce((total, [, rows]) => total + rows.length, 0);
   document.getElementById('record-count').textContent = `显示 ${count} / ${currentRecords.length} 笔 · 明细筛选不改变上方统计范围`;
@@ -72,18 +77,31 @@ function renderRecords() {
     target.innerHTML = `<div class="empty-state"><strong>${currentRecords.length ? '没有匹配的记录' : '暂无次日复盘记录'}</strong>${currentRecords.length ? '换一个名称、代码或结算状态试试。' : '从下一笔固定时点观察开始记录。'}</div>`;
     return;
   }
-  target.innerHTML = groups.map(([date, records], index) => `
-    <details class="outcome-day" ${index === 0 ? 'open' : ''}>
-      <summary>${esc(date)} <span>${records.length} 笔 · ${records.filter(row => row.status === 'settled').length} 已结算</span></summary>
-      <div class="outcome-day-grid">${records.map(row => `
+  const recordMarkup = row => `
         <article class="outcome-record-card" data-direction="${direction(row.return_pct)}">
           <div class="outcome-record-head"><span>${esc(row.slot)}</span><strong>TOP ${esc(row.rank)}</strong></div>
           <h3>${esc(row.name)} <small>${esc(row.code)}</small></h3>
           <p class="outcome-price-line">${price(row.entry_price)} <span aria-hidden="true">→</span> ${price(row.exit_price)}</p>
           <p class="outcome-return" data-direction="${direction(row.return_pct)}">${percent(row.return_pct)}</p>
           <p class="muted">${esc(row.display_reason)}</p>
-        </article>`).join('')}</div>
+        </article>`;
+  target.innerHTML = groups.map(([date, records], index) => `
+    <details class="outcome-day" data-date="${esc(date)}" ${(expandedDates.get(date) ?? index === 0) ? 'open' : ''}>
+      <summary>${esc(date)} <span>${records.length} 笔 · ${records.filter(row => row.status === 'settled').length} 已结算</span></summary>
+      <div class="outcome-day-grid"></div>
     </details>`).join('');
+  target.querySelectorAll('details').forEach((day, index) => {
+    let populated = false;
+    const populate = () => {
+      if (populated) return;
+      populated = true;
+      day.querySelector('.outcome-day-grid').innerHTML = groups[index][1].map(recordMarkup).join('');
+    };
+    if (day.open) populate();
+    day.querySelector('summary').addEventListener('click', populate);
+    day.addEventListener('toggle', () => { if (day.open) populate(); });
+  });
+  enhanceDetails(target);
 }
 
 function render(payload) {

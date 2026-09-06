@@ -201,7 +201,9 @@ def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> N
     card = window.findChildren(CandidateCard)[1]
     code = card.code
     card.setFocus()
+    before = window.findChildren(CandidateCard)
     window._refresh()
+    assert window.findChildren(CandidateCard) == before
     app.processEvents()
     focused = window.focusWidget()
     assert isinstance(focused, CandidateCard) and focused.code == code
@@ -219,3 +221,59 @@ def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> N
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
     session.store.close()
+
+
+def test_history_large_list_is_incremental(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QFrame
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(history, "start_worker", lambda _worker: None)
+    dialog = history.HistoryDialog(tmp_path / "unused.sqlite3")
+    rows = [{"displayed_at": "2026-09-03T09:45:00+08:00"}] * 1000
+    dialog._on_loaded(rows, "")
+    assert len(dialog.findChildren(QFrame, "historyCard")) == 18
+    assert dialog._outcomes._worker is None
+    while dialog._pending_records:
+        dialog._append_records()
+    assert len(dialog.findChildren(QFrame, "historyCard")) == 1000
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
+def test_summary_can_close_while_read_is_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtTest import QTest
+
+    from stock_watcher.ui.background import _running
+    from stock_watcher.ui.daily_summary import DailySummaryDialog
+
+    app = QApplication.instance() or QApplication([])
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_read(_self: Any, _path: Path) -> dict[str, Any]:
+        entered.set()
+        assert release.wait(5)
+        return {}
+
+    monkeypatch.setattr(DailySummaryDialog, "_load_recent", slow_read)
+    dialog = DailySummaryDialog(tmp_path / "unused.sqlite3")
+    dialog.open()
+    try:
+        assert entered.wait(2)
+        dialog.reject()
+        assert not dialog.isVisible()
+        assert not release.is_set()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    finally:
+        release.set()
+    for _ in range(100):
+        QTest.qWait(10)
+        if not _running:
+            break
+    assert not _running
+    app.processEvents()
