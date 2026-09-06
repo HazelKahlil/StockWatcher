@@ -1,6 +1,6 @@
 # v0.7 Web / Mac 流畅交互
 
-2026-09-06 · in_progress · Owner: Codex
+2026-09-06 - UI delivered - Owner: Codex
 
 目标：继续优化 Web 与 Mac App 的交互、过渡、视觉便利性，保留现有苹果式浅色设计语言。
 基于已安装 alpha.2 产品 f3a31a3 / 记录 c95a03d，候选版本 0.7.0-alpha.3。
@@ -45,3 +45,22 @@ Mac 原生异步面板、18 条一批的历史/复盘、后台报告读取与 PD
 
 打包 UI 检查补充：Mac 720px 高度下统计挤占明细区域，进一步将四项统计并排、
 日组合文字明细默认收起（可展开）。b4b3c62 为中间候选，最终配对提交以后续记录为准。
+
+## Final delivery - 2026-09-06
+
+UI implementation and paired installation complete; live-market and Windows acceptance remain separate.
+
+- Product source: `5f64d0a9ea266196accfc0b9fea1c9fd973bb188`; Mac and Web `0.7.0-alpha.3`.
+- Mac: `/Users/kahlilhazel/Applications/StockWatcher.app`; signature, embedded commit and executable hash match the release manifest.
+- Web/Worker: `stockwatcher-web:mac-web-0.7.0-alpha.3-5f64d0a`; both healthy, restart count 0. Gateway/cloudflared unchanged.
+- Public homepage/ready 200; existing Chrome login retained; details/Esc/review verified.
+- Original Top3 codes: 300829.SZ, 300741.SZ, 300106.SZ. Review statistics remain 75/96, 29.3%, 27.3%, -1.53%.
+- Before/after: snapshot 7862, source 2026-09-04T15:00:05+08:00; snapshots 7777, items 23323, outcomes 96, summaries 17, users 6.
+- Qualified backup: `/backups/ui-motion-final-20260906T045620Z/stockwatcher.db`; offline integrity ok, FK 0, copied hash verified; reports retained alongside.
+- Full pytest: 591 passed / 25 skipped; final layout changes: 68 relevant tests passed. Ruff/Mypy/Node/workspace/offline Windows package contract passed.
+- Native UI: repeated history sheets, lazy review, range change, Esc, portfolio disclosure and actual PDF save verified. Final screenshot: `mac-outcomes-final.png`.
+- Evidence: `/Users/kahlilhazel/Documents/700-AI-Workspace/90-Archive/StockWatcher/99-deliveries/StockWatcher-Motion-20260906`; `release.json`, `ui-verification.json`, before/after DB validation, refresh benchmark, screenshots and fixture PDF.
+- Original alpha.2 App: `mac-before-alpha2.app`; intermediate candidates are superseded by the product source above.
+- Preview and Replay processes stopped. Local commits only; no main merge or push; GitHub not synchronized.
+
+Limits: timings measure Qt offscreen unchanged refresh work, not whole-system FPS. Reduced-motion support implemented; user OS settings were not changed for an end-to-end comparison. No market-provider calls. Existing 21 pending settlements, recovery strategy and real trading-day acceptance remain separate work.
