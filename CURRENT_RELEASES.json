@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-05",
+  "generated_at": "2026-09-06",
   "environment": "multi-track internal trial; authoritative development host is macOS arm64",
   "authoritative_root": "~/Documents/700-AI-Workspace/20-Projects/StockWatcher",
   "internal_baseline": {
@@ -33,19 +33,20 @@
     "validation": "363 passed, 20 skipped, 2 deselected; Ruff, Mypy, workspace validator, Windows package contract and lock check passed"
   },
   "app_mac": {
-    "source_baseline_commit": "ad04e392158c7050f84e0318fe1d53aaa0370c34",
+    "source_baseline_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
     "installed_path": "~/Applications/StockWatcher.app",
-    "installed_source_commit": "88ccf49f91fa814af83a004232315286feca3fb7",
+    "installed_source_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
     "status": "internal_trial",
-    "installed_matches_source_baseline": false,
-    "provenance_note": "The installed app was not overwritten or rebuilt during source baselining; rebuild from the tag before distributing alpha.2.",
+    "installed_matches_source_baseline": true,
+    "provenance_note": "Installed from immutable paired Mac/Web build; local main is not integrated; production data kept at verified schema 10.",
     "architecture": "arm64",
-    "signature": "ad-hoc"
+    "signature": "ad-hoc",
+    "package_version": "0.7.0-alpha.1"
   },
   "web": {
-    "branch": "fix/web-top3-gain-emphasis",
-    "commit": "cfc6cd66be3edcf5468840c29b509eae643896b5",
-    "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e",
+    "branch": "codex/mac-web-version-sync",
+    "commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
+    "worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/app-mac-web-sync",
     "status": "blocked",
     "release_status": "not_accepted",
     "deployment": "Mac Docker Desktop plus Cloudflare Tunnel",
@@ -53,22 +54,30 @@
     "observed_http_status": 200,
     "containers_observed_healthy": true,
     "pytest_full": {
-      "status": "pass_on_current_macos_worktree",
-      "passed": 499,
+      "status": "pass_on_macos_source_worktree",
+      "passed": 587,
       "skipped": 25,
       "deselected": 2,
-      "warnings": 0,
-      "warning_policy": "error"
+      "environment": "macOS arm64; no live provider",
+      "observed_at": "2026-09-05"
     },
     "ruff": "pass",
-    "mypy": "pass; 141 source files",
+    "mypy": "pass; 146 source files",
     "workspace_validator": "pass; 29 required files",
     "javascript_syntax": "pass",
-    "schema_version": 9,
-    "dependency_audit": "production and all locked groups: no known vulnerabilities found",
-    "deployed_image": "stockwatcher-web:web-alpha4-cfc6cd6",
+    "schema_version": 10,
+    "dependency_audit": "Historical alpha.4 record: production and all locked groups had no known vulnerabilities found; not rerun for this cutover.",
+    "deployed_image": "stockwatcher-web:mac-web-0.7.0-alpha.1-8f34c32",
     "can_merge_main": false,
-    "reason": "Independent deployed Web line has P0=0, P1=0 and P2=0 in the current offline review, but remains BLOCKED / NOT_ACCEPTED pending real trading-day 09:45/14:45 alerts, outcome settlement/retry and full-day operational acceptance; it is not folded into main."
+    "reason": "Paired Mac/Web installation and authenticated Chrome readback completed. Existing operational recovery/report-directory issues, display inconsistencies and live trading-day acceptance remain open; BLOCKED / NOT_ACCEPTED is unchanged. No main integration.",
+    "deployed_source_commit": "8f34c32580460be4c7e81c2d58190c0726657ab1",
+    "deployed_source_branch": "codex/mac-web-version-sync",
+    "deployed_schema_version": 10,
+    "deployment_observed_at": "2026-09-06T08:35:00+08:00",
+    "production_login_verification": "verified_in_owner_authenticated_chrome_session",
+    "operations_branch": "fix/web-summary-pdf-and-task-ledger",
+    "production_login_verified_at": "2026-09-06T08:47:19+08:00",
+    "operations_worktree": "~/Documents/700-AI-Workspace/90-Archive/StockWatcher/00-current/web/source-worktree-87a8b85609f57504861e09f416694582556b736e"
   },
   "windows": {
     "pr": 4,
@@ -89,8 +98,8 @@
     "python_version": "0.7.0a1",
     "branch": "codex/mac-web-version-sync",
     "base_commit": "b97381a5ba70c2e821a23ccecf8216b148c04a93",
-    "status": "paired_artifacts_and_fixture_ui_verified_install_pending",
-    "updated_at": "2026-09-05",
+    "status": "installed_deployed_and_authenticated_readback_verified",
+    "updated_at": "2026-09-06",
     "tests": {
       "passed": 587,
       "skipped": 25,
@@ -104,8 +113,8 @@
       "integrity": "ok",
       "foreign_key_errors": 0
     },
-    "installed": false,
-    "deployed": false,
+    "installed": true,
+    "deployed": true,
     "merged_to_main": false,
     "pushed": false,
     "windows_updated": false,
@@ -115,7 +124,7 @@
     "web_image_browser_login_outcome_ui_verified": true,
     "web_image": "stockwatcher-web:mac-web-0.7.0-alpha.1-8f34c32",
     "production_mac_database_incident": {
-      "status": "awaiting_owner_restore_or_keep_choice",
+      "status": "kept_verified_schema_10_after_owner_continued; new_mac_app_installed",
       "schema_before": 6,
       "schema_after": 10,
       "candidate_alert_summary_task_scan_original_rows_unchanged": true,
@@ -125,15 +134,69 @@
       "foreign_key_errors": 0
     },
     "live_web_observation": {
-      "observed_at": "2026-09-05T21:58:00+08:00",
+      "observed_at": "2026-09-06T08:35:00+08:00",
       "time_precision": "approximate",
-      "image": "stockwatcher-web:web-summary-fix-d84c3c7",
-      "local_ready_http": 503,
-      "public_ready_http": 503,
+      "image": "stockwatcher-web:mac-web-0.7.0-alpha.1-8f34c32",
+      "local_ready_http": 200,
+      "public_ready_http": 200,
       "max_snapshot": 7862,
       "latest_snapshot_at": "2026-09-04T15:00:06.806420+08:00",
-      "production_containers_changed_by_this_task": false
-    }
+      "production_containers_changed_by_this_task": true
+    },
+    "mac_installed_replay_ui_verified": true,
+    "web_source_version_publicly_verified": true,
+    "production_browser_login_verified": true,
+    "production_browser_readback": {
+      "observed_at": "2026-09-06T08:47:19+08:00",
+      "environment": "macOS; Google Chrome; real authenticated production session",
+      "pages_opened": [
+        "/",
+        "/outcomes",
+        "/summary",
+        "/api/v1/summaries/2026-09-04/pdf"
+      ],
+      "footer_version": "0.7.0-alpha.1",
+      "homepage_ranks": [
+        1,
+        2,
+        3
+      ],
+      "latest_snapshot_id": 7862,
+      "latest_snapshot_at": "2026-09-04T15:00:06.806420+08:00",
+      "displayed_last_scan_at": "2026-09-05T14:59:12+08:00",
+      "service_state": "warming",
+      "outcomes": {
+        "total": 96,
+        "settled": 75,
+        "pending": 21,
+        "win_rate_percent": 29.3,
+        "daily_portfolio_win_rate_percent": 27.3,
+        "average_return_percent": -1.53,
+        "complete_portfolio_days": 11
+      },
+      "summary_latest_date": "2026-09-04",
+      "summary_pdf_pages": 2,
+      "summary_pdf_loaded": true,
+      "report_recovery": {
+        "dates": [
+          "2026-09-01",
+          "2026-09-02",
+          "2026-09-03",
+          "2026-09-04"
+        ],
+        "files_copied": 16,
+        "hashes_verified": true,
+        "new_reports_generated": false,
+        "backup_files": 16
+      },
+      "known_ui_issues": [
+        "Last update shows scan completion instead of retained candidate source time.",
+        "Backfill message says 96 excluded while the settled ledger contains 75; backfill skipped/unavailable counts are not current settlement totals."
+      ],
+      "real_trading_day_acceptance": false,
+      "evidence": "Native Chrome accessibility and screenshots in this task tool transcript; no standalone screenshot path claimed."
+    },
+    "deferred_owner": "Codex; follow-up shared Mac/Web operational fixes, not started by this version synchronization"
   },
-  "historical_track_records_as_of": "2026-08-12; new mac_web_sync_candidate carries the September 5 verification"
+  "historical_track_records_as_of": "Untouched baseline/candidate_outcomes/shared_core/Windows fields remain historical. app_mac, web deployment and mac_web_sync_candidate record the September 5-6 cutover; Windows is not updated."
 }
