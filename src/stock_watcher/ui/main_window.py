@@ -661,6 +661,8 @@ class MainWindow(QMainWindow):
                     widget.deleteLater()
 
     def _refresh(self) -> None:
+        focused = self.focusWidget()
+        focused_code = focused.code if isinstance(focused, CandidateCard) else None
         snapshot = self._snapshot()
         healthy = snapshot.health is HealthState.HEALTHY
         stopped = snapshot.health is HealthState.STOPPED
@@ -765,6 +767,8 @@ class MainWindow(QMainWindow):
             card = CandidateCard(index, row, previous=not healthy)
             card.clicked.connect(self._open_detail_by_code)
             self._cards.addWidget(card)
+        if focused_code is not None and self.isActiveWindow():
+            self._focus_candidate(focused_code)
         if not rows:
             empty = QLabel(
                 "正在获取全市场实时数据；完成后这里会立即显示3只观察股票。"
@@ -1030,10 +1034,19 @@ class MainWindow(QMainWindow):
             self._queued_manual_fetch = False
             self._manual_fetch_tq()
 
+    def _focus_candidate(self, code: str) -> None:
+        for index in range(self._cards.count()):
+            item = self._cards.itemAt(index)
+            card = item.widget() if item is not None else None
+            if isinstance(card, CandidateCard) and card.code == code:
+                card.setFocus(Qt.FocusReason.OtherFocusReason)
+                return
+
     def _open_detail_by_code(self, code: str) -> None:
         row = self._rows.get(code)
         if row is not None:
             CandidateDetailDialog(row, self).exec()
+            self._focus_candidate(code)
 
     def _open_history(self) -> None:
         HistoryDialog(self.session.store.path, self).exec()

@@ -184,3 +184,35 @@ def test_candidate_card_keyboard_activation_preserves_code() -> None:
     assert row.name in card.accessibleName()
     card.close()
     app.processEvents()
+
+
+def test_candidate_focus_survives_refresh_and_detail_return(tmp_path: Path) -> None:
+    from PySide6.QtCore import QTimer
+
+    from stock_watcher.ui.main_window import CandidateCard, MainWindow, ReplaySession
+
+    app = QApplication.instance() or QApplication([])
+    session = ReplaySession(tmp_path / "keyboard-replay.sqlite3")
+    window = MainWindow(session)
+    window.show()
+    window.activateWindow()
+    app.processEvents()
+    card = window.findChildren(CandidateCard)[1]
+    code = card.code
+    card.setFocus()
+    window._refresh()
+    app.processEvents()
+    focused = window.focusWidget()
+    assert isinstance(focused, CandidateCard) and focused.code == code
+    def close_detail() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert dialog is not None
+        dialog.close()
+
+    QTimer.singleShot(0, close_detail)
+    window._open_detail_by_code(code)
+    app.processEvents()
+    focused = window.focusWidget()
+    assert isinstance(focused, CandidateCard) and focused.code == code
+    window.close()
+    session.store.close()
