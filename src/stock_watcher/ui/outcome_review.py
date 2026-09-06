@@ -59,7 +59,7 @@ class OutcomeReviewPanel(QWidget):
         self._range_buttons: dict[int | None, QPushButton] = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 4, 0, 0)
-        root.setSpacing(12)
+        root.setSpacing(8)
 
         ranges = QHBoxLayout()
         ranges.setSpacing(8)
@@ -91,6 +91,7 @@ class OutcomeReviewPanel(QWidget):
         for index, card in enumerate(
             (self._overall_win, self._average, self._portfolio, self._settled)
         ):
+            card.frame.setFixedHeight(68)
             summary.addWidget(card.frame, 0, index)
         root.addLayout(summary)
 
@@ -98,6 +99,8 @@ class OutcomeReviewPanel(QWidget):
         slots.setSpacing(10)
         self._morning = _slot_card("09:45")
         self._afternoon = _slot_card("14:45")
+        self._morning.frame.setFixedHeight(104)
+        self._afternoon.frame.setFixedHeight(104)
         slots.addWidget(self._morning.frame, 1)
         slots.addWidget(self._afternoon.frame, 1)
         root.addLayout(slots)
@@ -112,6 +115,7 @@ class OutcomeReviewPanel(QWidget):
         portfolio_toggle = QPushButton("日组合明细")
         portfolio_toggle.setObjectName("secondaryButton")
         portfolio_toggle.setCheckable(True)
+        portfolio_toggle.setFixedHeight(32)
         portfolio_toggle.toggled.connect(self._portfolio_days.setVisible)
         root.addWidget(portfolio_toggle)
         root.addWidget(self._portfolio_days)

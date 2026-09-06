@@ -69,7 +69,7 @@ class HistoryDialog(QDialog):
     def __init__(self, path: Path, parent: Any = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("历史记录")
-        self.resize(860, 720)
+        self.resize(860, 820)
         self._worker = HistoryWorker(path)
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 26, 30, 24)
