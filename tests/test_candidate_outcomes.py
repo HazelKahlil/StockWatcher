@@ -1617,7 +1617,8 @@ def test_historical_backfill_persists_pending_retry_count(tmp_path: Path) -> Non
     assert isinstance(status, dict)
     assert status["status"] == "partial"
     assert status["pending"] == 3
-    assert _backfill_status_text(status).endswith("另有3笔等待重试。")
+    assert "未完成3笔" in _backfill_status_text(status)
+    assert "等待重试" not in _backfill_status_text(status)
 
 
 def test_historical_backfill_never_exceeds_bounded_attempt_limit(tmp_path: Path) -> None:
@@ -2083,7 +2084,8 @@ def test_review_backfill_copy_requires_explicit_persisted_status() -> None:
                 "pending": 3,
             }
         )
-        == "已回补18笔，6笔因缺少可验证行情未纳入统计。另有3笔等待重试。"
+        == "本轮已回补18笔，未取得行情4笔，跳过2笔，未完成3笔。"
+        "这是回补任务记录，跳过不代表未结算；当前结算数量以上方统计为准。"
     )
     assert _backfill_status_text({"status": "failed"}) == (
         "历史回补检查失败；从新固定提醒开始记录不受影响。"

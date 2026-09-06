@@ -863,8 +863,8 @@ def test_desktop_app_theme_outcome_page_and_bottom_right_alert_contract() -> Non
     assert "font-size: clamp(1.4rem, 2.5vw, 1.85rem)" in css
     assert '.cards .ashare-pct[data-direction="up"]' in css
     assert "color: var(--top3-gain-red) !important" in css
-    assert 'href="/static/app.css?v=15"' in base
-    assert 'src="/static/app.js?v=6"' in base
+    assert 'href="/static/app.css?v=16"' in base
+    assert 'src="/static/app.js?v=7"' in base
     assert ".hero-action-button.btn-notify" in css
     assert ".dashboard-cards > .card {" in css
     assert "pointer-events: none" in css
@@ -1125,7 +1125,7 @@ def test_history_page_has_purple_filter_and_does_not_paint_homepage_cards() -> N
         encoding="utf-8"
     )
     assert 'id="repeat-only"' in history_page
-    assert "只看紫色标记" in history_page
+    assert "近期多次出现" in history_page
     assert "repeat_active" in history_script
     assert "repeat-badge" in history_script
     assert "candidate.name" in history_script

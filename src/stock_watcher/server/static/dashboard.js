@@ -1,7 +1,7 @@
-import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=6';
+import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=7';
+import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
-const marketLabels = { preopen: '盘前', morning: '上午盘', lunch: '午休', afternoon: '下午盘', closed: '休市', unknown: '待确认' };
 const refreshStages = [
   { maxSeconds: 2, label: '连接行情数据' },
   { maxSeconds: 6, label: '扫描全市场候选' },
@@ -16,6 +16,8 @@ const refreshFailureLabels = {
   rate_limited: '行情接口限流，未产生新候选',
   'universe-refresh': '基础行情缓存暂不可用，未产生新候选',
 };
+const taskLabels = {'scheduled-09:45': '09:45 观察', 'scheduled-14:45': '14:45 观察', 'daily-summary': '盘后总结'};
+const taskStates = {pending:'待执行', running:'进行中', succeeded:'已完成', failed:'未完成', missed:'已错过', blocked:'暂不可用', retrying:'重试中'};
 let refreshProgressTimer = null;
 let refreshProgressHideTimer = null;
 const handledAlertIds = new Set();
@@ -122,7 +124,7 @@ function cardFor(candidate, state) {
   const observationLabel = candidate.is_formal ? fundLabel : `补位观察 · ${fundLabel}`;
 
   return `
-  <article class="card ${candidate.rank === 1 ? 'rank-1-card' : ''}">
+  <article class="card ${candidate.rank === 1 ? 'rank-1-card' : ''}" data-detail-code="${esc(candidate.code)}">
     <span class="rank rank-${candidate.rank}-badge">${candidate.rank}</span>
     <div class="candidate-identity">
       <h3 class="display-name">${esc(candidate.name)}</h3>
@@ -138,7 +140,7 @@ function cardFor(candidate, state) {
       <strong>${esc(candidate.sector_name || '板块待确认')}</strong>
       <small>${esc(observationLabel)}</small>
     </div>
-    <button type="button" class="card-open-detail" data-detail="${esc(candidate.code)}" aria-label="查看 ${esc(candidate.name)} 因子审计"><span aria-hidden="true">›</span></button>
+    <button type="button" class="card-open-detail" data-detail="${esc(candidate.code)}" aria-label="查看 ${esc(candidate.name)} 候选详情"><span aria-hidden="true">›</span></button>
   </article>`;
 }
 
@@ -262,7 +264,7 @@ async function loadOutcomeSummary() {
     const payload = await apiJson('/api/v1/outcomes?range=month');
     const summary = payload.summary;
     const values = [
-      ['个人胜率', formatRate(summary.win_rate)],
+      ['个股胜率', formatRate(summary.win_rate)],
       ['日组合胜率', formatRate(payload.portfolio.win_rate)],
       ['平均收益', formatReturn(summary.average_return_pct)],
       ['已结算 / 总数', `${summary.settled_count} / ${summary.total_count}`],
@@ -310,17 +312,23 @@ function renderState(state) {
     svc.className = `status-item-value pill-${cls}`;
   }
   const market = document.getElementById('market-state');
-  if (market) market.textContent = marketLabels[state.market_state] || state.market_state || '—';
+  if (market) market.textContent = displayMarketPhase(state);
   const lastScan = document.getElementById('last-scan');
-  if (lastScan && state.last_scan) {
-    lastScan.textContent = fmtTime(state.last_scan.completed_at);
-    lastScan.title = `覆盖 ${(state.last_scan.coverage_ratio * 100).toFixed(1)}% · 耗时 ${Number(state.last_scan.elapsed_seconds).toFixed(1)}s`;
-  } else if (lastScan && state.source_ts) {
-    lastScan.textContent = fmtTime(state.source_ts);
-    lastScan.title = '使用上一份实时结果';
-  } else if (lastScan) {
-    lastScan.textContent = '尚未完成实时扫描';
-    lastScan.removeAttribute('title');
+  const candidateTime = candidateTimestamp(state);
+  if (lastScan) {
+    lastScan.textContent = candidateTime ? fmtTime(candidateTime) : '尚无候选数据';
+    lastScan.title = candidateTime ? '这三只候选对应的数据时间' : '尚未取得有效候选';
+  }
+  const scanCompleted = document.getElementById('scan-completed');
+  if (scanCompleted) scanCompleted.textContent = state.last_scan?.completed_at
+    ? `扫描完成 ${fmtTime(state.last_scan.completed_at)}` : '';
+  const provenance = document.getElementById('candidate-provenance');
+  if (provenance) {
+    const retained = retainedCandidates(state);
+    provenance.dataset.retained = String(retained);
+    provenance.textContent = retained
+      ? `保留快照 · ${fmtTime(candidateTime)}。当前未产生新的有效候选。`
+      : (candidateTime ? '候选按原始排名展示，点击卡片查看原因。' : '候选尚未就绪，等待有效扫描。');
   }
   const workerAge = document.getElementById('worker-age');
   if (workerAge && state.worker_heartbeat_age_seconds != null) {
@@ -333,7 +341,7 @@ function renderState(state) {
   if (tasks) {
     const list = state.tasks || [];
     tasks.innerHTML = list.length
-      ? list.map((task) => `<span class="task">${esc(task.task_type)}：${esc(task.state)}</span>`).join('')
+      ? list.map((task) => `<span class="task">${esc(taskLabels[task.task_type] || task.task_type)}：${esc(taskStates[task.state] || task.state)}</span>`).join('')
       : '<span class="task muted">今日暂无自动任务</span>';
   }
   const cards = document.getElementById('cards');
@@ -343,7 +351,7 @@ function renderState(state) {
   const top3Title = document.getElementById('top3-title');
   if (top3Title) {
     const runLabel = state.service_state === 'healthy' ? '运行正常' : (stateLabels[state.service_state] || '同步中');
-    top3Title.textContent = `当前${candidates.length}只观察｜${runLabel}`;
+    top3Title.textContent = `${retainedCandidates(state) ? '上次' : '当前'} ${candidates.length} 只观察 · ${runLabel}`;
   }
   if (cards) {
     const candidatesByRank = new Map(candidates.map((candidate) => [Number(candidate.rank), candidate]));
@@ -351,50 +359,54 @@ function renderState(state) {
       const candidate = candidatesByRank.get(rank);
       return candidate ? cardFor(candidate, state) : placeholderCard(rank);
     }).join('');
-    cards.innerHTML = cardsMarkup + (state.overall_weak && candidates.length ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '');
+    const markup = cardsMarkup + (state.overall_weak && candidates.length ? '<p class="weak-note">本轮整体偏弱：正式候选不足三只，近/补位仅供参考</p>' : '');
+    if (cards.dataset.markup !== markup) {
+      const focusedCode = cards.contains(document.activeElement) ? document.activeElement.dataset.detail : null;
+      cards.innerHTML = markup;
+      cards.dataset.markup = markup;
+      if (focusedCode) cards.querySelector(`button[data-detail="${CSS.escape(focusedCode)}"]`)?.focus({preventScroll:true});
+    }
   }
 }
 
-function showDetail(code, state) {
-  const snapshotId = state.snapshot_id;
+let detailRequest = null;
+let detailOriginCode = null;
 
-  function renderDetailPayload(candidate, snapId, srcTs) {
-    const detailLevel = levelMeta(candidate);
-    const overlay = document.getElementById('drawer-overlay');
-    const box = document.getElementById('detail');
-    if (overlay) overlay.hidden = false;
-    if (box) {
-      box.hidden = false;
-      box.innerHTML = `
-        <h2 class="display-name detail-stock-name">${esc(candidate.name)}</h2>
-        <div class="display-code detail-stock-code">${esc(candidate.code)} · ${esc(candidate.sector_name || '—')}</div>
-        <dl class="kv">
-          <dt>快照</dt><dd>#${snapId || 'DEMO'} @ ${srcTs ? fmtTime(srcTs) : '样板时间'}</dd>
-          <dt>级别</dt><dd>${esc(detailLevel.label)}${candidate.is_formal ? ' · 正式' : ' · 补位'}</dd>
-          <dt>板块</dt><dd>${esc(candidate.sector_name || '—')}</dd>
-          <dt>核心得因</dt><dd>${esc(candidate.explanation || '—')}</dd>
-          <dt>因子 JSON</dt><dd><pre class="table-wrap detail-factor-json">${esc(candidate.payload_json || '')}</pre></dd>
-        </dl>`;
-    }
+async function showDetail(code, state) {
+  const overlay = document.getElementById('drawer-overlay');
+  const box = document.getElementById('detail');
+  detailRequest?.abort();
+  const controller = new AbortController();
+  detailRequest = controller;
+  detailOriginCode = code;
+  box.innerHTML = '<p class="detail-loading" role="status">正在读取候选详情…</p>';
+  box.setAttribute('aria-busy', 'true');
+  if (!overlay.open) overlay.showModal();
+  try {
+    if (state?.snapshot_id == null) throw new Error('候选快照暂不可用，请刷新后再试。');
+    const detail = await apiJson(`/api/v1/candidates/${encodeURIComponent(code)}?snapshot_id=${state.snapshot_id}`, {signal:controller.signal});
+    if (controller.signal.aborted || !overlay.open) return;
+    const candidate = detail.candidate || {};
+    const level = levelMeta(candidate);
+    box.innerHTML = `
+      <h2 class="display-name detail-stock-name">${esc(candidate.name)}</h2>
+      <p class="display-code detail-stock-code">${esc(candidate.code)} · ${esc(candidate.sector_name || '—')}</p>
+      <dl class="kv">
+        <dt>数据时间</dt><dd>${esc(fmtTime(detail.source_ts))}</dd>
+        <dt>候选级别</dt><dd>${esc(level.label)} · ${candidate.is_formal ? '正式观察' : '补位观察'}</dd>
+        <dt>入选原因</dt><dd>${esc(candidate.explanation || '暂无进一步说明')}</dd>
+      </dl>
+      <details class="report-diagnostics"><summary>技术明细</summary>
+        <p>快照 #${esc(detail.snapshot_id)}</p>
+        <pre class="detail-factor-json">${esc(candidate.payload_json || '暂无因子明细')}</pre>
+      </details>`;
+  } catch (error) {
+    if (controller.signal.aborted || !overlay.open) return;
+    box.innerHTML = `<p class="error" role="alert">${error.status === 409 ? '候选列表已更新，请关闭后重新打开。' : '详情暂时无法读取，请重试。'}</p><button type="button" id="detail-retry" class="button-secondary">重新加载</button>`;
+    document.getElementById('detail-retry').addEventListener('click', () => void showDetail(code, state));
+  } finally {
+    if (detailRequest === controller) box.setAttribute('aria-busy', 'false');
   }
-
-  if (snapshotId == null) return;
-
-  apiJson(`/api/v1/candidates/${encodeURIComponent(code)}?snapshot_id=${snapshotId}`)
-    .then((detail) => {
-      renderDetailPayload(detail.candidate || {}, detail.snapshot_id, detail.source_ts);
-    })
-    .catch((error) => {
-      const overlay = document.getElementById('drawer-overlay');
-      const box = document.getElementById('detail');
-      if (overlay) overlay.hidden = false;
-      if (box) {
-        box.hidden = false;
-        box.innerHTML = error.status === 409
-          ? '<p class="weak-note">当前列表已更新：该详情绑定的是旧快照，请重新打开。</p>'
-          : `<p class="error">加载详情失败：${esc(error.message)}</p>`;
-      }
-    });
 }
 
 function loadState() {
@@ -552,25 +564,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   const notifyButton = document.getElementById('notify-btn');
-  notifyButton.hidden = !('Notification' in window);
+  function updateNotificationButton() {
+    notifyButton.hidden = !('Notification' in window);
+    if (notifyButton.hidden) return;
+    notifyButton.disabled = Notification.permission !== 'default';
+    notifyButton.textContent = Notification.permission === 'granted' ? '浏览器通知已开启' : Notification.permission === 'denied' ? '浏览器通知已关闭' : '开启浏览器通知';
+    notifyButton.title = Notification.permission === 'denied' ? '可在浏览器的网站设置中更改通知权限' : '';
+  }
+  updateNotificationButton();
   notifyButton.addEventListener('click', async () => {
     const result = await requestNotificationPermission();
-    notifyButton.textContent = result === 'granted' ? '浏览器通知已开启' : '通知被拒绝';
+    updateNotificationButton();
+    if (result === 'default') notifyButton.textContent = '暂不开启 · 点击重试';
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && activeAutomaticAlert) closeAutomaticAlert();
+    if (event.key === 'Escape' && activeAutomaticAlert && !document.getElementById('drawer-overlay').open) closeAutomaticAlert();
   });
-  document.getElementById('cards').addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-detail]');
-    if (!button) return;
-    apiJson('/api/v1/state').then((state) => showDetail(button.dataset.detail, state));
+  document.getElementById('cards').addEventListener('click', event => {
+    const card = event.target.closest('[data-detail-code]');
+    if (card) void showDetail(card.dataset.detailCode, latestDashboardState);
   });
-  const closeBtn = document.getElementById('close-drawer-btn');
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      const overlay = document.getElementById('drawer-overlay');
-      if (overlay) overlay.hidden = true;
-    });
-  }
+  const overlay = document.getElementById('drawer-overlay');
+  document.getElementById('close-drawer-btn').addEventListener('click', () => overlay.close());
+  overlay.addEventListener('click', event => { if (event.target === overlay) overlay.close(); });
+  overlay.addEventListener('close', () => {
+    detailRequest?.abort();
+    if (detailOriginCode) document.querySelector(`button[data-detail="${CSS.escape(detailOriginCode)}"]`)?.focus({preventScroll:true});
+  });
   setInterval(loadState, 30000);
 });

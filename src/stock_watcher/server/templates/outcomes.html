@@ -4,31 +4,32 @@
 <section class="outcome-page" aria-labelledby="outcome-page-title">
   <header class="outcome-page-header">
     <div>
-      <span class="editorial-kicker">CANDIDATE OUTCOMES</span>
+      <span class="page-eyebrow">固定时点 · 次日同点</span>
       <h1 id="outcome-page-title">次日同点复盘</h1>
       <p class="muted">仅复盘固定 09:45 与 14:45 正式候选；缺少可验证行情的数据不计入统计。</p>
       <p class="outcome-disclaimer">理论复盘未计手续费、滑点及实际成交限制，不构成投资建议。</p>
     </div>
     <div class="outcome-range" role="group" aria-label="复盘范围">
-      <button type="button" data-outcome-range="week">近 1 周</button>
-      <button type="button" data-outcome-range="month" class="is-active">近 1 月</button>
-      <button type="button" data-outcome-range="all">全部</button>
+      <button type="button" aria-pressed="false" data-outcome-range="week">近 1 周</button>
+      <button type="button" aria-pressed="true" data-outcome-range="month" class="is-active">近 1 月</button>
+      <button type="button" aria-pressed="false" data-outcome-range="all">全部</button>
     </div>
   </header>
 
   <p id="outcome-page-status" class="outcome-page-status" role="status" aria-live="polite">正在读取复盘记录…</p>
-  <p id="outcome-page-backfill" class="outcome-backfill muted"></p>
+  <button id="outcome-retry" type="button" class="button-secondary" hidden>重新加载</button>
+  <details class="backfill-details"><summary>历史回补情况</summary><p id="outcome-page-backfill" class="outcome-backfill muted"></p></details>
 
   <section id="outcome-page-summary" class="outcome-summary-grid" aria-label="总体统计"></section>
 
   <div class="outcome-slot-grid">
     <section class="outcome-slot-card" aria-labelledby="morning-title">
-      <span class="editorial-kicker">MORNING SLOT</span>
+
       <h2 id="morning-title">上午档 · 09:45</h2>
       <div id="outcome-morning"></div>
     </section>
     <section class="outcome-slot-card" aria-labelledby="afternoon-title">
-      <span class="editorial-kicker">AFTERNOON SLOT</span>
+
       <h2 id="afternoon-title">下午档 · 14:45</h2>
       <div id="outcome-afternoon"></div>
     </section>
@@ -37,7 +38,7 @@
   <section class="outcome-portfolio" aria-labelledby="portfolio-title">
     <div class="outcome-editorial-header">
       <div>
-        <span class="editorial-kicker">DAILY PORTFOLIO</span>
+
         <h2 id="portfolio-title">日组合</h2>
       </div>
     </div>
@@ -47,14 +48,19 @@
   <section aria-labelledby="records-title">
     <div class="outcome-editorial-header">
       <div>
-        <span class="editorial-kicker">SETTLEMENT LEDGER</span>
+
         <h2 id="records-title">记录明细</h2>
       </div>
     </div>
+    <div class="record-filters">
+      <label>结算状态<select id="record-status"><option value="all">全部记录</option><option value="pending">待结算</option><option value="settled">已结算</option><option value="unavailable">不可验证</option></select></label>
+      <label>查找股票<input id="record-search" type="search" placeholder="名称或代码" maxlength="40"></label>
+    </div>
+    <p id="record-count" class="list-status" role="status"></p>
     <div id="outcome-records" class="outcome-record-grid"></div>
   </section>
 </section>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/outcomes.js?v=1"></script>
+<script type="module" src="/static/outcomes.js?v=2"></script>
 {% endblock %}

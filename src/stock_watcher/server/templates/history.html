@@ -1,17 +1,20 @@
 {% extends "base.html" %}
 {% block title %}历史 · StockWatcher{% endblock %}
 {% block content %}
-<h1>历史观察</h1>
-<section class="filters">
-  <label>日期从 <input id="from" type="date"></label>
-  <label>到 <input id="to" type="date"></label>
-  <label>代码 <input id="code" placeholder="600001.SH"></label>
-  <label class="repeat-filter"><input id="repeat-only" type="checkbox"> 只看紫色标记</label>
-  <button id="filter-btn" type="button">筛选</button>
-</section>
+<header class="page-heading"><div><p class="page-eyebrow">观察档案</p><h1>历史观察</h1><p class="muted">按日期或代码回看候选，保留每一轮的原始顺序。</p></div></header>
+<form id="history-filters" class="filters" aria-label="筛选历史观察">
+  <label>开始日期 <input id="from" type="date"></label>
+  <label>结束日期 <input id="to" type="date"></label>
+  <label>代码 <input id="code" type="search" maxlength="16" placeholder="例如 600001.SH"></label>
+  <label class="repeat-filter"><input id="repeat-only" type="checkbox"> 近期多次出现</label>
+  <button id="filter-btn" type="submit">筛选</button>
+  <button id="reset-filter" class="button-secondary" type="reset">重置</button>
+</form>
+<p id="history-status" class="list-status" role="status">正在读取历史观察…</p>
+<button id="history-retry" class="button-secondary" type="button" hidden>重新加载</button>
 <div id="history" class="table-wrap"></div>
 <button id="load-more" type="button" hidden>加载更多</button>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/history.js?v=2"></script>
+<script type="module" src="/static/history.js?v=3"></script>
 {% endblock %}

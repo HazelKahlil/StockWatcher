@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from stock_watcher.domain import SHANGHAI, OutcomeStatus, build_outcome_review
+from stock_watcher.outcome_display import backfill_status_text
 from stock_watcher.runtime import candidate_outcome_rows
 from stock_watcher.runtime.repeat_tracker import (
     CandidateRepeatTracker,
@@ -134,20 +135,9 @@ def _backfill_payload(value: Any) -> dict[str, Any]:
         "skipped": _nonnegative_count(value.get("skipped")),
         "pending": _nonnegative_count(value.get("pending")),
     }
-    messages = {
-        "running": "正在检查可验证的固定提醒历史……",
-        "completed": "可验证历史已回补；无法验证的数据不计入统计。",
-        "partial": (
-            f"已回补{counts['settled']}笔，"
-            f"{counts['unavailable'] + counts['skipped']}笔因缺少可验证行情未纳入统计。"
-            + (f"另有{counts['pending']}笔等待重试。" if counts["pending"] else "")
-        ),
-        "failed": "历史回补检查失败；从新固定提醒开始记录不受影响。",
-        "pending": "历史回补状态待确认；从新固定提醒开始记录不受影响。",
-    }
     return {
         "status": status,
-        "message": messages[status],
+        "message": backfill_status_text(value),
         **counts,
     }
 

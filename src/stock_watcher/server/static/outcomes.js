@@ -1,4 +1,11 @@
-import { apiJson, esc } from './app.js?v=6';
+import { apiJson, esc } from './app.js?v=7';
+
+import { groupRecords } from './presentation.js?v=1';
+
+let currentRecords = [];
+let requestController = null;
+let requestedRange = 'month';
+let loadedRange = null;
 
 const rangeLabels = { week: '近 1 周', month: '近 1 月', all: '全部' };
 
@@ -30,7 +37,7 @@ function renderStats(targetId, stats) {
   const target = document.getElementById(targetId);
   target.innerHTML = `
     <dl class="outcome-slot-stats">
-      <div><dt>个人胜率</dt><dd>${rate(stats.win_rate)}</dd></div>
+      <div><dt>个股胜率</dt><dd>${rate(stats.win_rate)}</dd></div>
       <div><dt>平均收益</dt><dd data-direction="${direction(stats.average_return_pct)}">${percent(stats.average_return_pct)}</dd></div>
       <div><dt>已结算</dt><dd>${stats.settled_count} / ${stats.total_count}</dd></div>
     </dl>`;
@@ -49,65 +56,90 @@ function renderPortfolios(portfolio) {
       <tbody>${days.map((row) => `
         <tr>
           <td>${esc(row.entry_trade_date)}</td>
-          <td>${row.settled_count} / ${row.total_count}${row.complete ? '' : ' · 未完整'}</td>
+          <td>${row.settled_count} / ${row.total_count} 已结算<small>${row.complete ? '完整 6 笔' : '未形成完整 6 笔组合'}</small></td>
           <td data-direction="${direction(row.average_return_pct)}">${percent(row.average_return_pct)}</td>
           <td>${row.won == null ? '不计入' : (row.won ? '组合胜' : '组合未胜')}</td>
         </tr>`).join('')}</tbody>
     </table>`;
 }
 
-function renderRecords(records) {
+function renderRecords() {
   const target = document.getElementById('outcome-records');
-  if (!records.length) {
-    target.innerHTML = '<p class="muted outcome-empty">暂无次日复盘记录；从下一笔固定提醒开始记录。</p>';
+  const groups = groupRecords(currentRecords, document.getElementById('record-status').value, document.getElementById('record-search').value);
+  const count = groups.reduce((total, [, rows]) => total + rows.length, 0);
+  document.getElementById('record-count').textContent = `显示 ${count} / ${currentRecords.length} 笔 · 明细筛选不改变上方统计范围`;
+  if (!groups.length) {
+    target.innerHTML = `<div class="empty-state"><strong>${currentRecords.length ? '没有匹配的记录' : '暂无次日复盘记录'}</strong>${currentRecords.length ? '换一个名称、代码或结算状态试试。' : '从下一笔固定时点观察开始记录。'}</div>`;
     return;
   }
-  target.innerHTML = records.map((row) => `
-    <article class="outcome-record-card" data-direction="${direction(row.return_pct)}">
-      <div class="outcome-record-head">
-        <span>${esc(row.entry_trade_date)} · ${esc(row.slot)}</span>
-        <strong>TOP ${row.rank}</strong>
-      </div>
-      <h3>${esc(row.name)} <small>${esc(row.code)}</small></h3>
-      <p class="outcome-price-line">${price(row.entry_price)} <span aria-hidden="true">→</span> ${price(row.exit_price)}</p>
-      <p class="outcome-return" data-direction="${direction(row.return_pct)}">${percent(row.return_pct)}</p>
-      <p class="muted">${esc(row.display_reason)}</p>
-    </article>`).join('');
+  target.innerHTML = groups.map(([date, records], index) => `
+    <details class="outcome-day" ${index === 0 ? 'open' : ''}>
+      <summary>${esc(date)} <span>${records.length} 笔 · ${records.filter(row => row.status === 'settled').length} 已结算</span></summary>
+      <div class="outcome-day-grid">${records.map(row => `
+        <article class="outcome-record-card" data-direction="${direction(row.return_pct)}">
+          <div class="outcome-record-head"><span>${esc(row.slot)}</span><strong>TOP ${esc(row.rank)}</strong></div>
+          <h3>${esc(row.name)} <small>${esc(row.code)}</small></h3>
+          <p class="outcome-price-line">${price(row.entry_price)} <span aria-hidden="true">→</span> ${price(row.exit_price)}</p>
+          <p class="outcome-return" data-direction="${direction(row.return_pct)}">${percent(row.return_pct)}</p>
+          <p class="muted">${esc(row.display_reason)}</p>
+        </article>`).join('')}</div>
+    </details>`).join('');
 }
 
 function render(payload) {
   const summary = payload.summary;
   document.getElementById('outcome-page-summary').innerHTML = [
-    metric('个人胜率', rate(summary.win_rate), `已结算 ${summary.settled_count} 笔`),
+    metric('个股胜率', rate(summary.win_rate), `已结算 ${summary.settled_count} 笔`),
     metric('日组合胜率', rate(payload.portfolio.win_rate), `完整组合日 ${payload.portfolio.complete_days} 天`),
     metric('平均收益', percent(summary.average_return_pct), '按已结算候选计算'),
-    metric('已结算 / 总数', `${summary.settled_count} / ${summary.total_count}`, '不可验证数据不计入胜率'),
+    metric('已结算 / 总数', `${summary.settled_count} / ${summary.total_count}`, `${summary.total_count - summary.settled_count} 笔未结算或不可验证`),
   ].join('');
   renderStats('outcome-morning', payload.morning);
   renderStats('outcome-afternoon', payload.afternoon);
   renderPortfolios(payload.portfolio);
-  renderRecords(payload.records || []);
+  currentRecords = payload.records || [];
+  renderRecords();
   document.getElementById('outcome-page-backfill').textContent = payload.backfill.message;
   document.getElementById('outcome-page-status').textContent = `${rangeLabels[payload.range]} · 共 ${summary.total_count} 笔理论记录`;
 }
 
 async function load(rangeName) {
+  requestController?.abort();
+  const controller = new AbortController();
+  requestController = controller;
+  requestedRange = rangeName;
   const status = document.getElementById('outcome-page-status');
-  status.textContent = '正在读取复盘记录…';
+  const page = document.querySelector('.outcome-page');
+  page.setAttribute('aria-busy', 'true');
+  status.dataset.error = 'false';
+  status.textContent = `正在读取${rangeLabels[rangeName]}复盘…`;
+  document.getElementById('outcome-retry').hidden = true;
   try {
-    render(await apiJson(`/api/v1/outcomes?range=${encodeURIComponent(rangeName)}`));
+    const payload = await apiJson(`/api/v1/outcomes?range=${encodeURIComponent(rangeName)}`, {signal:controller.signal});
+    if (controller.signal.aborted) return;
+    render(payload);
+    loadedRange = rangeName;
+    document.querySelectorAll('[data-outcome-range]').forEach(button => {
+      const active = button.dataset.outcomeRange === rangeName;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
   } catch {
-    status.textContent = '复盘暂时无法读取，请稍后重试。';
+    if (controller.signal.aborted) return;
+    status.dataset.error = 'true';
+    status.textContent = `读取失败，${loadedRange ? `仍显示${rangeLabels[loadedRange]}的上次结果` : '暂时没有可展示的结果'}。请重试。`;
+    document.getElementById('outcome-retry').hidden = false;
+  } finally {
+    if (requestController === controller) page.setAttribute('aria-busy', 'false');
   }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('[data-outcome-range]').forEach((button) => {
-    button.addEventListener('click', () => {
-      document.querySelectorAll('[data-outcome-range]').forEach((item) => item.classList.remove('is-active'));
-      button.classList.add('is-active');
-      void load(button.dataset.outcomeRange);
-    });
+  document.querySelectorAll('[data-outcome-range]').forEach(button => {
+    button.addEventListener('click', () => void load(button.dataset.outcomeRange));
   });
+  document.getElementById('record-search').addEventListener('input', renderRecords);
+  document.getElementById('record-status').addEventListener('change', renderRecords);
+  document.getElementById('outcome-retry').addEventListener('click', () => void load(requestedRange));
   void load('month');
 });

@@ -159,3 +159,28 @@ def test_independent_summary_timer_does_not_duplicate_scan_summary(
     assert calls == [now]
     task = desktop.store.get_automation_task(spec.task_key)
     assert task is not None and task["state"] == AutomationTaskState.SUCCEEDED.value
+
+
+def test_candidate_card_keyboard_activation_preserves_code() -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from stock_watcher.ui.main_window import CandidateCard
+
+    app = QApplication.instance() or QApplication([])
+    row = snapshot_from_batch(
+        make_batch(datetime(2026, 9, 3, 10, 0, tzinfo=SHANGHAI)),
+        health=HealthState.HEALTHY,
+    ).candidates[0]
+    card = CandidateCard(1, row)
+    clicked: list[str] = []
+    card.clicked.connect(clicked.append)
+    assert card.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    QTest.keyClick(card, Qt.Key.Key_Tab)
+    assert clicked == []
+    QTest.keyClick(card, Qt.Key.Key_Return)
+    QTest.keyClick(card, Qt.Key.Key_Space)
+    assert clicked == [row.code, row.code]
+    assert row.name in card.accessibleName()
+    card.close()
+    app.processEvents()

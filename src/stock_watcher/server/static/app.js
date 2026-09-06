@@ -188,6 +188,12 @@ export function fmtTime(value) {
 
 // Logout (CSRF protected)
 document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.topbar nav a').forEach(link => {
+    const active = new URL(link.href).pathname === window.location.pathname;
+    link.classList.toggle('active', active);
+    if (active) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
   const button = document.getElementById('logout-btn');
   if (button) {
     button.addEventListener('click', async () => {

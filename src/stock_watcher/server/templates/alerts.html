@@ -1,16 +1,18 @@
 {% extends "base.html" %}
 {% block title %}提醒中心 · StockWatcher{% endblock %}
 {% block content %}
-<h1>提醒中心</h1>
+<header class="page-heading"><div><p class="page-eyebrow">固定观察与盘中异动</p><h1>提醒中心</h1><p class="muted">新提醒在这里更新，历史提醒可随时回看。</p></div></header>
 <section aria-label="实时事件流" id="alerts-live" class="cards" aria-live="polite">
-  <p class="muted">等待实时事件…</p>
+  <p class="muted">正在接收新提醒；历史记录不会重复弹出。</p>
 </section>
 <section aria-label="历史提醒">
   <h2>历史提醒</h2>
+  <p id="alerts-status" class="list-status" role="status">正在读取提醒记录…</p>
+  <button id="alerts-retry" class="button-secondary" type="button" hidden>重新加载</button>
   <div id="alerts-history" class="table-wrap"></div>
   <button id="load-more" type="button" hidden>加载更多</button>
 </section>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/alerts.js"></script>
+<script type="module" src="/static/alerts.js?v=2"></script>
 {% endblock %}

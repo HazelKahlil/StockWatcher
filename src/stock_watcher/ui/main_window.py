@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -64,6 +64,9 @@ class CandidateCard(QFrame):
     ) -> None:
         super().__init__(parent)
         self.code = row.code
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(f"第{rank}只观察，{row.name}，{row.code}，{row.level}")
+        self.setAccessibleDescription("按 Enter 或空格查看候选详情")
         self.setObjectName("candidateCard")
         self.setProperty("level", row.level)
         self.setProperty("previous", previous)
@@ -130,6 +133,13 @@ class CandidateCard(QFrame):
             opacity = QGraphicsOpacityEffect(self)
             opacity.setOpacity(0.62)
             self.setGraphicsEffect(opacity)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit(self.code)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

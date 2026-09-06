@@ -35,13 +35,14 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
     background: #ffffff; border: 1px solid #e1e7ef; border-radius: 14px;
 }
 #summaryCard { padding: 0; }
-#summaryLabel, #candidateMeta, #metricLabel { color: #748296; font-size: 12px; }
+#summaryLabel, #candidateMeta, #metricLabel { color: #627186; font-size: 12px; }
 #summaryValue { font-size: 16px; font-weight: 700; color: #1c2d42; }
 #summaryValue[state="connected"] { color: #17814f; }
 #summaryValue[state="checking"] { color: #1670df; }
 #summaryValue[state="disconnected"] { color: #c63f3f; }
 #summaryValue[state="not_applicable"] { color: #667487; }
 #candidateCard { min-height: 96px; }
+#candidateCard:focus { border: 2px solid #1679ed; background: #f4f8ff; }
 #candidateCard:hover { background: #fbfdff; border-color: #b8d4f8; }
 #cardsScroll, #cardsScroll > QWidget > QWidget, #cardsHost {
     background: transparent; border: none;
@@ -53,7 +54,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #rankBadge, #popupRank { background: #eaf3ff; color: #1670df; border-radius: 19px;
                          font-size: 17px; font-weight: 700; }
 #candidateName, #popupName { font-size: 20px; font-weight: 700; }
-#candidateCode, #popupCode { color: #7d8999; font-size: 14px; }
+#candidateCode, #popupCode { color: #627186; font-size: 14px; }
 #candidateChange, #popupChange { color: #df3c3c; font-size: 22px; font-weight: 750; }
 #candidatePrice { color: #667487; font-size: 14px; }
 #candidateSector { font-size: 16px; font-weight: 600; }
@@ -106,7 +107,7 @@ QMenu { background: #ffffff; border: 1px solid #d9e1ec; padding: 6px; }
 #alertRow { background: #fbfdff; border: 1px solid #e1e8f2; border-radius: 10px; }
 #alertRow:hover { background: #f1f7ff; border-color: #a9c9f2; }
 #popupChange { margin-left: 8px; }
-#popupHint, #historyStatus, #historyNote, #dialogDescription { color: #7b8797; font-size: 13px; }
+#popupHint, #historyStatus, #historyNote, #dialogDescription { color: #627186; font-size: 13px; }
 #popupClose { color: #718096; background: transparent; border: none; padding: 3px 5px; }
 #popupClose:hover { color: #1670df; background: #eef5ff; }
 #dialogTitle { font-size: 25px; font-weight: 750; }
@@ -162,6 +163,16 @@ QTabBar::tab:selected { background: #dfeeff; color: #126bd5; font-weight: 700; }
     border-radius: 8px; padding: 9px 11px; font-size: 12px;
 }
 QPushButton { border-radius: 9px; padding: 9px 14px; }
+QPushButton:focus { border: 2px solid #1679ed; }
+#primaryButton:focus, #secondaryButton:focus, #dangerButton:focus,
+#outcomeRangeButton:focus { border: 2px solid #1679ed; }
+QLineEdit, QDateEdit, QComboBox {
+    background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+    padding: 7px 10px; selection-background-color: #dcecff; selection-color: #172231;
+}
+QLineEdit:focus, QDateEdit:focus, QComboBox:focus { border: 2px solid #1679ed; }
+QScrollArea { background: transparent; }
+
 """
 
 

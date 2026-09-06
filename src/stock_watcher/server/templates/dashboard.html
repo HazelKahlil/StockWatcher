@@ -15,11 +15,12 @@
     <strong id="svc-state" class="status-item-value status-warming">预热</strong>
   </div>
   <div class="status-item">
-    <span class="status-item-label">最后更新时间</span>
-    <strong id="last-scan" class="status-item-value">尚未完成实时扫描</strong>
+    <span class="status-item-label">候选数据时间</span>
+    <strong id="last-scan" class="status-item-value">尚无候选数据</strong>
+    <small id="scan-completed" class="status-secondary"></small>
   </div>
   <div class="status-item status-item-connection">
-    <span class="status-item-label">数据接口连接 / 最近检测</span>
+    <span class="status-item-label">页面连接 / 服务检测</span>
     <span id="ws-state" class="ws-status" data-state="connecting" role="status" aria-label="实时连接状态">
       <span class="status-lamp" aria-hidden="true"></span>
       <span class="status-label">连接中…</span>
@@ -44,6 +45,7 @@
   <div class="hero-header">
     <div>
       <h2 id="top3-title" class="hero-title">当前3只观察｜数据同步中</h2>
+      <p id="candidate-provenance" class="candidate-provenance" role="status"></p>
       <p id="live-clock" class="live-clock" aria-live="off">当前时间同步中…</p>
     </div>
   </div>
@@ -74,7 +76,7 @@
   <div class="hero-action-box">
     <button id="manual-refresh" type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
     <button id="notify-btn" type="button" class="btn-hero hero-action-button btn-notify" hidden>开启浏览器通知</button>
-    <a class="hero-history-button" href="/alerts">历史记录</a>
+    <a class="hero-history-button" href="/history">历史观察</a>
     <div id="refresh-progress" class="refresh-progress" data-state="working" role="status" aria-live="polite" hidden>
       <span class="refresh-spinner" aria-hidden="true"></span>
       <span class="refresh-progress-copy">
@@ -96,25 +98,25 @@
     <a class="outcome-detail-link" href="/outcomes">查看完整复盘</a>
   </div>
   <div id="outcome-summary" class="outcome-summary-grid" aria-live="polite">
-    <article class="outcome-summary-card"><span>个人胜率</span><strong>—</strong></article>
+    <article class="outcome-summary-card"><span>个股胜率</span><strong>—</strong></article>
     <article class="outcome-summary-card"><span>日组合胜率</span><strong>—</strong></article>
     <article class="outcome-summary-card"><span>平均收益</span><strong>—</strong></article>
     <article class="outcome-summary-card"><span>已结算 / 总数</span><strong>—</strong></article>
   </div>
-  <p id="outcome-backfill" class="outcome-backfill muted">历史回补状态待确认；从新固定提醒开始记录不受影响。</p>
+  <details class="backfill-details"><summary>历史回补情况</summary><p id="outcome-backfill" class="outcome-backfill muted">历史回补状态待确认。</p></details>
 </section>
 
 <!-- Slide-out Candidate Inspection Drawer Overlay -->
-<div id="drawer-overlay" class="drawer-overlay" hidden>
+<dialog id="drawer-overlay" class="drawer-overlay" aria-labelledby="drawer-title">
   <div class="drawer-content">
     <div class="drawer-header">
-      <h3 class="drawer-title">候选因子审计</h3>
-      <button id="close-drawer-btn" type="button" class="drawer-close">关闭</button>
+      <h2 id="drawer-title" class="drawer-title">候选详情</h2>
+      <button id="close-drawer-btn" type="button" class="drawer-close" aria-label="关闭候选详情" autofocus>关闭</button>
     </div>
-    <div id="detail"></div>
+    <div id="detail" aria-live="polite"></div>
   </div>
-</div>
+</dialog>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/dashboard.js?v=12"></script>
+<script type="module" src="/static/dashboard.js?v=13"></script>
 {% endblock %}

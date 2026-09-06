@@ -23,6 +23,7 @@ from stock_watcher.domain import (
     SettlementMethod,
     build_outcome_review,
 )
+from stock_watcher.outcome_display import backfill_status_text
 from stock_watcher.runtime import candidate_outcome_rows
 from stock_watcher.storage import SQLiteStore
 
@@ -350,33 +351,7 @@ def _portfolio_text(review: OutcomeReview) -> str:
 
 
 def _backfill_status_text(value: object) -> str:
-    pending = "历史回补状态待确认；从新固定提醒开始记录不受影响。"
-    if not isinstance(value, dict):
-        return pending
-    status = str(value.get("status") or "")
-    if status == "running":
-        return "正在检查可验证的固定提醒历史……"
-    if status == "completed":
-        return "可验证历史已回补；无法验证的数据不计入统计。"
-    if status == "partial":
-        settled = _nonnegative_count(value.get("settled"))
-        unavailable = _nonnegative_count(value.get("unavailable"))
-        skipped = _nonnegative_count(value.get("skipped"))
-        waiting = _nonnegative_count(value.get("pending"))
-        text = f"已回补{settled}笔，{unavailable + skipped}笔因缺少可验证行情未纳入统计。"
-        if waiting:
-            text += f"另有{waiting}笔等待重试。"
-        return text
-    if status == "failed":
-        return "历史回补检查失败；从新固定提醒开始记录不受影响。"
-    return pending
-
-
-def _nonnegative_count(value: object) -> int:
-    try:
-        return max(0, int(str(value or 0)))
-    except ValueError:
-        return 0
+    return backfill_status_text(value)
 
 
 def _safe_reason_text(reason: str | None) -> str:

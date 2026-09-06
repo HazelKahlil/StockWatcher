@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}盘后总结 · StockWatcher{% endblock %}
 {% block content %}
-<h1>盘后总结</h1>
-<div id="summaries" class="cards"></div>
+<header class="page-heading"><div><p class="page-eyebrow">每日回顾</p><h1>盘后总结</h1><p class="muted">回看当天的观察、提醒与数据状态。</p></div></header>
+<p id="summary-status" class="list-status" role="status">正在读取总结…</p>
+<button id="summary-retry" class="button-secondary" type="button" hidden>重新加载</button>
+<div id="summaries" class="report-list"></div>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/summary.js"></script>
+<script type="module" src="/static/summary.js?v=2"></script>
 {% endblock %}
