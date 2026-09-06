@@ -91,7 +91,7 @@ class OutcomeReviewPanel(QWidget):
         for index, card in enumerate(
             (self._overall_win, self._average, self._portfolio, self._settled)
         ):
-            summary.addWidget(card.frame, index // 2, index % 2)
+            summary.addWidget(card.frame, 0, index)
         root.addLayout(summary)
 
         slots = QHBoxLayout()
@@ -108,6 +108,12 @@ class OutcomeReviewPanel(QWidget):
         self._portfolio_days = QLabel("暂无完整交易日组合")
         self._portfolio_days.setObjectName("outcomePortfolioDays")
         self._portfolio_days.setWordWrap(True)
+        self._portfolio_days.setVisible(False)
+        portfolio_toggle = QPushButton("日组合明细")
+        portfolio_toggle.setObjectName("secondaryButton")
+        portfolio_toggle.setCheckable(True)
+        portfolio_toggle.toggled.connect(self._portfolio_days.setVisible)
+        root.addWidget(portfolio_toggle)
         root.addWidget(self._portfolio_days)
 
         records_host = QWidget()
