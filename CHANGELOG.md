@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0-alpha.3 Windows UI sync — 2026-09-07
+
+- Reuse candidate cards and preserve keyboard focus across refreshes.
+- Open manual panels asynchronously; load history/review records in batches.
+- Read reports and prepare/copy PDFs in background daemon tasks, preserving Windows cooperative exit.
+- Align EXE, installer, portable ZIP and Python versions; preserve PR #7 Windows fixes.
+- Physical Windows acceptance and the real 09:45 gate remain open.
+
 ## [0.6.0-alpha.6] - 2026-08-28
 
 ### Fixed

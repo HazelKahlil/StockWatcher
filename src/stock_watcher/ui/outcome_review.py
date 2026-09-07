@@ -58,7 +58,7 @@ class OutcomeReviewWorker(QThread):
 class OutcomeReviewPanel(QWidget):
     ranges = (("近1周", 5), ("近1月", 20), ("全部", None))
 
-    def __init__(self, path: Path, parent: Any = None) -> None:
+    def __init__(self, path: Path, parent: Any = None, *, autoload: bool = True) -> None:
         super().__init__(parent)
         self._path = path
         self._load_generation = 0
@@ -119,6 +119,12 @@ class OutcomeReviewPanel(QWidget):
         self._portfolio_days = QLabel("暂无完整交易日组合")
         self._portfolio_days.setObjectName("outcomePortfolioDays")
         self._portfolio_days.setWordWrap(True)
+        self._portfolio_days.setVisible(False)
+        portfolio_toggle = QPushButton("日组合明细")
+        portfolio_toggle.setObjectName("secondaryButton")
+        portfolio_toggle.setCheckable(True)
+        portfolio_toggle.toggled.connect(self._portfolio_days.setVisible)
+        root.addWidget(portfolio_toggle)
         root.addWidget(self._portfolio_days)
 
         records_host = QWidget()
@@ -141,7 +147,8 @@ class OutcomeReviewPanel(QWidget):
         disclaimer.setObjectName("outcomeDisclaimer")
         disclaimer.setWordWrap(True)
         root.addWidget(disclaimer)
-        self.load(20)
+        if autoload:
+            self.load(20)
 
     def load(self, trading_days: int | None) -> None:
         self._load_generation += 1
@@ -210,8 +217,12 @@ class OutcomeReviewPanel(QWidget):
         review = value if isinstance(value, OutcomeReview) else build_outcome_review(())
         self._render_statistics(review)
         self._clear_records()
-        for record in review.records:
-            self._records.addWidget(_record_card(record))
+        self._pending_records = list(review.records)
+        self._show_more = QPushButton("显示更多记录")
+        self._show_more.setObjectName("secondaryButton")
+        self._show_more.clicked.connect(self._append_records)
+        self._records.addWidget(self._show_more)
+        self._append_records()
         if review.records:
             self._status.setText(f"共 {len(review.records)} 笔理论复盘记录")
         else:
@@ -222,6 +233,13 @@ class OutcomeReviewPanel(QWidget):
             self._records.addWidget(empty)
             self._status.setText("暂无次日复盘记录")
         self._backfill.setText(_backfill_status_text(backfill))
+
+    def _append_records(self) -> None:
+        batch, self._pending_records = self._pending_records[:18], self._pending_records[18:]
+        for record in batch:
+            self._records.insertWidget(self._records.count() - 1, _record_card(record))
+        self._show_more.setVisible(bool(self._pending_records))
+        self._show_more.setText(f"显示更多记录（还有 {len(self._pending_records)} 笔）")
 
     def _render_statistics(self, review: OutcomeReview) -> None:
         self._overall_win.value.setText(_rate(review.overall.win_rate))

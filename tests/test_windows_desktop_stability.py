@@ -158,7 +158,7 @@ def test_native_realtime_sdk_call_has_a_hard_timeout() -> None:
         release.set()
 
 
-@pytest.mark.parametrize("scenario", ("layout", "close", "popup", "settings", "history"))
+@pytest.mark.parametrize("scenario", ("layout", "close", "popup", "settings", "history", "motion"))
 def test_windows_qt_stability_probe_isolated(
     scenario: str,
     tmp_path: Path,

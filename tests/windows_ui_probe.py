@@ -11,13 +11,15 @@ from typing import Any, cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QRect
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QCloseEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QScrollArea
 
 from stock_watcher.domain import HealthState
 from stock_watcher.security import PRIMARY_CREDENTIAL, MemoryCredentialStore
 from stock_watcher.storage import SQLiteStore
+from stock_watcher.ui.daily_summary import DailySummaryDialog
 from stock_watcher.ui.data_source_settings import (
     DataSourceSettingsController,
     DataSourceSettingsDialog,
@@ -25,7 +27,7 @@ from stock_watcher.ui.data_source_settings import (
 from stock_watcher.ui.data_source_status import CredentialTestResult
 from stock_watcher.ui.demo import demo_batch, demo_clock
 from stock_watcher.ui.history import HistoryDialog
-from stock_watcher.ui.main_window import MainWindow, ReplaySession
+from stock_watcher.ui.main_window import CandidateCard, MainWindow, ReplaySession
 from stock_watcher.ui.popup import AlertPopup
 from stock_watcher.ui.presenter import snapshot_from_batch
 
@@ -185,7 +187,68 @@ def _history_close(root: Path) -> None:
         release.set()
 
 
+def _motion(root: Path) -> None:
+    app = _application()
+    window = MainWindow(ReplaySession(root / "motion.sqlite3"))
+    window.show()
+    app.processEvents()
+    cards = window.findChildren(CandidateCard)
+    assert len(cards) == 3
+    first = cards[0]
+    first.setFocus()
+    for _ in range(10):
+        window._refresh()
+    assert window.findChildren(CandidateCard) == cards
+    QTest.keyClick(first, Qt.Key.Key_Return)
+    app.processEvents()
+    detail = window._candidate_detail_dialog
+    assert detail is not None and detail.isVisible()
+    QTest.keyClick(detail, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert window._candidate_detail_dialog is None
+
+    dialog = HistoryDialog(root / "motion.sqlite3")
+    dialog.reject()
+    assert dialog._outcomes._load_generation == 1  # cancelled, never loaded
+    rows = [{"displayed_at": "2026-09-07T09:45:00+08:00"} for _ in range(41)]
+    dialog._on_loaded(rows, "")
+    assert len(dialog._pending_records) == 23
+    dialog._show_more.click()
+    assert len(dialog._pending_records) == 5
+    dialog._show_more.click()
+    assert not dialog._pending_records
+    dialog.reject()
+
+    release = threading.Event()
+    started = threading.Event()
+    original = DailySummaryDialog._load_recent
+
+    def slow_read(self: DailySummaryDialog, path: Path) -> object:
+        started.set()
+        release.wait(3)
+        return []
+
+    setattr(DailySummaryDialog, "_load_recent", slow_read)
+    try:
+        summary = DailySummaryDialog(root / "motion.sqlite3")
+        summary.show()
+        assert started.wait(1)
+        before = time.monotonic()
+        summary.reject()
+        assert time.monotonic() - before < 0.2
+        assert summary._dismissed
+        release.set()
+        QTest.qWait(80)
+        assert not summary.isVisible()
+    finally:
+        release.set()
+        setattr(DailySummaryDialog, "_load_recent", original)
+    window.request_application_exit()
+    app.processEvents()
+
+
 SCENARIOS: dict[str, Callable[[Path], None]] = {
+    "motion": _motion,
     "layout": _layout,
     "close": _close_during_scan,
     "popup": _popup,

@@ -21,7 +21,10 @@ INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _mutex_handle: Any = None
 _instance_lock_path: Path | None = None
 _instance_lock_handle: Any = None
-_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+# WINFUNCTYPE uses stdcall on Windows; the unused fallback permits offline imports.
+_WNDENUMPROC = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(
+    wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+)
 
 
 def _instance_lock_file() -> Path:
