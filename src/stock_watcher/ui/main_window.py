@@ -114,6 +114,7 @@ class CandidateCard(QFrame):
         level.setProperty("level", row.level)
         level.setAlignment(Qt.AlignmentFlag.AlignCenter)
         level.setFixedWidth(112 if row.is_supplement else 58)
+        self._level = level
         layout.addWidget(level)
 
         sector = QVBoxLayout()
@@ -125,6 +126,7 @@ class CandidateCard(QFrame):
         sector.addWidget(sector_label)
         sector.addWidget(sector_value)
         fund = QLabel(row.fund_label)
+        self._fund = fund
         fund.setObjectName("candidateMeta")
         sector.addWidget(fund)
         layout.addLayout(sector, 1)
@@ -138,6 +140,39 @@ class CandidateCard(QFrame):
             opacity = QGraphicsOpacityEffect(self)
             opacity.setOpacity(0.62)
             self.setGraphicsEffect(opacity)
+
+    def update_row(self, rank: int, row: CandidateRow, *, previous: bool) -> None:
+        """Update quote text without destroying the widget (avoids Qt/GIL deadlock)."""
+        self.code = row.code
+        values = {
+            "rankBadge": str(rank),
+            "candidateName": row.name,
+            "candidateCode": row.code,
+            "candidateChange": format_change(row.change_pct),
+            "candidatePrice": f"¥{row.price:.2f}",
+            "candidateSector": row.sector,
+            "levelBadge": "近｜补位观察" if row.is_supplement else row.level,
+        }
+        for label in self.findChildren(QLabel):
+            value = values.get(label.objectName())
+            if value is not None and label.text() != value:
+                label.setText(value)
+        self._fund.setText(row.fund_label)
+        self._level.setFixedWidth(112 if row.is_supplement else 58)
+        for widget in (self, self._level):
+            if widget.property("level") != row.level:
+                widget.setProperty("level", row.level)
+                style = widget.style()
+                style.unpolish(widget)
+                style.polish(widget)
+        if self.property("previous") != previous:
+            self.setProperty("previous", previous)
+            if previous:
+                opacity = QGraphicsOpacityEffect(self)
+                opacity.setOpacity(0.62)
+                self.setGraphicsEffect(opacity)
+            else:
+                self.setGraphicsEffect(None)  # type: ignore[arg-type]
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -419,6 +454,8 @@ class MainWindow(QMainWindow):
         self._mac_window_close_policy = MacWindowClosePolicy()
         self._secondary_notification: Callable[[str, str], bool] | None = None
         self._initial_data_source_dialog: DataSourceSettingsDialog | None = None
+        self._candidate_detail_dialog: CandidateDetailDialog | None = None
+        self._panels: dict[str, QDialog] = {}
         self._closing = False
         self._shutdown_requested = False
         self._shutdown_complete = False
@@ -441,7 +478,11 @@ class MainWindow(QMainWindow):
         if not self.session.is_replay:
             self._summary_check_timer.start()
         self._operation_progress_timer.setInterval(1000)
-        self._operation_progress_timer.timeout.connect(self._refresh)
+        # Labels only. Rebuilding CandidateCard while a QThread worker is alive
+        # can deadlock PySide on the Qt connection mutex (GUI owns the GIL).
+        # The 2026-09-07 hang stack sat in Qt6Widgets + USER32 after a weekend
+        # of 1Hz full-card teardown on 50904b6.
+        self._operation_progress_timer.timeout.connect(self._refresh_chrome)
         if not self.session.is_replay:
             interval_ms = max(5, self.session.auto_check_interval_seconds) * 1000
             self._auto_check_timer.setInterval(interval_ms)
@@ -704,7 +745,8 @@ class MainWindow(QMainWindow):
                 if widget is not None:
                     widget.deleteLater()
 
-    def _refresh(self) -> None:
+    def _refresh_chrome(self) -> None:
+        """Update status text without destroying candidate widgets."""
         snapshot = self._snapshot()
         healthy = snapshot.health is HealthState.HEALTHY
         stopped = snapshot.health is HealthState.STOPPED
@@ -804,25 +846,6 @@ class MainWindow(QMainWindow):
             f"｜最近抓取：{last_fetch}｜{fetch_detail}"
         )
 
-        rows = snapshot.candidates if healthy else snapshot.previous_candidates
-        self._rows = {row.code: row for row in rows}
-        self._clear_cards()
-        for index, row in enumerate(rows[:3], start=1):
-            card = CandidateCard(index, row, previous=not healthy)
-            card.clicked.connect(self._open_detail_by_code)
-            self._cards.addWidget(card)
-        if not rows:
-            empty = QLabel(
-                "正在获取全市场实时数据；完成后这里会立即显示3只观察股票。"
-                if self._active_operation == "fetch"
-                else "完成数据准备后，这里会固定显示3只观察股票。"
-            )
-            empty.setObjectName("emptyState")
-            empty.setMinimumHeight(150)
-            empty.setWordWrap(True)
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._cards.addWidget(empty)
-
         if self.session.is_replay:
             self._primary_action.setText("刷新" if healthy else "恢复回放")
         else:
@@ -855,6 +878,53 @@ class MainWindow(QMainWindow):
         self._status_dot.setProperty("state", dot_state)
         self._repolish(self._status_dot)
         self._footer.setText(self.session.footer_label)
+
+    def _refresh_cards(self) -> None:
+        snapshot = self._snapshot()
+        healthy = snapshot.health is HealthState.HEALTHY
+        rows = snapshot.candidates if healthy else snapshot.previous_candidates
+        self._rows = {row.code: row for row in rows}
+        existing: dict[str, CandidateCard] = {}
+        for index in range(self._cards.count()):
+            item = self._cards.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if isinstance(widget, CandidateCard):
+                existing[widget.code] = widget
+        wanted = {row.code for row in rows[:3]}
+        for index in reversed(range(self._cards.count())):
+            item = self._cards.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is not None and (
+                not isinstance(widget, CandidateCard) or widget.code not in wanted
+            ):
+                self._cards.removeWidget(widget)
+                widget.deleteLater()
+        for index, row in enumerate(rows[:3]):
+            card = existing.get(row.code)
+            if card is None:
+                card = CandidateCard(index + 1, row, previous=not healthy)
+                card.clicked.connect(self._open_detail_by_code)
+                self._cards.insertWidget(index, card)
+            else:
+                card.update_row(index + 1, row, previous=not healthy)
+                if self._cards.indexOf(card) != index:
+                    self._cards.removeWidget(card)
+                    self._cards.insertWidget(index, card)
+        if not rows:
+            empty = QLabel(
+                "正在获取全市场实时数据；完成后这里会立即显示3只观察股票。"
+                if self._active_operation == "fetch"
+                else "完成数据准备后，这里会固定显示3只观察股票。"
+            )
+            empty.setObjectName("emptyState")
+            empty.setMinimumHeight(150)
+            empty.setWordWrap(True)
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._cards.addWidget(empty)
+
+    def _refresh(self) -> None:
+        self._refresh_chrome()
+        self._refresh_cards()
 
     @staticmethod
     def _format_status_time(value: datetime | None) -> str:
@@ -1109,20 +1179,56 @@ class MainWindow(QMainWindow):
 
     def _open_detail_by_code(self, code: str) -> None:
         row = self._rows.get(code)
-        if row is not None:
-            CandidateDetailDialog(row, self).exec()
+        if row is None:
+            return
+        if self._candidate_detail_dialog is not None:
+            self._candidate_detail_dialog.raise_()
+            self._candidate_detail_dialog.activateWindow()
+            return
+        dialog = CandidateDetailDialog(row, self)
+        self._candidate_detail_dialog = dialog
+
+        def finished(_result: int) -> None:
+            self._candidate_detail_dialog = None
+            dialog.deleteLater()
+
+        dialog.finished.connect(finished)
+        dialog.open()
+
+    def _open_panel(self, key: str, factory: Callable[[], QDialog]) -> None:
+        existing = self._panels.get(key)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return
+        dialog = factory()
+        self._panels[key] = dialog
+
+        def finished(_result: int) -> None:
+            self._panels.pop(key, None)
+            dialog.deleteLater()
+
+        dialog.finished.connect(finished)
+        dialog.open()
 
     def _open_history(self) -> None:
-        HistoryDialog(self.session.store.path, self).exec()
+        self._open_panel("history", lambda: HistoryDialog(self.session.store.path, self))
 
     def _open_daily_summary(self) -> None:
-        DailySummaryDialog(self.session.store.path, self).exec()
+        self._open_panel(
+            "summary", lambda: DailySummaryDialog(self.session.store.path, self)
+        )
 
     def _open_developer_info(self) -> None:
-        DeveloperInfoDialog(self.session, self).exec()
+        self._open_panel("info", lambda: DeveloperInfoDialog(self.session, self))
 
     def _open_data_source_settings(self) -> None:
-        DataSourceSettingsDialog(self._data_source_controller(), parent=self).exec()
+        self._open_panel(
+            "settings",
+            lambda: DataSourceSettingsDialog(
+                self._data_source_controller(), parent=self
+            ),
+        )
 
     def _open_initial_data_source_settings(self) -> None:
         """Show the first-run Token page without entering a nested event loop."""
@@ -1173,6 +1279,12 @@ class MainWindow(QMainWindow):
         self._summary_check_timer.stop()
         self._queued_manual_fetch = False
         self._close_popup()
+        if self._candidate_detail_dialog is not None:
+            self._candidate_detail_dialog.close()
+            self._candidate_detail_dialog = None
+        for dialog in list(self._panels.values()):
+            dialog.close()
+        self._panels.clear()
         if self._initial_data_source_dialog is not None:
             self._initial_data_source_dialog.close()
             self._initial_data_source_dialog = None
