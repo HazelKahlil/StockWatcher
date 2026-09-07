@@ -81,6 +81,25 @@ def test_acquire_app_mutex_rejects_a_second_opener(
     assert "taskkill.exe" in installer
 
 
+def test_hang_fix_source_contracts() -> None:
+    source = Path("src/stock_watcher/ui/main_window.py").read_text(encoding="utf-8")
+    refresh = source.split("def _refresh(self)", 1)[1].split("def ", 1)[0]
+    assert "self._operation_progress_timer.timeout.connect(self._refresh_chrome)" in source
+    assert "self._operation_progress_timer.timeout.connect(self._refresh)" not in source
+    assert "CandidateDetailDialog(row, self).exec()" not in source
+    assert "HistoryDialog(self.session.store.path, self).exec()" not in source
+    assert "DailySummaryDialog(self.session.store.path, self).exec()" not in source
+    assert "DeveloperInfoDialog(self.session, self).exec()" not in source
+    assert "DataSourceSettingsDialog(" in source
+    assert "parent=self).exec()" not in source
+    assert "dialog.open()" in source
+    assert "snapshot = self._snapshot()" in refresh
+    assert "self._refresh_chrome(snapshot)" in refresh
+    assert "self._refresh_cards(snapshot)" in refresh
+    assert refresh.count("self._snapshot()") == 1
+    assert "def _apply_previous_style(self, previous: bool)" in source
+
+
 def test_windows_quit_shortcut_includes_ctrl_q() -> None:
     source = Path("src/stock_watcher/ui/main_window.py").read_text(encoding="utf-8")
     assert 'QKeySequence("Ctrl+Q")' in source
@@ -158,7 +177,10 @@ def test_native_realtime_sdk_call_has_a_hard_timeout() -> None:
         release.set()
 
 
-@pytest.mark.parametrize("scenario", ("layout", "close", "popup", "settings", "history"))
+@pytest.mark.parametrize(
+    "scenario",
+    ("layout", "close", "popup", "settings", "history", "cards", "panels", "worker"),
+)
 def test_windows_qt_stability_probe_isolated(
     scenario: str,
     tmp_path: Path,
@@ -173,7 +195,7 @@ def test_windows_qt_stability_probe_isolated(
         check=False,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
     assert completed.returncode == 0, (
         f"scenario={scenario}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
