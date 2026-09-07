@@ -64,3 +64,12 @@ UI implementation and paired installation complete; live-market and Windows acce
 - Preview and Replay processes stopped. Local commits only; no main merge or push; GitHub not synchronized.
 
 Limits: timings measure Qt offscreen unchanged refresh work, not whole-system FPS. Reduced-motion support implemented; user OS settings were not changed for an end-to-end comparison. No market-provider calls. Existing 21 pending settlements, recovery strategy and real trading-day acceptance remain separate work.
+
+
+## 2026-09-07 Mac crash investigation and runtime recovery
+
+At 14:41, production Web/local readiness were 200, all StockWatcher containers healthy, Web snapshot source 14:41:42 advancing. No Mac StockWatcher process existed. The Mac last-startup record identified PID 76548 / source 5f64d0a / event-loop-entered with no normal exit record. Preserved faulthandler output contains native segmentation faults; its latest write time was 10:33. The final stack shows a native worker without Python frame and the main thread in app.exec(), which is insufficient to identify the crashing native call. Do not label this as a network disconnect or claim a proven shared cause with Web SQLite corruption.
+
+Before reopening the existing installed App, saved startup/crash evidence and a SQLite backup under `99-deliveries/StockWatcher-Live-20260907/mac-crash-1442` in the StockWatcher archive. Offline backup integrity OK, FK empty. Reopened the existing 0.7.0-alpha.3 build through the native app interface; UI became HEALTHY with ranked Top3 and database snapshot 99 / source 14:43:48. This restores operation only; native crash root cause remains open, owner Codex. No executable replacement, Windows process operation, or Web restart was performed.
+
+User-supplied Windows report: installed 50904b6 / alpha.6, PID 5912, window unresponsive, heartbeat stopped 09:08, no current-session scan attempts. This establishes an unresponsive UI but does not exclude a blocking provider/database call before attempt persistence. Native hang stacks remain needed; do not attribute it to the uninstalled PR #9 candidate or count downloaded CI artifacts as installed acceptance.
