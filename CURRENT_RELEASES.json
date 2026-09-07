@@ -99,5 +99,19 @@
     "alpha5_fix_branch": "fix/windows-desktop-stability",
     "alpha5_target_machine_validation": false,
     "alpha5_scope": "nonblocking close and cooperative cancellation; bounded native SDK call; Windows font/DPI layout; async settings/history/outcome reads; popup geometry; native Credential Manager enforcement"
-  }
+  },
+  "windows_ui_sync": {
+    "version": "0.7.0-alpha.3",
+    "python_version": "0.7.0a3",
+    "source_branch": "publish/windows-0.7.0-alpha.3",
+    "base_pr": 7,
+    "base_commit": "b2a4f157f27a7e45d71126f7bd81e60c65d1500e",
+    "mac_web_ui_reference": "5f64d0a9ea266196accfc0b9fea1c9fd973bb188",
+    "status": "local_verified_pending_windows_ci",
+    "target_machine_acceptance": false,
+    "real_0945_acceptance": false,
+    "owner": "Codex; target-machine checks by Kahlil Windows agent",
+    "record": "docs/visions/v0.7-windows-ui-sync/README.md"
+  },
+  "historical_snapshot_note": "Other sections retain their dated historical evidence; see windows_ui_sync for the September 7 Windows UI candidate."
 }

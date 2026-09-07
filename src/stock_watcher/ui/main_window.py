@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QMouseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -72,6 +72,9 @@ class CandidateCard(QFrame):
     ) -> None:
         super().__init__(parent)
         self.code = row.code
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(f"第{rank}只观察，{row.name}，{row.code}，{row.level}")
+        self.setAccessibleDescription("按 Enter 或空格查看候选详情")
         self.setObjectName("candidateCard")
         self.setProperty("level", row.level)
         self.setProperty("previous", previous)
@@ -124,7 +127,9 @@ class CandidateCard(QFrame):
         sector_value.setObjectName("candidateSector")
         sector.addWidget(sector_label)
         sector.addWidget(sector_value)
+        self._level = level
         fund = QLabel(row.fund_label)
+        self._fund = fund
         fund.setObjectName("candidateMeta")
         sector.addWidget(fund)
         layout.addLayout(sector, 1)
@@ -138,6 +143,42 @@ class CandidateCard(QFrame):
             opacity = QGraphicsOpacityEffect(self)
             opacity.setOpacity(0.62)
             self.setGraphicsEffect(opacity)
+
+    def update_row(self, rank: int, row: CandidateRow, *, previous: bool) -> None:
+        """Keep controls and keyboard focus alive across quote refreshes."""
+        self.setAccessibleName(f"第{rank}只观察，{row.name}，{row.code}，{row.level}")
+        values = {
+            "rankBadge": str(rank), "candidateName": row.name,
+            "candidateCode": row.code, "candidateChange": format_change(row.change_pct),
+            "candidatePrice": f"¥{row.price:.2f}", "candidateSector": row.sector,
+            "levelBadge": "近｜补位观察" if row.is_supplement else row.level,
+        }
+        for label in self.findChildren(QLabel):
+            value = values.get(label.objectName())
+            if value is not None and label.text() != value:
+                label.setText(value)
+        self._fund.setText(row.fund_label)
+        self._level.setFixedWidth(112 if row.is_supplement else 58)
+        for widget in (self, self._level):
+            if widget.property("level") != row.level:
+                widget.setProperty("level", row.level)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+        if self.property("previous") != previous:
+            self.setProperty("previous", previous)
+            if previous:
+                opacity = QGraphicsOpacityEffect(self)
+                opacity.setOpacity(0.62)
+                self.setGraphicsEffect(opacity)
+            else:
+                self.setGraphicsEffect(None)  # type: ignore[arg-type]
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit(self.code)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -411,6 +452,8 @@ class MainWindow(QMainWindow):
         self._popup: AlertPopup | None = None
         self._popup_generation = 0
         self._rows: dict[str, CandidateRow] = {}
+        self._panels: dict[str, QDialog] = {}
+        self._candidate_detail_dialog: CandidateDetailDialog | None = None
         self._last_alert_signature: tuple[str, ...] | None = None
         self._operation_thread: QThread | None = None
         self._operation_worker: _SessionOperationWorker | None = None
@@ -804,13 +847,36 @@ class MainWindow(QMainWindow):
             f"｜最近抓取：{last_fetch}｜{fetch_detail}"
         )
 
+        focused = QApplication.focusWidget()
+        focused_code = focused.code if isinstance(focused, CandidateCard) else None
         rows = snapshot.candidates if healthy else snapshot.previous_candidates
         self._rows = {row.code: row for row in rows}
-        self._clear_cards()
-        for index, row in enumerate(rows[:3], start=1):
-            card = CandidateCard(index, row, previous=not healthy)
-            card.clicked.connect(self._open_detail_by_code)
-            self._cards.addWidget(card)
+        existing = {}
+        for index in range(self._cards.count()):
+            item = self._cards.itemAt(index)
+            widget = item.widget() if item else None
+            if isinstance(widget, CandidateCard):
+                existing[widget.code] = widget
+        wanted = {row.code for row in rows[:3]}
+        for index in reversed(range(self._cards.count())):
+            item = self._cards.itemAt(index)
+            widget = item.widget() if item else None
+            if widget is not None and (
+                not isinstance(widget, CandidateCard) or widget.code not in wanted
+            ):
+                self._cards.removeWidget(widget)
+                widget.deleteLater()
+        for index, row in enumerate(rows[:3]):
+            card = existing.get(row.code)
+            if card is None:
+                card = CandidateCard(index + 1, row, previous=not healthy)
+                card.clicked.connect(self._open_detail_by_code)
+                self._cards.insertWidget(index, card)
+            else:
+                card.update_row(index + 1, row, previous=not healthy)
+                if self._cards.indexOf(card) != index:
+                    self._cards.removeWidget(card)
+                    self._cards.insertWidget(index, card)
         if not rows:
             empty = QLabel(
                 "正在获取全市场实时数据；完成后这里会立即显示3只观察股票。"
@@ -822,6 +888,9 @@ class MainWindow(QMainWindow):
             empty.setWordWrap(True)
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._cards.addWidget(empty)
+
+        if focused_code is not None and self.isActiveWindow():
+            self._focus_candidate(focused_code)
 
         if self.session.is_replay:
             self._primary_action.setText("刷新" if healthy else "恢复回放")
@@ -1107,22 +1176,66 @@ class MainWindow(QMainWindow):
             self._queued_manual_fetch = False
             self._manual_fetch_tq()
 
+    def _focus_candidate(self, code: str) -> None:
+        for index in range(self._cards.count()):
+            item = self._cards.itemAt(index)
+            card = item.widget() if item is not None else None
+            if isinstance(card, CandidateCard) and card.code == code:
+                card.setFocus(Qt.FocusReason.OtherFocusReason)
+                return
+
     def _open_detail_by_code(self, code: str) -> None:
         row = self._rows.get(code)
-        if row is not None:
-            CandidateDetailDialog(row, self).exec()
+        if row is None:
+            return
+        if self._candidate_detail_dialog is not None:
+            self._candidate_detail_dialog.raise_()
+            self._candidate_detail_dialog.activateWindow()
+            return
+        dialog = CandidateDetailDialog(row, self)
+        self._candidate_detail_dialog = dialog
+
+        def finished(_result: int) -> None:
+            self._candidate_detail_dialog = None
+            dialog.deleteLater()
+            self._focus_candidate(code)
+
+        dialog.finished.connect(finished)
+        dialog.open()
+
+    def _open_panel(self, key: str, factory: Callable[[], QDialog]) -> None:
+        existing = self._panels.get(key)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return
+        focus = QApplication.focusWidget()
+        dialog = factory()
+        self._panels[key] = dialog
+
+        def finished(_result: int) -> None:
+            self._panels.pop(key, None)
+            dialog.deleteLater()
+            if focus is not None and focus in self.findChildren(QWidget):
+                focus.setFocus(Qt.FocusReason.OtherFocusReason)
+
+        dialog.finished.connect(finished)
+        dialog.open()
 
     def _open_history(self) -> None:
-        HistoryDialog(self.session.store.path, self).exec()
+        self._open_panel("history", lambda: HistoryDialog(self.session.store.path, self))
 
     def _open_daily_summary(self) -> None:
-        DailySummaryDialog(self.session.store.path, self).exec()
+        self._open_panel("summary", lambda: DailySummaryDialog(self.session.store.path, self))
 
     def _open_developer_info(self) -> None:
-        DeveloperInfoDialog(self.session, self).exec()
+        self._open_panel("info", lambda: DeveloperInfoDialog(self.session, self))
 
     def _open_data_source_settings(self) -> None:
-        DataSourceSettingsDialog(self._data_source_controller(), parent=self).exec()
+        self._open_panel(
+            "settings",
+            lambda: DataSourceSettingsDialog(self._data_source_controller(), parent=self)
+        )
 
     def _open_initial_data_source_settings(self) -> None:
         """Show the first-run Token page without entering a nested event loop."""

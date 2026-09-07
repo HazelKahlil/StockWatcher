@@ -287,6 +287,7 @@ def test_daily_summary_dialog_shows_full_market_review_copy(tmp_path: Path) -> N
     )
 
     dialog = DailySummaryDialog(store.path)
+    _wait_for_summary(dialog)
     copy = " ".join(label.text() for label in dialog.findChildren(QLabel))
 
     assert "今日A股盘后回顾" in copy
@@ -332,6 +333,7 @@ def test_daily_summary_dialog_lists_only_recent_month_and_builds_pdf(
         )
 
     dialog = DailySummaryDialog(store.path, today=date(2026, 7, 31))
+    _wait_for_summary(dialog)
     selector = dialog.findChild(QComboBox, "reportDateSelector")
 
     assert selector is not None
@@ -440,3 +442,13 @@ def test_failed_keyring_replacement_preserves_previous_credential() -> None:
     store.reject_writes = True
     assert not controller.commit_candidate("super", confirmed=True)
     assert store.get(SUPER_CREDENTIAL) == "previous-secret"
+
+
+def _wait_for_summary(dialog: DailySummaryDialog) -> None:
+    from PySide6.QtTest import QTest
+
+    for _ in range(200):
+        if dialog.date_selector.count() > 0:
+            return
+        QTest.qWait(10)
+    raise AssertionError("summary background load did not finish")

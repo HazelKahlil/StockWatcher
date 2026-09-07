@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -48,7 +49,10 @@ SUMMARY = {
 
 @pytest.fixture()
 def live_fixture_db(tmp_path: Path) -> tuple[SQLiteStore, dict[str, object]]:
-    live = Path.home() / "Library/Application Support/StockWatcher/data/stock-watcher.sqlite3"
+    fixture = os.environ.get("STOCKWATCHER_AUG06_FIXTURE")
+    if not fixture:
+        pytest.skip("Set STOCKWATCHER_AUG06_FIXTURE to the archived August 6 fixture")
+    live = Path(fixture)
     if not live.is_file():
         pytest.skip(f"8-06 live SQLite fixture is unavailable: {live}")
     db_path = tmp_path / "fixture.sqlite3"
