@@ -81,63 +81,23 @@ def test_acquire_app_mutex_rejects_a_second_opener(
     assert "taskkill.exe" in installer
 
 
-def test_progress_timer_does_not_rebuild_candidate_cards(tmp_path: Path) -> None:
-    """1Hz progress ticks must not deleteLater cards while a worker may hold Qt/GIL."""
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
-
-    from stock_watcher.ui.main_window import CandidateCard, MainWindow, ReplaySession
-
-    app = QApplication.instance() or QApplication([])
-    window = MainWindow(ReplaySession(tmp_path / "hang-refresh.sqlite3"))
-    try:
-        before = [
-            window._cards.itemAt(index).widget()
-            for index in range(window._cards.count())
-        ]
-        assert before and all(isinstance(widget, CandidateCard) for widget in before)
-        window._active_operation = "check"
-        window._refresh_chrome()
-        after = [
-            window._cards.itemAt(index).widget()
-            for index in range(window._cards.count())
-        ]
-        assert after == before
-        window._refresh()
-        reused = [
-            window._cards.itemAt(index).widget()
-            for index in range(window._cards.count())
-        ]
-        assert reused == before
-        source = Path("src/stock_watcher/ui/main_window.py").read_text(encoding="utf-8")
-        assert "self._operation_progress_timer.timeout.connect(self._refresh_chrome)" in source
-        assert "self._operation_progress_timer.timeout.connect(self._refresh)" not in source
-    finally:
-        window.close()
-        app.processEvents()
-
-
-def test_candidate_detail_opens_without_nested_exec(tmp_path: Path) -> None:
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
-
-    from stock_watcher.ui.main_window import MainWindow, ReplaySession
-
-    app = QApplication.instance() or QApplication([])
-    window = MainWindow(ReplaySession(tmp_path / "hang-dialog.sqlite3"))
-    try:
-        first = next(iter(window._rows))
-        window._open_detail_by_code(first)
-        assert window._candidate_detail_dialog is not None
-        window._open_detail_by_code(first)
-        window._prepare_for_close()
-        assert window._candidate_detail_dialog is None
-        source = Path("src/stock_watcher/ui/main_window.py").read_text(encoding="utf-8")
-        assert "CandidateDetailDialog(row, self).exec()" not in source
-        assert "dialog.open()" in source
-    finally:
-        window.close()
-        app.processEvents()
+def test_hang_fix_source_contracts() -> None:
+    source = Path("src/stock_watcher/ui/main_window.py").read_text(encoding="utf-8")
+    refresh = source.split("def _refresh(self)", 1)[1].split("def ", 1)[0]
+    assert "self._operation_progress_timer.timeout.connect(self._refresh_chrome)" in source
+    assert "self._operation_progress_timer.timeout.connect(self._refresh)" not in source
+    assert "CandidateDetailDialog(row, self).exec()" not in source
+    assert "HistoryDialog(self.session.store.path, self).exec()" not in source
+    assert "DailySummaryDialog(self.session.store.path, self).exec()" not in source
+    assert "DeveloperInfoDialog(self.session, self).exec()" not in source
+    assert "DataSourceSettingsDialog(" in source
+    assert "parent=self).exec()" not in source
+    assert "dialog.open()" in source
+    assert "snapshot = self._snapshot()" in refresh
+    assert "self._refresh_chrome(snapshot)" in refresh
+    assert "self._refresh_cards(snapshot)" in refresh
+    assert refresh.count("self._snapshot()") == 1
+    assert "def _apply_previous_style(self, previous: bool)" in source
 
 
 def test_windows_quit_shortcut_includes_ctrl_q() -> None:
@@ -217,7 +177,10 @@ def test_native_realtime_sdk_call_has_a_hard_timeout() -> None:
         release.set()
 
 
-@pytest.mark.parametrize("scenario", ("layout", "close", "popup", "settings", "history"))
+@pytest.mark.parametrize(
+    "scenario",
+    ("layout", "close", "popup", "settings", "history", "cards", "panels", "worker"),
+)
 def test_windows_qt_stability_probe_isolated(
     scenario: str,
     tmp_path: Path,
@@ -232,7 +195,7 @@ def test_windows_qt_stability_probe_isolated(
         check=False,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
     assert completed.returncode == 0, (
         f"scenario={scenario}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"

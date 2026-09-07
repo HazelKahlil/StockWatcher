@@ -136,10 +136,20 @@ class CandidateCard(QFrame):
         layout.addWidget(arrow)
         for child in self.findChildren(QLabel):
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._apply_previous_style(previous)
+
+    def _apply_previous_style(self, previous: bool) -> None:
+        """Always restyle stale/healthy chrome; Qt bool properties are not comparable."""
+        self.setProperty("previous", previous)
         if previous:
             opacity = QGraphicsOpacityEffect(self)
             opacity.setOpacity(0.62)
             self.setGraphicsEffect(opacity)
+        else:
+            self.setGraphicsEffect(None)  # type: ignore[arg-type]
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
 
     def update_row(self, rank: int, row: CandidateRow, *, previous: bool) -> None:
         """Update quote text without destroying the widget (avoids Qt/GIL deadlock)."""
@@ -160,19 +170,11 @@ class CandidateCard(QFrame):
         self._fund.setText(row.fund_label)
         self._level.setFixedWidth(112 if row.is_supplement else 58)
         for widget in (self, self._level):
-            if widget.property("level") != row.level:
-                widget.setProperty("level", row.level)
-                style = widget.style()
-                style.unpolish(widget)
-                style.polish(widget)
-        if self.property("previous") != previous:
-            self.setProperty("previous", previous)
-            if previous:
-                opacity = QGraphicsOpacityEffect(self)
-                opacity.setOpacity(0.62)
-                self.setGraphicsEffect(opacity)
-            else:
-                self.setGraphicsEffect(None)  # type: ignore[arg-type]
+            widget.setProperty("level", row.level)
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+        self._apply_previous_style(previous)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -745,9 +747,10 @@ class MainWindow(QMainWindow):
                 if widget is not None:
                     widget.deleteLater()
 
-    def _refresh_chrome(self) -> None:
+    def _refresh_chrome(self, snapshot: UiSnapshot | None = None) -> None:
         """Update status text without destroying candidate widgets."""
-        snapshot = self._snapshot()
+        if snapshot is None:
+            snapshot = self._snapshot()
         healthy = snapshot.health is HealthState.HEALTHY
         stopped = snapshot.health is HealthState.STOPPED
         connection = self.session.connection_state
@@ -879,8 +882,9 @@ class MainWindow(QMainWindow):
         self._repolish(self._status_dot)
         self._footer.setText(self.session.footer_label)
 
-    def _refresh_cards(self) -> None:
-        snapshot = self._snapshot()
+    def _refresh_cards(self, snapshot: UiSnapshot | None = None) -> None:
+        if snapshot is None:
+            snapshot = self._snapshot()
         healthy = snapshot.health is HealthState.HEALTHY
         rows = snapshot.candidates if healthy else snapshot.previous_candidates
         self._rows = {row.code: row for row in rows}
@@ -923,8 +927,9 @@ class MainWindow(QMainWindow):
             self._cards.addWidget(empty)
 
     def _refresh(self) -> None:
-        self._refresh_chrome()
-        self._refresh_cards()
+        snapshot = self._snapshot()
+        self._refresh_chrome(snapshot)
+        self._refresh_cards(snapshot)
 
     @staticmethod
     def _format_status_time(value: datetime | None) -> str:
