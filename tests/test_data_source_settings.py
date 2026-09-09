@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
 )
@@ -446,8 +447,15 @@ def test_failed_keyring_replacement_preserves_previous_credential() -> None:
     assert store.get(SUPER_CREDENTIAL) == "previous-secret"
 
 
-def test_token_save_stays_clickable_during_pro_cooldown() -> None:
+def test_token_save_stays_clickable_during_pro_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = application()
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
     budget = ApplicationRequestBudget()
     budget.pause_for(60.0, lane="pro")
     controller = DataSourceSettingsController(
@@ -467,8 +475,8 @@ def test_token_save_stays_clickable_during_pro_cooldown() -> None:
     ):
         app.processEvents()
     assert editor.save_button.isEnabled()
-    assert "秒后再试" in editor.status.text()
-    assert "当前 Token 未被替换" in editor.permission.text()
+    assert "可确认保存" in editor.status.text() or "可安全保存" in editor.status.text()
+    assert "限流不是" in editor.permission.text()
     dialog.close()
     app.processEvents()
 

@@ -107,7 +107,7 @@ def test_hang_fix_source_contracts() -> None:
     )
     assert "self._test_watchdog" in settings
     assert 'cooldown_remaining(lane="pro")' in status
-    assert "秒后再试" in status
+    assert "_accept_rate_limited_token" in status
     assert "Sleep happens outside the lock" in budget
 
 

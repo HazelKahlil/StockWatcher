@@ -181,16 +181,70 @@ def test_lightweight_tester_does_not_wait_out_pro_cooldown(
         lambda *_args, **_kwargs: RecordingPro(),
     )
 
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareNativeRealtimeTester",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            test=lambda *_test_args, **_test_kwargs: CredentialTestResult(
+                success=False,
+                tested_at=fixed_now(),
+                status_text="realtime skipped",
+                permission_summary="skipped",
+                expires_at="未知",
+                safe_reason="rate_limited",
+            )
+        ),
+    )
+
     outcome = LightweightCredentialTester(request_budget=budget).test(
         primary_profile(),
         "candidate-token",
     )
 
-    assert not outcome.success
+    assert outcome.success
     assert outcome.safe_reason == "rate_limited"
-    assert "请 60 秒后再试" in outcome.status_text
+    assert "可确认保存" in outcome.status_text
+    assert "无需每 60 秒重试" in outcome.permission_summary
     assert calls == []
     assert manual.sleeps == []
+
+
+def test_lightweight_tester_accepts_pro_429_when_realtime_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RateLimitedPro:
+        def execute(self, request: TransportRequest) -> object:
+            raise ProviderError(ProviderFailureReason.RATE_LIMITED, retry_after_seconds=60.0)
+
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareSdkProTransport",
+        lambda *_args, **_kwargs: RateLimitedPro(),
+    )
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareNativeRealtimeTester",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            test=lambda *_test_args, **_test_kwargs: CredentialTestResult(
+                success=True,
+                tested_at=fixed_now(),
+                status_text="realtime ok",
+                permission_summary="ok",
+                expires_at="未知",
+                realtime_status="available",
+                realtime_records=1,
+                realtime_source_timestamp_present=True,
+                realtime_route="native_realtime",
+            )
+        ),
+    )
+
+    outcome = LightweightCredentialTester().test(primary_profile(), "candidate-token")
+
+    assert outcome.success
+    assert outcome.safe_reason == "rate_limited"
+    assert "原生实时可用" in outcome.status_text
+    assert outcome.realtime_records == 1
 
 
 def test_budget_cooldown_remaining_stays_responsive_during_acquire_wait() -> None:

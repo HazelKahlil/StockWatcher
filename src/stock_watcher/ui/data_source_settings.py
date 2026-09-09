@@ -613,10 +613,15 @@ class _PrimaryEditor(QGroupBox):
         self.last_test.setText(result.tested_at.strftime("%Y-%m-%d %H:%M:%S"))
         self.permission.setText(result.permission_summary)
         if result.success:
+            confirm_text = (
+                "基础接口正在限流，但 Token 未被拒绝。确认保存并在后台恢复检测吗？"
+                if result.safe_reason == "rate_limited"
+                else "连接测试通过。确认安全保存并重新预热实时数据吗？"
+            )
             answer = QMessageBox.question(
                 self,
                 "确认保存 Token",
-                "连接测试通过。确认安全保存并重新预热实时数据吗？",
+                confirm_text,
             )
             if self.controller.commit_candidate(
                 "primary",

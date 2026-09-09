@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -207,12 +206,12 @@ class TushareNativeRealtimeTester:
 
 @dataclass(slots=True)
 class LightweightCredentialTester:
-    """Validate only one low-cost base call before atomically saving a Token.
+    """Validate a candidate Token with one Pro call before an atomic save.
 
-    The product route intentionally does *not* test stock lists, sectors,
-    historical minutes or realtime here.  Those independent capabilities are
-    checked after the Token is safely stored, so a temporary 429 cannot turn a
-    valid replacement into a destructive failed save.
+    A 429 is not a bad Token.  Ordinary Pro can stay rate-limited while the
+    approved native realtime route still works, so the first-run save must not
+    enter a 60-second retry loop.  Stock lists, sectors and history stay in
+    the post-save capability checks.
     """
 
     clock: type[datetime] = datetime
@@ -225,14 +224,7 @@ class LightweightCredentialTester:
         if self.request_budget is not None:
             remaining = self.request_budget.cooldown_remaining(lane="pro")
             if remaining > 0:
-                return CredentialTestResult(
-                    success=False,
-                    tested_at=tested_at,
-                    status_text=_rate_limited_status(remaining),
-                    permission_summary="基础连接未通过；当前 Token 未被替换。",
-                    expires_at="未知",
-                    safe_reason=ProviderFailureReason.RATE_LIMITED.value,
-                )
+                return self._accept_rate_limited_token(secret, tested_at)
         start = tested_at - timedelta(days=7)
         try:
             result = TushareSdkProTransport(
@@ -253,13 +245,12 @@ class LightweightCredentialTester:
                 )
             )
         except ProviderError as exc:
-            status_text = exc.public_message
             if exc.reason is ProviderFailureReason.RATE_LIMITED:
-                status_text = _rate_limited_status(exc.retry_after_seconds)
+                return self._accept_rate_limited_token(secret, tested_at)
             return CredentialTestResult(
                 success=False,
                 tested_at=tested_at,
-                status_text=status_text,
+                status_text=exc.public_message,
                 permission_summary="基础连接未通过；当前 Token 未被替换。",
                 expires_at="未知",
                 safe_reason=exc.reason.value,
@@ -273,16 +264,42 @@ class LightweightCredentialTester:
             realtime_route="native_realtime",
         )
 
+    def _accept_rate_limited_token(
+        self,
+        secret: str,
+        tested_at: datetime,
+    ) -> CredentialTestResult:
+        realtime = TushareNativeRealtimeTester(clock=self.clock).test(
+            NativeRealtimeProfile(),
+            secret,
+        )
+        if realtime.success:
+            return CredentialTestResult(
+                success=True,
+                tested_at=tested_at,
+                status_text="基础接口限流，原生实时可用，可安全保存 Token。",
+                permission_summary="限流不是 Token 无效。保存后基础数据将在冷却结束后后台检测。",
+                expires_at="未知",
+                safe_reason=ProviderFailureReason.RATE_LIMITED.value,
+                realtime_status=realtime.realtime_status,
+                realtime_records=realtime.realtime_records,
+                realtime_source_timestamp_present=realtime.realtime_source_timestamp_present,
+                realtime_route="native_realtime",
+            )
+        return CredentialTestResult(
+            success=True,
+            tested_at=tested_at,
+            status_text="基础接口限流，Token 未被拒绝，可确认保存。",
+            permission_summary="限流不是凭据错误。保存后将在后台分项检测，无需每 60 秒重试。",
+            expires_at="未知",
+            safe_reason=ProviderFailureReason.RATE_LIMITED.value,
+            realtime_status=realtime.realtime_status,
+            realtime_route="native_realtime",
+        )
+
 
 class TusharePrimaryCredentialTester(LightweightCredentialTester):
     """Backward-compatible name for the one-call lightweight tester."""
-
-
-def _rate_limited_status(seconds: float | None) -> str:
-    if seconds is None or seconds <= 0:
-        return ProviderError(ProviderFailureReason.RATE_LIMITED).public_message
-    wait = max(1, int(math.ceil(seconds)))
-    return f"接口访问过于频繁，请 {wait} 秒后再试。"
 
 
 def _permission_summary(profile_name: str, realtime_status: str) -> str:
