@@ -98,6 +98,17 @@ def test_hang_fix_source_contracts() -> None:
     assert "self._refresh_cards(snapshot)" in refresh
     assert refresh.count("self._snapshot()") == 1
     assert "def _apply_previous_style(self, previous: bool)" in source
+    settings = Path("src/stock_watcher/ui/data_source_settings.py").read_text(
+        encoding="utf-8"
+    )
+    status = Path("src/stock_watcher/ui/data_source_status.py").read_text(encoding="utf-8")
+    budget = Path("src/stock_watcher/providers/tushare/rate_limit.py").read_text(
+        encoding="utf-8"
+    )
+    assert "self._test_watchdog" in settings
+    assert 'cooldown_remaining(lane="pro")' in status
+    assert "秒后再试" in status
+    assert "Sleep happens outside the lock" in budget
 
 
 def test_windows_quit_shortcut_includes_ctrl_q() -> None:

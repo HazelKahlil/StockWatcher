@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
 from stock_watcher.config import HttpProfile, NativeRealtimeProfile
-from stock_watcher.providers.tushare.errors import ProviderError
+from stock_watcher.providers.tushare.errors import ProviderError, ProviderFailureReason
 from stock_watcher.providers.tushare.fast_transport import FastTransport
 from stock_watcher.providers.tushare.http_transport import BaseHttpTransport
 from stock_watcher.providers.tushare.native_realtime_transport import (
@@ -221,6 +222,17 @@ class LightweightCredentialTester:
         if profile.name != "tushare_15000":
             return TushareCredentialTester(clock=self.clock).test(profile, secret)
         tested_at = self.clock.now().astimezone()
+        if self.request_budget is not None:
+            remaining = self.request_budget.cooldown_remaining(lane="pro")
+            if remaining > 0:
+                return CredentialTestResult(
+                    success=False,
+                    tested_at=tested_at,
+                    status_text=_rate_limited_status(remaining),
+                    permission_summary="基础连接未通过；当前 Token 未被替换。",
+                    expires_at="未知",
+                    safe_reason=ProviderFailureReason.RATE_LIMITED.value,
+                )
         start = tested_at - timedelta(days=7)
         try:
             result = TushareSdkProTransport(
@@ -241,10 +253,13 @@ class LightweightCredentialTester:
                 )
             )
         except ProviderError as exc:
+            status_text = exc.public_message
+            if exc.reason is ProviderFailureReason.RATE_LIMITED:
+                status_text = _rate_limited_status(exc.retry_after_seconds)
             return CredentialTestResult(
                 success=False,
                 tested_at=tested_at,
-                status_text=exc.public_message,
+                status_text=status_text,
                 permission_summary="基础连接未通过；当前 Token 未被替换。",
                 expires_at="未知",
                 safe_reason=exc.reason.value,
@@ -261,6 +276,13 @@ class LightweightCredentialTester:
 
 class TusharePrimaryCredentialTester(LightweightCredentialTester):
     """Backward-compatible name for the one-call lightweight tester."""
+
+
+def _rate_limited_status(seconds: float | None) -> str:
+    if seconds is None or seconds <= 0:
+        return ProviderError(ProviderFailureReason.RATE_LIMITED).public_message
+    wait = max(1, int(math.ceil(seconds)))
+    return f"接口访问过于频繁，请 {wait} 秒后再试。"
 
 
 def _permission_summary(profile_name: str, realtime_status: str) -> str:

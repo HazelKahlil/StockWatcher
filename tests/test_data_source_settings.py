@@ -26,6 +26,9 @@ from stock_watcher.providers.tushare import (  # noqa: E402
     ProviderError,
     ProviderFailureReason,
 )
+from stock_watcher.providers.tushare.rate_limit import (  # noqa: E402
+    ApplicationRequestBudget,
+)
 from stock_watcher.security import (  # noqa: E402
     FAST_CREDENTIAL,
     SUPER_CREDENTIAL,
@@ -41,6 +44,7 @@ from stock_watcher.ui.data_source_settings import (  # noqa: E402
 )
 from stock_watcher.ui.data_source_status import (  # noqa: E402
     CredentialTestResult,
+    LightweightCredentialTester,
     TushareCredentialTester,
 )
 from stock_watcher.ui.main_window import MainWindow  # noqa: E402
@@ -440,3 +444,67 @@ def test_failed_keyring_replacement_preserves_previous_credential() -> None:
     store.reject_writes = True
     assert not controller.commit_candidate("super", confirmed=True)
     assert store.get(SUPER_CREDENTIAL) == "previous-secret"
+
+
+def test_token_save_stays_clickable_during_pro_cooldown() -> None:
+    app = application()
+    budget = ApplicationRequestBudget()
+    budget.pause_for(60.0, lane="pro")
+    controller = DataSourceSettingsController(
+        store=MemoryCredentialStore(),
+        tester=LightweightCredentialTester(request_budget=budget),
+        request_budget=budget,
+    )
+    dialog = DataSourceSettingsDialog(controller, platform="win32")
+    editor = dialog._primary_editor
+    editor.secret.setText("candidate-token")
+    assert editor.save_button.isEnabled()
+    editor.save_button.click()
+    deadline = datetime.now().timestamp() + 1.0
+    while (
+        editor.status.text() == "正在后台测试基础连接；窗口仍可关闭。"
+        and datetime.now().timestamp() < deadline
+    ):
+        app.processEvents()
+    assert editor.save_button.isEnabled()
+    assert "秒后再试" in editor.status.text()
+    assert "当前 Token 未被替换" in editor.permission.text()
+    dialog.close()
+    app.processEvents()
+
+
+def test_token_save_watchdog_reenables_after_hung_test() -> None:
+    app = application()
+
+    class HangTester:
+        def test(self, profile: object, secret: str) -> CredentialTestResult:
+            import time
+
+            time.sleep(1.0)
+            return CredentialTestResult(
+                success=False,
+                tested_at=datetime.now().astimezone(),
+                status_text="should-not-apply",
+                permission_summary="stale",
+                expires_at="未知",
+                safe_reason="timeout",
+            )
+
+    controller = DataSourceSettingsController(
+        store=MemoryCredentialStore(),
+        tester=HangTester(),
+    )
+    dialog = DataSourceSettingsDialog(controller, platform="win32")
+    editor = dialog._primary_editor
+    editor._test_watchdog.setInterval(80)
+    editor.secret.setText("candidate-token")
+    editor.save_button.click()
+    app.processEvents()
+    assert not editor.save_button.isEnabled()
+    deadline = datetime.now().timestamp() + 1.0
+    while not editor.save_button.isEnabled() and datetime.now().timestamp() < deadline:
+        app.processEvents()
+    assert editor.save_button.isEnabled()
+    assert editor.status.text() == "基础连接测试超时，当前 Token 未被替换。"
+    dialog.close()
+    app.processEvents()

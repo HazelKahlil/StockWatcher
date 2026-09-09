@@ -375,11 +375,16 @@ class _PrimaryEditor(QGroupBox):
         self.setObjectName("dataSourceEditor")
         self.controller = controller
         self._test_generation = 0
+        self._test_busy = False
         self._test_result_lock = Lock()
         self._test_result: tuple[int, CredentialTestResult] | None = None
         self._test_poll_timer = QTimer(self)
         self._test_poll_timer.setInterval(25)
         self._test_poll_timer.timeout.connect(self._poll_candidate_test)
+        self._test_watchdog = QTimer(self)
+        self._test_watchdog.setSingleShot(True)
+        self._test_watchdog.setInterval(45_000)
+        self._test_watchdog.timeout.connect(self._timeout_candidate_test)
         profile = controller.profile("primary")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 26, 22, 20)
@@ -560,6 +565,7 @@ class _PrimaryEditor(QGroupBox):
             daemon=True,
         ).start()
         self._test_poll_timer.start()
+        self._test_watchdog.start()
 
     def _run_candidate_test(
         self,
@@ -598,6 +604,7 @@ class _PrimaryEditor(QGroupBox):
         if generation != self._test_generation:
             return
         self._test_poll_timer.stop()
+        self._test_watchdog.stop()
         self._set_test_busy(False)
         self._apply_candidate_test_result(result)
 
@@ -624,6 +631,7 @@ class _PrimaryEditor(QGroupBox):
         self._set_test_busy(False)
 
     def _set_test_busy(self, busy: bool) -> None:
+        self._test_busy = busy
         self.save_button.setEnabled(not busy)
         self.secret.setEnabled(not busy)
         if busy:
@@ -632,9 +640,22 @@ class _PrimaryEditor(QGroupBox):
         else:
             self._refresh_capabilities()
 
+    def _timeout_candidate_test(self) -> None:
+        if not self._test_busy:
+            return
+        self._test_generation += 1
+        self._test_poll_timer.stop()
+        with self._test_result_lock:
+            self._test_result = None
+        self._set_test_busy(False)
+        self.status.setText("基础连接测试超时，当前 Token 未被替换。")
+        self.last_test.setText(datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"))
+        self.permission.setText("请求仍在后台结束；可关闭窗口或稍后重试。")
+
     def cancel_pending_test(self) -> None:
         self._test_generation += 1
         self._test_poll_timer.stop()
+        self._test_watchdog.stop()
         with self._test_result_lock:
             self._test_result = None
         self._set_test_busy(False)
@@ -650,8 +671,9 @@ class _PrimaryEditor(QGroupBox):
     def _refresh_capabilities(self) -> None:
         self.credential_storage.setText(self.controller.credential_storage_status())
         has_credential = self.controller.credential_present("primary")
-        self.recheck_button.setEnabled(has_credential)
-        self.clear_button.setEnabled(has_credential)
+        if not self._test_busy:
+            self.recheck_button.setEnabled(has_credential)
+            self.clear_button.setEnabled(has_credential)
         statuses = self.controller.capability_statuses()
         if not statuses:
             if has_credential:
