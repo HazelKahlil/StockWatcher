@@ -519,6 +519,18 @@ def test_runtime_universe_cache_rejects_checksum_damage_and_stale_context(
     assert stale.value.reason is UniverseCacheFailure.STALE
 
 
+def test_install_seed_copies_only_when_user_cache_is_missing(tmp_path: Path) -> None:
+    seed = tmp_path / "runtime-universe-seed.json"
+    user_cache = tmp_path / "runtime-universe-v1.json"
+    RuntimeUniverseCache(seed, minimum_profile_count=100).save(_universe())
+    cache = RuntimeUniverseCache(user_cache, minimum_profile_count=100)
+
+    assert cache.install_seed(seed, now=NOW) is True
+    loaded = cache.load(now=NOW)
+    assert len(loaded.profiles) == 120
+    assert cache.install_seed(seed, now=NOW) is False
+
+
 def test_scan_uses_verified_cache_and_never_calls_ordinary_pro(
     tmp_path: Path,
 ) -> None:

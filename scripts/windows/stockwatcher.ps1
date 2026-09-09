@@ -491,10 +491,34 @@ function Invoke-Probe {
     Write-Host "报告目录：$ReportRoot"
 }
 
+function Export-PackagedUniverseSeed {
+    $configured = [string]$env:STOCKWATCHER_UNIVERSE_SEED_PATH
+    if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf)) {
+        Write-Host "使用已配置的冷启动名单种子。"
+        return $configured
+    }
+    $destination = Join-Path $ProjectRoot "build\seed\runtime-universe-seed.json"
+    $localCache = Join-Path $env:LOCALAPPDATA "StockWatcher\data\runtime-universe-v1.json"
+    if (-not (Test-Path -LiteralPath $localCache -PathType Leaf)) {
+        Write-Host "本机没有 runtime-universe-v1.json，安装包将不含冷启动名单种子。"
+        return $null
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    Invoke-CheckedNative -Command $PythonPath -Arguments @(
+        (Join-Path $ProjectRoot "scripts\export_runtime_universe_seed.py"),
+        $localCache,
+        $destination
+    ) -FailureMessage "导出冷启动名单种子失败"
+    $env:STOCKWATCHER_UNIVERSE_SEED_PATH = $destination
+    Write-Host "已从本机名单缓存导出冷启动种子。"
+    return $destination
+}
+
 function Invoke-Build {
     Write-Title "构建 Windows 分发包"
     Ensure-Environment
     Ensure-PyInstaller
+    $null = Export-PackagedUniverseSeed
     $driveName = $null
     $driveMapped = $false
     $stageParent = $null
@@ -523,6 +547,15 @@ function Invoke-Build {
         $bundleRoot = Join-Path $stageDist "StockWatcher"
         if (-not (Test-Path -LiteralPath (Join-Path $bundleRoot "StockWatcher.exe") -PathType Leaf)) {
             throw "PyInstaller 未生成完整的 StockWatcher bundle。"
+        }
+        if ($env:STOCKWATCHER_UNIVERSE_SEED_PATH) {
+            $bundledSeed = @(
+                (Join-Path $bundleRoot "_internal\stock_watcher\data\runtime-universe-seed.json"),
+                (Join-Path $bundleRoot "stock_watcher\data\runtime-universe-seed.json")
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+            if (-not $bundledSeed) {
+                throw "已导出冷启动名单种子，但 PyInstaller bundle 中未找到 runtime-universe-seed.json。"
+            }
         }
         $iscc = Resolve-Iscc
         $installerScript = Join-Path $mappedRoot "packaging\windows\StockWatcher.iss"

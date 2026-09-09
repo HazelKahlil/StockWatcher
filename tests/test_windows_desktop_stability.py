@@ -109,6 +109,11 @@ def test_hang_fix_source_contracts() -> None:
     assert 'cooldown_remaining(lane="pro")' in status
     assert "_accept_rate_limited_token" in status
     assert "Sleep happens outside the lock" in budget
+    spec = Path("packaging/stockwatcher.spec").read_text(encoding="utf-8")
+    packager = Path("scripts/windows/stockwatcher.ps1").read_text(encoding="utf-8")
+    assert "runtime-universe-seed.json" in spec
+    assert "Export-PackagedUniverseSeed" in packager
+    assert "export_runtime_universe_seed.py" in packager
 
 
 def test_windows_quit_shortcut_includes_ctrl_q() -> None:
