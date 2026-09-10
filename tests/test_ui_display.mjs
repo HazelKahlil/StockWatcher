@@ -47,8 +47,8 @@ test('display entry is labeled and lives next to the account cluster', () => {
   assert.match(baseHtml, /显示大小/);
   assert.match(baseHtml, /id="display-scale"/);
   assert.match(baseHtml, /仅看三只/);
-  assert.match(baseHtml, /display\.js\?v=2/);
-  assert.match(baseHtml, /display\.css\?v=2/);
+  assert.match(baseHtml, /display\.js\?v=3/);
+  assert.match(baseHtml, /display\.css\?v=3/);
   assert.match(baseHtml, /min="20"/);
   assert.match(baseHtml, /max="150"/);
 });
@@ -79,7 +79,8 @@ test('compact layout is independent from scale and only applies on the observati
 
 test('compact CSS cannot hide history or review pages', () => {
   assert.match(displayCss, /html\[data-watch-layout="compact"\]:has\(\.dashboard-cards\)/);
-  assert.match(displayCss, /width: calc\(100svw \/ var\(--ui-scale\)\)/);
+  assert.match(displayCss, /container-type: inline-size/);
+  assert.doesNotMatch(displayCss, /100svw \/ var\(--ui-scale\)/);
   assert.doesNotMatch(displayCss, /html\[data-watch-layout="compact"\] \.page-heading/);
   assert.doesNotMatch(displayCss, /html\[data-watch-layout="compact"\] \.outcome-page/);
 });
@@ -121,6 +122,16 @@ test('storage failure still applies the chosen size in memory', () => {
   );
   assert.equal(applied.scale, 90);
   assert.equal(html.style.props['--ui-scale'], '0.9');
+});
+
+test('candidate cards keep identity, quote and meta as groups', () => {
+  const cardSource = readFileSync(new URL('../src/stock_watcher/server/static/candidate-card.js', import.meta.url), 'utf8');
+  assert.match(cardSource, /class="candidate-main"/);
+  assert.match(cardSource, /class="candidate-quote"/);
+  assert.match(cardSource, /class="candidate-meta"/);
+  assert.match(cardSource, /class="level-tag/);
+  const dash = readFileSync(new URL('../src/stock_watcher/server/static/dashboard.js', import.meta.url), 'utf8');
+  assert.match(dash, /candidate-card\.js/);
 });
 
 test('display script never talks to market APIs', () => {

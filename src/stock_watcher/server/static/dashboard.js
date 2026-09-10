@@ -1,6 +1,7 @@
 import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=8';
 import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
+import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=1';
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
 const refreshStages = [
@@ -84,65 +85,12 @@ function resetRefreshButton(button) {
   button.textContent = '立即获取最新 3 只';
 }
 
-function levelMeta(candidate) {
-  const raw = String(candidate.level || '');
-  if (raw.includes('强')) return { label: '强级', tone: 'strong' };
-  if (raw.includes('中')) return { label: '中级', tone: 'medium' };
-  return { label: candidate.is_formal ? '近级' : '近级补位', tone: 'near' };
-}
-
 function placeholderCard(rank) {
-  return `
-  <article class="card placeholder-card" aria-label="等待抓取第 ${rank} 只候选">
-    <span class="rank rank-${rank}-badge">${rank}</span>
-    <div class="candidate-identity">
-      <h3 class="display-name placeholder-text">等待候选</h3>
-      <span class="display-code placeholder-text">------</span>
-    </div>
-    <div class="candidate-quote">
-      <span class="ashare-pct placeholder-text">--.--%</span>
-      <span class="ashare-price placeholder-text">¥--.--</span>
-    </div>
-    <span class="level-tag level-placeholder">待</span>
-    <div class="candidate-sector">
-      <span class="candidate-meta-label">最强板块</span>
-      <strong class="placeholder-text">板块待抓取</strong>
-      <small class="placeholder-card-status">正在抓取<span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span></small>
-    </div>
-    <span class="card-arrow" aria-hidden="true">›</span>
-  </article>`;
+  return placeholderCardHTML(rank);
 }
 
 function cardFor(candidate, state) {
-  const level = levelMeta(candidate);
-  const price = Number(candidate.price).toFixed(2);
-  const changePct = Number(candidate.change_pct);
-  const pctStr = (changePct > 0 ? '+' : '') + changePct.toFixed(2) + '%';
-  const direction = changePct > 0 ? 'up' : (changePct < 0 ? 'down' : 'neutral');
-  const fundLabel = state?.fund_module && state.fund_module !== 'unavailable'
-    ? '资金增强可用'
-    : '资金未确认';
-  const observationLabel = candidate.is_formal ? fundLabel : `补位观察 · ${fundLabel}`;
-
-  return `
-  <article class="card ${candidate.rank === 1 ? 'rank-1-card' : ''}" data-detail-code="${esc(candidate.code)}">
-    <span class="rank rank-${candidate.rank}-badge">${candidate.rank}</span>
-    <div class="candidate-identity">
-      <h3 class="display-name">${esc(candidate.name)}</h3>
-      <span class="display-code">${esc(candidate.code)}</span>
-    </div>
-    <div class="candidate-quote">
-      <span class="ashare-pct" data-direction="${direction}">${pctStr}</span>
-      <span class="ashare-price">¥${price}</span>
-    </div>
-    <span class="level-tag level-${level.tone}">${esc(level.label.replace('级', ''))}</span>
-    <div class="candidate-sector">
-      <span class="candidate-meta-label">最强板块</span>
-      <strong>${esc(candidate.sector_name || '板块待确认')}</strong>
-      <small>${esc(observationLabel)}</small>
-    </div>
-    <button type="button" class="card-open-detail" data-detail="${esc(candidate.code)}" aria-label="查看 ${esc(candidate.name)} 候选详情"><span aria-hidden="true">›</span></button>
-  </article>`;
+  return candidateCardHTML(candidate, state);
 }
 
 function compactPrice(value) {

@@ -6,10 +6,10 @@
 <title>当前观察 · StockWatcher（模拟数据预览）</title>
 <link rel="stylesheet" href="/src/stock_watcher/server/static/app.css">
 <link rel="stylesheet" href="/src/stock_watcher/server/static/refinements.css">
-<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css?v=2">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css?v=3">
 <link rel="stylesheet" href="/src/stock_watcher/server/static/motion.css">
 <meta name="color-scheme" content="light">
-<script src="/src/stock_watcher/server/static/display.js?v=2"></script>
+<script src="/src/stock_watcher/server/static/display.js?v=3"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -105,62 +105,7 @@
       <p id="live-clock" class="live-clock">当前时间 2026年9月10日（周四） 14:31:02</p>
     </div>
   </div>
-  <div id="cards" class="cards dashboard-cards" aria-live="polite">
-    <article class="card rank-1-card" data-detail-code="300829.SZ">
-      <span class="rank rank-1-badge">1</span>
-      <div class="candidate-identity">
-        <h3 class="display-name">金丹科技</h3>
-        <span class="display-code">300829.SZ</span>
-      </div>
-      <div class="candidate-quote">
-        <span class="ashare-pct" data-direction="up">+6.82%</span>
-        <span class="ashare-price">¥18.46</span>
-      </div>
-      <span class="level-tag level-strong">强</span>
-      <div class="candidate-sector">
-        <span class="candidate-meta-label">最强板块</span>
-        <strong>生物制品</strong>
-        <small>资金未确认</small>
-      </div>
-      <button type="button" class="card-open-detail" aria-label="查看金丹科技候选详情"><span aria-hidden="true">›</span></button>
-    </article>
-    <article class="card" data-detail-code="300741.SZ">
-      <span class="rank rank-2-badge">2</span>
-      <div class="candidate-identity">
-        <h3 class="display-name">华宝股份</h3>
-        <span class="display-code">300741.SZ</span>
-      </div>
-      <div class="candidate-quote">
-        <span class="ashare-pct" data-direction="up">+4.15%</span>
-        <span class="ashare-price">¥22.08</span>
-      </div>
-      <span class="level-tag level-medium">中</span>
-      <div class="candidate-sector">
-        <span class="candidate-meta-label">最强板块</span>
-        <strong>食品饮料</strong>
-        <small>资金未确认</small>
-      </div>
-      <button type="button" class="card-open-detail" aria-label="查看华宝股份候选详情"><span aria-hidden="true">›</span></button>
-    </article>
-    <article class="card" data-detail-code="300106.SZ">
-      <span class="rank rank-3-badge">3</span>
-      <div class="candidate-identity">
-        <h3 class="display-name">西部牧业</h3>
-        <span class="display-code">300106.SZ</span>
-      </div>
-      <div class="candidate-quote">
-        <span class="ashare-pct" data-direction="down">-1.24%</span>
-        <span class="ashare-price">¥7.93</span>
-      </div>
-      <span class="level-tag level-near">近</span>
-      <div class="candidate-sector">
-        <span class="candidate-meta-label">最强板块</span>
-        <strong>农产品加工</strong>
-        <small>补位观察 · 资金未确认</small>
-      </div>
-      <button type="button" class="card-open-detail" aria-label="查看西部牧业候选详情"><span aria-hidden="true">›</span></button>
-    </article>
-  </div>
+  <div id="cards" class="cards dashboard-cards" aria-live="polite"></div>
   <div class="hero-action-box">
     <button id="manual-refresh" type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
     <button id="notify-btn" type="button" class="btn-hero hero-action-button btn-notify">开启浏览器通知</button>
@@ -185,13 +130,31 @@
 </section>
 </main>
 <footer class="version-note">StockWatcher 0.7.0-alpha.3 · 模拟预览</footer>
-<script>
-document.getElementById('logout-btn').addEventListener('click', function (event) {
-  event.preventDefault();
-});
-document.getElementById('manual-refresh').addEventListener('click', function (event) {
-  event.preventDefault();
-});
+<script type="module">
+import { candidateCardHTML, placeholderCardHTML } from '/src/stock_watcher/server/static/candidate-card.js';
+
+const fixtures = [
+  { rank: 1, name: '金丹科技', code: '300829.SZ', price: 18.46, change_pct: 6.82, level: '强', sector_name: '生物制品', is_formal: true },
+  { rank: 2, name: '华宝股份', code: '300741.SZ', price: 22.08, change_pct: 4.15, level: '中', sector_name: '食品饮料', is_formal: true },
+  { rank: 3, name: '西部牧业', code: '300106.SZ', price: 7.93, change_pct: -1.24, level: '近', sector_name: '农产品加工', is_formal: false },
+];
+const params = new URLSearchParams(location.search);
+const cards = document.getElementById('cards');
+if (params.get('empty') === '1') {
+  cards.innerHTML = [1, 2, 3].map(placeholderCardHTML).join('');
+} else {
+  const rows = params.get('long') === '1'
+    ? [
+        { ...fixtures[0], name: '内蒙古包钢稀土高科技股份', sector_name: '稀土永磁材料概念' },
+        fixtures[1],
+        fixtures[2],
+      ]
+    : fixtures;
+  cards.innerHTML = rows.map((row) => candidateCardHTML(row, {})).join('');
+}
+
+document.getElementById('logout-btn').addEventListener('click', (event) => event.preventDefault());
+document.getElementById('manual-refresh').addEventListener('click', (event) => event.preventDefault());
 </script>
 </body>
 </html>
