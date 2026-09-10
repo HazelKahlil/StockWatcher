@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>当前观察 · StockWatcher（模拟数据预览）</title>
+<link rel="stylesheet" href="/src/stock_watcher/server/static/app.css">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/refinements.css">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/motion.css">
+<meta name="color-scheme" content="light">
+<script src="/src/stock_watcher/server/static/display.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+<header class="topbar">
+  <a class="brand" href="./preview-dashboard.html">StockWatcher</a>
+  <nav aria-label="主导航">
+    <a href="./preview-dashboard.html" aria-current="page">当前观察</a>
+    <a href="./preview-history.html">历史</a>
+    <a href="./preview-history.html">次日复盘</a>
+  </nav>
+  <div class="account-cluster">
+    <div class="display-control" id="display-control">
+      <button type="button" class="watch-exit" id="watch-exit" hidden>退出仅看三只</button>
+      <button type="button" class="display-toggle" id="display-toggle" aria-expanded="false" aria-controls="display-panel" aria-haspopup="dialog">
+        <span class="display-toggle-copy">
+          <span class="display-toggle-label">显示大小</span>
+          <span class="display-toggle-value" id="display-scale-label">100%</span>
+        </span>
+      </button>
+      <div class="display-panel" id="display-panel" hidden role="dialog" aria-labelledby="display-panel-title" aria-describedby="display-panel-hint">
+        <div class="display-panel-header">
+          <h2 id="display-panel-title">显示大小</h2>
+          <button type="button" class="display-panel-close" id="display-panel-close">关闭</button>
+        </div>
+        <div class="display-slider-row">
+          <button type="button" class="display-step" data-display-step="-5" aria-label="缩小 5%">−</button>
+          <label class="display-slider-label">
+            <span class="visually-hidden">页面显示比例</span>
+            <input id="display-scale" type="range" min="75" max="125" step="5" value="100">
+          </label>
+          <button type="button" class="display-step" data-display-step="5" aria-label="放大 5%">+</button>
+          <span class="display-scale-readout" id="display-scale-readout" aria-live="polite">100%</span>
+        </div>
+        <div class="display-panel-actions">
+          <button type="button" class="button-secondary" id="display-reset">恢复 100%</button>
+          <button type="button" class="display-compact" id="display-compact" aria-pressed="false">仅看三只</button>
+        </div>
+        <p class="display-panel-hint" id="display-panel-hint">拖动即可即时调整。仅看三只会收起说明和复盘，只保留三只候选和必要状态。</p>
+      </div>
+    </div>
+    <div class="account" aria-label="账户">
+      <span class="account-item account-username">preview</span>
+      <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
+    </div>
+  </div>
+</header>
+<main id="main" tabindex="-1">
+<p class="preview-banner" style="margin:0 0 12px;padding:8px 12px;border-radius:8px;background:#fff7df;color:#7a5a00;font-size:12px;">模拟数据预览 · 不是真实行情 · 不连接现网</p>
+<section class="dashboard-intro" aria-labelledby="dashboard-page-title">
+  <div>
+    <p class="dashboard-eyebrow">A股观察提醒 <span>Web 内测</span></p>
+    <h1 id="dashboard-page-title">当前观察</h1>
+  </div>
+  <a class="desktop-history-link" href="./preview-history.html">历史提醒</a>
+</section>
+<section aria-label="运行状态总览" class="statusbar">
+  <div class="status-item">
+    <span class="status-item-label">数据状态</span>
+    <strong id="svc-state" class="status-item-value pill-healthy">正常</strong>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">候选数据时间</span>
+    <strong id="last-scan" class="status-item-value">2026-09-10 14:30:57</strong>
+    <small id="scan-completed" class="status-secondary">扫描完成 2026-09-10 14:30:58</small>
+  </div>
+  <div class="status-item status-item-connection">
+    <span class="status-item-label">页面连接 / 服务检测</span>
+    <span id="ws-state" class="ws-status" data-state="online" role="status" aria-label="实时连接在线">
+      <span class="status-lamp" aria-hidden="true"></span>
+      <span class="status-label">实时连接在线</span>
+    </span>
+    <small id="worker-age" class="status-item-meta">最近检测 3 秒前</small>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">候选状态</span>
+    <strong id="candidate-state" class="status-item-value">3只观察</strong>
+  </div>
+  <div class="status-item">
+    <span class="status-item-label">当前阶段</span>
+    <strong id="market-state" class="status-item-value">下午盘</strong>
+  </div>
+</section>
+<section aria-label="今日自动任务" class="tasks" id="tasks">
+  <span class="task">09:45 观察：已完成</span>
+  <span class="task">14:45 观察：待执行</span>
+  <span class="task">盘后总结：待执行</span>
+</section>
+<section class="hero-top3-section">
+  <div class="hero-header">
+    <div>
+      <h2 id="top3-title" class="hero-title">当前 3 只观察 · 运行正常</h2>
+      <p id="candidate-provenance" class="candidate-provenance" role="status">候选按原始排名展示，点击卡片查看原因。</p>
+      <p id="live-clock" class="live-clock">当前时间 2026年9月10日（周四） 14:31:02</p>
+    </div>
+  </div>
+  <div id="cards" class="cards dashboard-cards" aria-live="polite">
+    <article class="card rank-1-card" data-detail-code="300829.SZ">
+      <span class="rank rank-1-badge">1</span>
+      <div class="candidate-identity">
+        <h3 class="display-name">金丹科技</h3>
+        <span class="display-code">300829.SZ</span>
+      </div>
+      <div class="candidate-quote">
+        <span class="ashare-pct" data-direction="up">+6.82%</span>
+        <span class="ashare-price">¥18.46</span>
+      </div>
+      <span class="level-tag level-strong">强</span>
+      <div class="candidate-sector">
+        <span class="candidate-meta-label">最强板块</span>
+        <strong>生物制品</strong>
+        <small>资金未确认</small>
+      </div>
+      <button type="button" class="card-open-detail" aria-label="查看金丹科技候选详情"><span aria-hidden="true">›</span></button>
+    </article>
+    <article class="card" data-detail-code="300741.SZ">
+      <span class="rank rank-2-badge">2</span>
+      <div class="candidate-identity">
+        <h3 class="display-name">华宝股份</h3>
+        <span class="display-code">300741.SZ</span>
+      </div>
+      <div class="candidate-quote">
+        <span class="ashare-pct" data-direction="up">+4.15%</span>
+        <span class="ashare-price">¥22.08</span>
+      </div>
+      <span class="level-tag level-medium">中</span>
+      <div class="candidate-sector">
+        <span class="candidate-meta-label">最强板块</span>
+        <strong>食品饮料</strong>
+        <small>资金未确认</small>
+      </div>
+      <button type="button" class="card-open-detail" aria-label="查看华宝股份候选详情"><span aria-hidden="true">›</span></button>
+    </article>
+    <article class="card" data-detail-code="300106.SZ">
+      <span class="rank rank-3-badge">3</span>
+      <div class="candidate-identity">
+        <h3 class="display-name">西部牧业</h3>
+        <span class="display-code">300106.SZ</span>
+      </div>
+      <div class="candidate-quote">
+        <span class="ashare-pct" data-direction="down">-1.24%</span>
+        <span class="ashare-price">¥7.93</span>
+      </div>
+      <span class="level-tag level-near">近</span>
+      <div class="candidate-sector">
+        <span class="candidate-meta-label">最强板块</span>
+        <strong>农产品加工</strong>
+        <small>补位观察 · 资金未确认</small>
+      </div>
+      <button type="button" class="card-open-detail" aria-label="查看西部牧业候选详情"><span aria-hidden="true">›</span></button>
+    </article>
+  </div>
+  <div class="hero-action-box">
+    <button id="manual-refresh" type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
+    <button id="notify-btn" type="button" class="btn-hero hero-action-button btn-notify">开启浏览器通知</button>
+    <a class="hero-history-button" href="./preview-history.html">历史观察</a>
+  </div>
+  <p class="readonly-note">只读观察 · 不连接交易账户 · 资金未确认不阻塞候选</p>
+</section>
+<section class="outcome-editorial" aria-labelledby="outcome-summary-title">
+  <div class="outcome-editorial-header">
+    <div>
+      <span class="editorial-kicker">NEXT-DAY REVIEW</span>
+      <h2 id="outcome-summary-title">近一月复盘</h2>
+    </div>
+    <a class="outcome-detail-link" href="./preview-history.html">查看完整复盘</a>
+  </div>
+  <div id="outcome-summary" class="outcome-summary-grid">
+    <article class="outcome-summary-card"><span>个股胜率</span><strong>29.3%</strong></article>
+    <article class="outcome-summary-card"><span>日组合胜率</span><strong>27.3%</strong></article>
+    <article class="outcome-summary-card"><span>平均收益</span><strong>-1.53%</strong></article>
+    <article class="outcome-summary-card"><span>已结算 / 总数</span><strong>75 / 96</strong></article>
+  </div>
+</section>
+</main>
+<footer class="version-note">StockWatcher 0.7.0-alpha.3 · 模拟预览</footer>
+<script>
+document.getElementById('logout-btn').addEventListener('click', function (event) {
+  event.preventDefault();
+});
+document.getElementById('manual-refresh').addEventListener('click', function (event) {
+  event.preventDefault();
+});
+</script>
+</body>
+</html>
