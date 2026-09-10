@@ -47,16 +47,22 @@ test('display entry is labeled and lives next to the account cluster', () => {
   assert.match(baseHtml, /显示大小/);
   assert.match(baseHtml, /id="display-scale"/);
   assert.match(baseHtml, /仅看三只/);
-  assert.match(baseHtml, /display\.js\?v=1/);
-  assert.match(baseHtml, /display\.css\?v=1/);
+  assert.match(baseHtml, /display\.js\?v=2/);
+  assert.match(baseHtml, /display\.css\?v=2/);
+  assert.match(baseHtml, /min="20"/);
+  assert.match(baseHtml, /max="150"/);
 });
 
 test('scale clamps to readable steps and ignores garbage', () => {
   const {api} = loadDisplay();
+  assert.equal(api.MIN_SCALE, 20);
+  assert.equal(api.MAX_SCALE, 150);
   assert.equal(api.clampScale(100), 100);
   assert.equal(api.clampScale('87'), 85);
-  assert.equal(api.clampScale(10), 75);
-  assert.equal(api.clampScale(200), 125);
+  assert.equal(api.clampScale(10), 20);
+  assert.equal(api.clampScale(20), 20);
+  assert.equal(api.clampScale(150), 150);
+  assert.equal(api.clampScale(200), 150);
   assert.equal(api.clampScale('nope'), 100);
   assert.equal(api.clampScale(undefined), 100);
 });
@@ -73,6 +79,7 @@ test('compact layout is independent from scale and only applies on the observati
 
 test('compact CSS cannot hide history or review pages', () => {
   assert.match(displayCss, /html\[data-watch-layout="compact"\]:has\(\.dashboard-cards\)/);
+  assert.match(displayCss, /width: calc\(100svw \/ var\(--ui-scale\)\)/);
   assert.doesNotMatch(displayCss, /html\[data-watch-layout="compact"\] \.page-heading/);
   assert.doesNotMatch(displayCss, /html\[data-watch-layout="compact"\] \.outcome-page/);
 });

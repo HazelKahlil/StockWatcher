@@ -4,8 +4,8 @@
 
   var SCALE_KEY = 'stockwatcher.ui.scale';
   var LAYOUT_KEY = 'stockwatcher.ui.watchLayout';
-  var MIN_SCALE = 75;
-  var MAX_SCALE = 125;
+  var MIN_SCALE = 20;
+  var MAX_SCALE = 150;
   var STEP = 5;
   var DEFAULT_SCALE = 100;
 
@@ -69,7 +69,6 @@
     var dashboard = isDashboard(doc);
     var layout = layoutForPage(layoutPref, dashboard);
     html.style.setProperty('--ui-scale', String(factor));
-    html.style.setProperty('--ui-scale-width', safeScale > 100 ? 'calc(100% / ' + factor + ')' : '100%');
     html.setAttribute('data-ui-scale', String(safeScale));
     html.setAttribute('data-watch-layout', layout);
     html.setAttribute('data-watch-pref', normalizeLayout(layoutPref));
@@ -113,7 +112,7 @@
       } else if (applied.pref === 'compact' && !applied.dashboard) {
         hint.textContent = '已记住仅看三只；回到当前观察后生效。其他页面保持完整内容。';
       } else {
-        hint.textContent = '拖动即可即时调整。仅看三只会收起说明和复盘，只保留三只候选和必要状态。';
+        hint.textContent = '可调 20%–150%。缩小后仍铺满窗口。仅看三只适合竖屏盯盘。';
       }
     }
     return applied;
@@ -164,6 +163,9 @@
     var panel = document.getElementById('display-panel');
     var slider = document.getElementById('display-scale');
     if (!toggle || !panel || !slider) return;
+    slider.min = String(MIN_SCALE);
+    slider.max = String(MAX_SCALE);
+    slider.step = String(STEP);
 
     toggle.addEventListener('click', function () {
       setOpen(!state.open);

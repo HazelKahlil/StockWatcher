@@ -6,10 +6,10 @@
 <title>当前观察 · StockWatcher（模拟数据预览）</title>
 <link rel="stylesheet" href="/src/stock_watcher/server/static/app.css">
 <link rel="stylesheet" href="/src/stock_watcher/server/static/refinements.css">
-<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css?v=2">
 <link rel="stylesheet" href="/src/stock_watcher/server/static/motion.css">
 <meta name="color-scheme" content="light">
-<script src="/src/stock_watcher/server/static/display.js"></script>
+<script src="/src/stock_watcher/server/static/display.js?v=2"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -38,7 +38,7 @@
           <button type="button" class="display-step" data-display-step="-5" aria-label="缩小 5%">−</button>
           <label class="display-slider-label">
             <span class="visually-hidden">页面显示比例</span>
-            <input id="display-scale" type="range" min="75" max="125" step="5" value="100">
+            <input id="display-scale" type="range" min="20" max="150" step="5" value="100">
           </label>
           <button type="button" class="display-step" data-display-step="5" aria-label="放大 5%">+</button>
           <span class="display-scale-readout" id="display-scale-readout" aria-live="polite">100%</span>

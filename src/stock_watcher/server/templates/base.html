@@ -9,11 +9,11 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
 <link rel="stylesheet" href="/static/app.css?v=16">
 <link rel="stylesheet" href="/static/refinements.css?v=1">
-{% if user %}<link rel="stylesheet" href="/static/display.css?v=1">{% endif %}
+{% if user %}<link rel="stylesheet" href="/static/display.css?v=2">{% endif %}
 {% if user %}<link rel="stylesheet" href="/static/motion.css?v=1">{% endif %}
 <meta name="color-scheme" content="light">
 {% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
-{% if user %}<script src="/static/display.js?v=1"></script>{% endif %}
+{% if user %}<script src="/static/display.js?v=2"></script>{% endif %}
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -46,7 +46,7 @@
           <button type="button" class="display-step" data-display-step="-5" aria-label="缩小 5%">−</button>
           <label class="display-slider-label">
             <span class="visually-hidden">页面显示比例</span>
-            <input id="display-scale" type="range" min="75" max="125" step="5" value="100">
+            <input id="display-scale" type="range" min="20" max="150" step="5" value="100">
           </label>
           <button type="button" class="display-step" data-display-step="5" aria-label="放大 5%">+</button>
           <span class="display-scale-readout" id="display-scale-readout" aria-live="polite">100%</span>
@@ -55,7 +55,7 @@
           <button type="button" class="button-secondary" id="display-reset">恢复 100%</button>
           <button type="button" class="display-compact" id="display-compact" aria-pressed="false">仅看三只</button>
         </div>
-        <p class="display-panel-hint" id="display-panel-hint">拖动即可即时调整。仅看三只会收起说明和复盘，只保留三只候选和必要状态。</p>
+        <p class="display-panel-hint" id="display-panel-hint">可调 20%–150%。缩小后仍铺满窗口。仅看三只适合竖屏盯盘。</p>
       </div>
     </div>
     <div class="account" aria-label="账户">
