@@ -121,8 +121,6 @@ class SQLiteStore:
             with connection:
                 if immediate or self._write_guard is not None:
                     connection.execute("BEGIN IMMEDIATE")
-                if self._write_guard is not None:
-                    self._write_guard(connection)
                 yield connection
 
     def bind_write_guard(
@@ -312,7 +310,9 @@ class SQLiteStore:
 
     @staticmethod
     def _fsync_file(path: Path) -> None:
-        with path.open("rb") as handle:
+        # Windows _commit needs a writable descriptor; do not truncate the snapshot.
+        mode = "r+b" if os.name == "nt" else "rb"
+        with path.open(mode) as handle:
             os.fsync(handle.fileno())
 
     @staticmethod
@@ -2166,7 +2166,7 @@ class SQLiteStore:
         now: datetime,
         days: int = 30,
     ) -> list[dict[str, Any]]:
-        """Read only scheduled alert candidates for safe, idempotent backfill."""
+        """Read only scheduled alert candidates for safe, idempotentent backfill."""
         if days < 1:
             raise ValueError("candidate outcome backfill days must be positive")
         cutoff = (now - timedelta(days=days)).isoformat()
