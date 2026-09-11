@@ -47,8 +47,9 @@ test('display entry is labeled and lives next to the account cluster', () => {
   assert.match(baseHtml, /显示大小/);
   assert.match(baseHtml, /id="display-scale"/);
   assert.match(baseHtml, /仅看三只/);
-  assert.match(baseHtml, /display\.js\?v=3/);
-  assert.match(baseHtml, /display\.css\?v=3/);
+  assert.match(baseHtml, /display\.js\?v=4/);
+  assert.match(baseHtml, /display\.css\?v=4/);
+  assert.match(baseHtml, /调整文字与布局大小/);
   assert.match(baseHtml, /min="20"/);
   assert.match(baseHtml, /max="150"/);
 });
@@ -81,6 +82,9 @@ test('compact CSS cannot hide history or review pages', () => {
   assert.match(displayCss, /html\[data-watch-layout="compact"\]:has\(\.dashboard-cards\)/);
   assert.match(displayCss, /container-type: inline-size/);
   assert.doesNotMatch(displayCss, /100svw \/ var\(--ui-scale\)/);
+  assert.doesNotMatch(displayCss, /max\(16rem, calc\(var\(--ui-scale\)/);
+  assert.match(displayCss, /--ui-name-size/);
+  assert.match(displayCss, /--ui-page-pad-x/);
   assert.doesNotMatch(displayCss, /html\[data-watch-layout="compact"\] \.page-heading/);
   assert.doesNotMatch(displayCss, /html\[data-watch-layout="compact"\] \.outcome-page/);
 });
@@ -115,6 +119,7 @@ test('compact on the observation page keeps a distinct layout flag', () => {
 
 test('storage failure still applies the chosen size in memory', () => {
   const {api, html} = loadDisplay({failStore: true, dashboard: true});
+  assert.equal(api.persistPrefs(90, 'full'), false);
   const applied = api.applyToDocument(
     {documentElement: html, querySelector: (sel) => sel === '.dashboard-cards' ? {} : null},
     90,
@@ -126,10 +131,13 @@ test('storage failure still applies the chosen size in memory', () => {
 
 test('candidate cards keep identity, quote and meta as groups', () => {
   const cardSource = readFileSync(new URL('../src/stock_watcher/server/static/candidate-card.js', import.meta.url), 'utf8');
-  assert.match(cardSource, /class="candidate-main"/);
+  assert.match(cardSource, /class="candidate-primary"/);
   assert.match(cardSource, /class="candidate-quote"/);
-  assert.match(cardSource, /class="candidate-meta"/);
+  assert.match(cardSource, /class="candidate-aux"/);
   assert.match(cardSource, /class="level-tag/);
+  const dashHtml = readFileSync(new URL('../src/stock_watcher/server/templates/dashboard.html', import.meta.url), 'utf8');
+  assert.match(dashHtml, /class="candidate-primary"/);
+  assert.match(dashHtml, /class="candidate-aux"/);
   const dash = readFileSync(new URL('../src/stock_watcher/server/static/dashboard.js', import.meta.url), 'utf8');
   assert.match(dash, /candidate-card\.js/);
 });

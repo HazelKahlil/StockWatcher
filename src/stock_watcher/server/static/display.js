@@ -108,11 +108,11 @@
     }
     if (hint) {
       if (!state.persisted) {
-        hint.textContent = '此浏览器未保存偏好，刷新后会回到默认。仅看三只只影响当前观察页。';
+        hint.textContent = '未能保存到此浏览器，当前调节仅在本页有效。仅看三只只影响当前观察页。';
       } else if (applied.pref === 'compact' && !applied.dashboard) {
         hint.textContent = '已记住仅看三只；回到当前观察后生效。其他页面保持完整内容。';
       } else {
-        hint.textContent = '可调 20%–150%。缩小后仍铺满窗口。仅看三只适合竖屏盯盘。';
+        hint.textContent = '调整文字与布局大小，页面会根据窗口自动排列。仅看三只会收起次要内容。';
       }
     }
     return applied;
@@ -219,7 +219,10 @@
     layoutForPage: layoutForPage,
     isDashboard: isDashboard,
     readPrefs: readPrefs,
+    persistPrefs: persistPrefs,
     applyToDocument: applyToDocument,
+    setScale: setScale,
+    setLayoutPref: setLayoutPref,
     boot: boot,
   };
 

@@ -2,25 +2,36 @@
 
 html {
   --ui-scale: 1;
+  --ui-name-size: clamp(0.92rem, calc(0.76rem + 0.8rem * var(--ui-scale)), 1.42rem);
+  --ui-code-size: clamp(0.75rem, calc(0.66rem + 0.28rem * var(--ui-scale)), 0.92rem);
+  --ui-quote-size: clamp(1.05rem, calc(0.82rem + 0.85rem * var(--ui-scale)), 1.7rem);
+  --ui-price-size: clamp(0.72rem, calc(0.64rem + 0.22rem * var(--ui-scale)), 0.88rem);
+  --ui-card-pad-y: clamp(0.38rem, calc(0.2rem + 0.65rem * var(--ui-scale)), 1rem);
+  --ui-card-pad-x: clamp(0.5rem, calc(0.28rem + 0.7rem * var(--ui-scale)), 1.2rem);
+  --ui-card-gap: clamp(0.35rem, calc(0.18rem + 0.7rem * var(--ui-scale)), 1rem);
+  --ui-rank-size: clamp(1.45rem, calc(1.2rem + 1.1rem * var(--ui-scale)), 2.4rem);
+  --ui-page-pad-x: clamp(8px, min(3vw, calc(2px + 22px * var(--ui-scale))), 40px);
+  --ui-quote-col: clamp(5.5rem, calc(4.6rem + 2rem * var(--ui-scale)), 7.2rem);
 }
 
 #main {
   box-sizing: border-box;
   container-type: inline-size;
   container-name: page;
-  width: min(100%, max(16rem, calc(var(--ui-scale) * 64rem)));
+  width: min(100%, 80rem);
   max-width: 80rem;
   margin-left: auto;
   margin-right: auto;
-  font-size: clamp(0.72rem, calc(0.6rem + var(--ui-scale) * 0.4rem), 1.15rem);
+  padding-left: var(--ui-page-pad-x);
+  padding-right: var(--ui-page-pad-x);
 }
 
 #main h1 {
-  font-size: clamp(1.35em, calc(1.1em + var(--ui-scale) * 0.7em), 2.1em);
+  font-size: clamp(1.45rem, calc(1.2rem + 0.7rem * var(--ui-scale)), 2.2rem);
 }
 
 #main .outcome-summary-card strong {
-  font-size: clamp(1.2em, calc(1em + var(--ui-scale) * 0.7em), 1.8em);
+  font-size: clamp(1.15rem, calc(1rem + 0.55rem * var(--ui-scale)), 1.8rem);
 }
 
 .status-item-value {
@@ -272,7 +283,10 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .version-note {
 }
 
 html[data-watch-layout="compact"]:has(.dashboard-cards) #main {
-  padding: 12px 16px 18px;
+  padding-top: 12px;
+  padding-bottom: 16px;
+  padding-left: var(--ui-page-pad-x);
+  padding-right: var(--ui-page-pad-x);
 }
 
 html[data-watch-layout="compact"]:has(.dashboard-cards) .statusbar {
@@ -386,7 +400,8 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
   }
 
   html[data-watch-layout="compact"]:has(.dashboard-cards) #main {
-    padding: 8px 10px 12px;
+    padding-top: 8px;
+    padding-bottom: 12px;
   }
 }
 
@@ -419,17 +434,18 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 
 .dashboard-cards > .card {
   display: grid;
-  grid-template-columns: minmax(0, max-content) max-content minmax(0, 1fr) 2.25rem;
-  grid-template-areas: "main quote meta detail";
+  grid-template-columns: minmax(9rem, 1fr) var(--ui-quote-col) minmax(0, 1fr) 1.75rem;
+  grid-template-areas: "primary quote aux detail";
   align-items: center;
-  column-gap: 0.85rem;
-  row-gap: 0.35rem;
+  column-gap: var(--ui-card-gap);
+  row-gap: 0.28rem;
   min-height: 0;
-  padding: 0.7rem 0.9rem;
+  padding: var(--ui-card-pad-y) var(--ui-card-pad-x);
 }
 
+.dashboard-cards > .card .candidate-primary,
 .dashboard-cards > .card .candidate-main {
-  grid-area: main;
+  grid-area: primary;
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -437,6 +453,7 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 }
 
 .dashboard-cards > .card .candidate-quote,
+.dashboard-cards > .card .candidate-aux,
 .dashboard-cards > .card .candidate-meta,
 .dashboard-cards > .card .level-tag,
 .dashboard-cards > .card .card-open-detail,
@@ -447,15 +464,19 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 
 .dashboard-cards > .card .candidate-quote {
   grid-area: quote;
+  width: var(--ui-quote-col);
   align-items: flex-end;
+  justify-self: end;
+  text-align: right;
 }
 
+.dashboard-cards > .card .candidate-aux,
 .dashboard-cards > .card .candidate-meta {
-  grid-area: meta;
+  grid-area: aux;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.65rem;
+  align-items: center;
+  gap: 0.28rem 0.55rem;
   min-width: 0;
 }
 
@@ -466,46 +487,69 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 }
 
 .dashboard-cards > .card .level-tag {
-  min-width: 1.6rem;
-  min-height: 1.45rem;
-  padding: 0.1rem 0.4rem;
-  font-size: 0.75rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.12rem 0.42rem;
+  font-size: 0.72rem;
   place-items: center;
   white-space: nowrap;
 }
 
 .dashboard-cards > .card .display-name {
-  font-size: 1.05em;
+  font-size: var(--ui-name-size);
+  line-height: 1.25;
   white-space: normal;
   overflow: visible;
   text-overflow: unset;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  writing-mode: horizontal-tb;
+}
+
+.dashboard-cards > .card .display-code {
+  display: block;
+  margin-top: 0.18rem;
+  overflow: visible;
+  font-size: var(--ui-code-size) !important;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-decoration: none;
+  text-overflow: unset;
+  white-space: nowrap;
 }
 
 .dashboard-cards > .card .ashare-pct {
-  font-size: 1.2em;
+  font-size: var(--ui-quote-size);
+  white-space: nowrap;
+}
+
+.dashboard-cards > .card .ashare-price {
+  font-size: var(--ui-price-size);
+  white-space: nowrap;
 }
 
 .dashboard-cards > .card .rank {
-  width: 1.85rem;
-  height: 1.85rem;
-  font-size: 0.85rem;
+  width: var(--ui-rank-size);
+  height: var(--ui-rank-size);
+  font-size: calc(var(--ui-rank-size) * 0.42);
   flex: 0 0 auto;
 }
 
 .dashboard-cards > .card .card-open-detail {
-  width: 2.25rem;
-  min-width: 2.25rem;
-  min-height: 2.25rem;
-  height: 2.25rem;
-  font-size: 1.35rem;
+  width: 1.75rem;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  height: 1.75rem;
+  font-size: 1.2rem;
 }
 
 @container candidates (max-width: 36rem) {
   .dashboard-cards > .card {
-    grid-template-columns: minmax(0, 1fr) max-content 2.25rem;
+    --ui-quote-col: 5.4rem;
+    grid-template-columns: minmax(0, 1fr) var(--ui-quote-col);
     grid-template-areas:
-      "main quote quote"
-      "meta meta detail";
+      "primary quote"
+      "aux detail";
   }
 
   .dashboard-cards > .card .candidate-quote {

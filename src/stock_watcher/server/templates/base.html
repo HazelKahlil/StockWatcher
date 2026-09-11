@@ -9,11 +9,11 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
 <link rel="stylesheet" href="/static/app.css?v=16">
 <link rel="stylesheet" href="/static/refinements.css?v=1">
-{% if user %}<link rel="stylesheet" href="/static/display.css?v=3">{% endif %}
+{% if user %}<link rel="stylesheet" href="/static/display.css?v=4">{% endif %}
 {% if user %}<link rel="stylesheet" href="/static/motion.css?v=1">{% endif %}
 <meta name="color-scheme" content="light">
 {% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
-{% if user %}<script src="/static/display.js?v=3"></script>{% endif %}
+{% if user %}<script src="/static/display.js?v=4"></script>{% endif %}
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -55,7 +55,7 @@
           <button type="button" class="button-secondary" id="display-reset">恢复 100%</button>
           <button type="button" class="display-compact" id="display-compact" aria-pressed="false">仅看三只</button>
         </div>
-        <p class="display-panel-hint" id="display-panel-hint">可调 20%–150%。缩小后仍铺满窗口。仅看三只适合竖屏盯盘。</p>
+        <p class="display-panel-hint" id="display-panel-hint">调整文字与布局大小，页面会根据窗口自动排列。仅看三只会收起次要内容。</p>
       </div>
     </div>
     <div class="account" aria-label="账户">
