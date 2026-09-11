@@ -117,7 +117,7 @@ def test_create_user_password_cannot_be_passed_on_argv() -> None:
                 "secret-on-argv",
             ]
         )
-    parsed = parser.parse_args().parse_args(
+    parsed = parser.parse_args(
         ["create-user", "--username", "admin", "--role", "admin", "--password-stdin"]
     )
     assert parsed.password_stdin is True
