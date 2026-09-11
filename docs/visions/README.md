@@ -1,9 +1,13 @@
 # 版本索引
 
-> 最后更新：2026-08-26
+> 最后更新：2026-09-10
 > 一个工作版本一个目录，内含 `README.md`。产品版本与 V2.0 规格文档版本不要混淆。
 
 ## 活跃版本
+
+- **[v0.7-web-display-density](v0.7-web-display-density/README.md)** —
+  Web 显示大小滑杆与「仅看三只」紧凑观察布局（状态：隔离预览已验证；未部署现网；
+  Web 继续 `BLOCKED / NOT_ACCEPTED`）。
 
 - **[v0.7-mac-web-sync](v0.7-mac-web-sync/README.md)** — Mac App 与 Web 从同一提交构建
   `0.7.0-alpha.1`；本地候选验证中，现装 App/现网服务尚未切换，Windows 保持独立验收。

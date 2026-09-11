@@ -1,0 +1,529 @@
+{
+  "tested_commit": "014e53ef084bcea81af9922636e8a1e43c33ce31",
+  "browser": "chromium 151.0.7922.34",
+  "os": "macOS-27.0-arm64-arm-64bit",
+  "dataset": "preview-fixtures-v2",
+  "source_hashes": {
+    "src/stock_watcher/server/static/display.css": "941f50f9b8f5",
+    "src/stock_watcher/server/static/display.js": "e7523a59fa03",
+    "src/stock_watcher/server/static/candidate-card.js": "d40e6fe5d5c9",
+    "src/stock_watcher/server/templates/dashboard.html": "f5d0111567cc",
+    "src/stock_watcher/server/templates/base.html": "2b148ea7abd0"
+  },
+  "shots": [
+    "round2-100-desktop",
+    "round2-35-full",
+    "round2-35-compact",
+    "round2-20-compact",
+    "round2-100-narrow",
+    "round2-390-35-long",
+    "round2-waiting"
+  ],
+  "rows": [
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 1265,
+      "card": [
+        1217,
+        94
+      ],
+      "primary": [
+        504,
+        53
+      ],
+      "name": [
+        89,
+        28,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        89,
+        22,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        106,
+        535
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1280-100-full"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "35",
+      "layout": "full",
+      "mainW": 1265,
+      "card": [
+        1246,
+        64
+      ],
+      "primary": [
+        545,
+        42
+      ],
+      "name": [
+        66,
+        21,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        66,
+        18,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        88,
+        561
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1280-35-full"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "35",
+      "layout": "compact",
+      "mainW": 1265,
+      "card": [
+        1246,
+        64
+      ],
+      "primary": [
+        545,
+        42
+      ],
+      "name": [
+        66,
+        21,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        66,
+        18,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        88,
+        561
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1280-35-compact"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "20",
+      "layout": "compact",
+      "mainW": 1265,
+      "card": [
+        1249,
+        61
+      ],
+      "primary": [
+        549,
+        39
+      ],
+      "name": [
+        66,
+        18,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        66,
+        18,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        88,
+        564
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1280-20-compact"
+    },
+    {
+      "viewport": [
+        430,
+        860
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 415,
+      "card": [
+        389,
+        126
+      ],
+      "primary": [
+        255,
+        53
+      ],
+      "name": [
+        89,
+        28,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        89,
+        22,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        86,
+        286
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "430-100-full"
+    },
+    {
+      "viewport": [
+        390,
+        720
+      ],
+      "scale": "35",
+      "layout": "full",
+      "mainW": 375,
+      "card": [
+        356,
+        96
+      ],
+      "primary": [
+        244,
+        42
+      ],
+      "name": [
+        196,
+        21,
+        "内蒙古包钢稀土高科技股份"
+      ],
+      "nameRects": 1,
+      "code": [
+        196,
+        18,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        86,
+        260
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "390-35-long"
+    },
+    {
+      "viewport": [
+        390,
+        720
+      ],
+      "scale": "100",
+      "layout": "compact",
+      "mainW": 375,
+      "card": [
+        352,
+        139
+      ],
+      "primary": [
+        218,
+        53
+      ],
+      "name": [
+        100,
+        28,
+        "等待候选"
+      ],
+      "nameRects": 1,
+      "code": [
+        100,
+        22,
+        "------"
+      ],
+      "codeClip": false,
+      "quote": [
+        86,
+        249
+      ],
+      "pct": "--.--%",
+      "overflow": false,
+      "label": "390-100-empty-compact"
+    },
+    {
+      "viewport": [
+        320,
+        640
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 305,
+      "card": [
+        286,
+        147
+      ],
+      "primary": [
+        152,
+        53
+      ],
+      "name": [
+        89,
+        28,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        89,
+        22,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        86,
+        183
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "320-100-full"
+    },
+    {
+      "viewport": [
+        320,
+        640
+      ],
+      "scale": "20",
+      "layout": "compact",
+      "mainW": 305,
+      "card": [
+        289,
+        93
+      ],
+      "primary": [
+        179,
+        39
+      ],
+      "name": [
+        66,
+        18,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        66,
+        18,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        86,
+        194
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "320-20-compact"
+    },
+    {
+      "viewport": [
+        640,
+        800
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 625,
+      "card": [
+        587,
+        94
+      ],
+      "primary": [
+        189,
+        53
+      ],
+      "name": [
+        89,
+        28,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        89,
+        22,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        106,
+        219
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "640-100-full"
+    },
+    {
+      "viewport": [
+        768,
+        800
+      ],
+      "scale": "70",
+      "layout": "full",
+      "mainW": 753,
+      "card": [
+        718,
+        80
+      ],
+      "primary": [
+        268,
+        50
+      ],
+      "name": [
+        83,
+        26,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        83,
+        21,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        96,
+        292
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "768-70-full"
+    },
+    {
+      "viewport": [
+        1024,
+        800
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 1009,
+      "card": [
+        961,
+        94
+      ],
+      "primary": [
+        376,
+        53
+      ],
+      "name": [
+        89,
+        28,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        89,
+        22,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        106,
+        407
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1024-100-full"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "25",
+      "layout": "full",
+      "mainW": 1265,
+      "card": [
+        1249,
+        61
+      ],
+      "primary": [
+        549,
+        40
+      ],
+      "name": [
+        66,
+        19,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        66,
+        18,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        88,
+        564
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1280-25-full"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "150",
+      "layout": "full",
+      "mainW": 1265,
+      "card": [
+        1195,
+        100
+      ],
+      "primary": [
+        482,
+        53
+      ],
+      "name": [
+        89,
+        28,
+        "金丹科技"
+      ],
+      "nameRects": 1,
+      "code": [
+        89,
+        22,
+        "300829.SZ"
+      ],
+      "codeClip": false,
+      "quote": [
+        115,
+        518
+      ],
+      "pct": "+6.82%",
+      "overflow": false,
+      "label": "1280-150-full"
+    }
+  ],
+  "failures": []
+}

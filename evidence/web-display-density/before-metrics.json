@@ -1,0 +1,119 @@
+[
+  {
+    "viewport": {
+      "w": 430,
+      "h": 860
+    },
+    "scale": "100",
+    "layout": "full",
+    "mainW": 430,
+    "card": {
+      "w": 398,
+      "h": 172,
+      "grid": "35.1875px 221.641px 87.1719px",
+      "minH": "110px",
+      "pad": "16px"
+    },
+    "name": {
+      "y": 693,
+      "h": 22,
+      "text": "金丹科技"
+    },
+    "quote": {
+      "x": 310,
+      "y": 705,
+      "w": 87
+    },
+    "level": {
+      "w": 48,
+      "h": 26,
+      "y": 74
+    },
+    "sector": {
+      "y": 119,
+      "h": 28
+    },
+    "gapNameQuote": 10,
+    "media720": true,
+    "media1000": true,
+    "label": "100-narrow-430"
+  },
+  {
+    "viewport": {
+      "w": 1280,
+      "h": 820
+    },
+    "scale": "35",
+    "layout": "full",
+    "mainW": 1280,
+    "card": {
+      "w": 1253,
+      "h": 39,
+      "grid": "47.9911px 1382.23px 774.062px 73.5714px 1105.85px 35.1786px",
+      "minH": "110px",
+      "pad": "18px 22px"
+    },
+    "name": {
+      "y": 230,
+      "h": 10,
+      "text": "金丹科技"
+    },
+    "quote": {
+      "x": 538,
+      "y": 228,
+      "w": 271
+    },
+    "level": {
+      "w": 26,
+      "h": 24,
+      "y": 7
+    },
+    "sector": {
+      "y": 8,
+      "h": 23
+    },
+    "gapNameQuote": 8,
+    "media720": false,
+    "media1000": false,
+    "label": "35-desktop-1280"
+  },
+  {
+    "viewport": {
+      "w": 1280,
+      "h": 820
+    },
+    "scale": "35",
+    "layout": "compact",
+    "mainW": 1280,
+    "card": {
+      "w": 1269,
+      "h": 58,
+      "grid": "35.1786px 3367.72px 114.643px 47.9911px",
+      "minH": "0px",
+      "pad": "10px 12px"
+    },
+    "name": {
+      "y": 163,
+      "h": 10,
+      "text": "金丹科技"
+    },
+    "quote": {
+      "x": 1209,
+      "y": 167,
+      "w": 40
+    },
+    "level": {
+      "w": 17,
+      "h": 15,
+      "y": 13
+    },
+    "sector": {
+      "y": 25,
+      "h": 11
+    },
+    "gapNameQuote": 4,
+    "media720": false,
+    "media1000": false,
+    "label": "35-compact-1280"
+  }
+]

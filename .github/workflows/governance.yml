@@ -24,11 +24,12 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --all-groups --frozen --python "3.12"
-      - name: Run Web security regression suite
+      - name: Run Web security, durability, and POSIX deployment regression suites
         run: >-
           uv run pytest tests/test_web_auth_api.py tests/test_web_ws.py
           tests/test_web_services.py tests/test_web_worker.py
-          tests/test_web_healthcheck.py -W error
+          tests/test_web_healthcheck.py tests/test_storage_fsync.py
+          tests/test_cnb_registry_snapshot.py -W error
       - name: Check Python, JavaScript, workspace, and security evidence
         run: |
           uv run ruff check .
@@ -63,6 +64,28 @@ jobs:
             -f deploy/Dockerfile \
             -t stockwatcher-web:"${GITHUB_SHA}" .
 
+  web-display-ui:
+    name: Web display layout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --frozen --python "3.12"
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Run display layout and dashboard UI tests
+        env:
+          STOCKWATCHER_REQUIRE_UI: "1"
+        run: |
+          node --test tests/test_ui_display.mjs
+          uv run pytest tests/test_web_display_layout.py -W error
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
@@ -71,19 +94,111 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Determine dependency-review applicability from the actual PR diff
+        id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import fnmatch
+          import os
+          import re
+          import subprocess
+          from pathlib import Path, PurePosixPath
+
+          base = os.environ["PR_BASE_SHA"]
+          head = os.environ["PR_HEAD_SHA"]
+          ancestor = subprocess.check_output(
+              ["git", "merge-base", base, head], text=True
+          ).strip()
+          paths = subprocess.check_output(
+              ["git", "diff", "--name-only", "--no-renames", "-z", ancestor, head]
+          ).decode("utf-8").split("\0")
+          patterns = (
+              "pyproject.toml", "uv.lock", "uv.toml", "requirements*.txt",
+              "requirements*.in", "requirements*.json", "constraints*.txt",
+              "constraints*.in", "setup.py", "setup.cfg", "Pipfile*", "poetry.lock",
+              "pdm.lock", "pylock*.toml", "package*.json", "npm-shrinkwrap.json",
+              "yarn.lock", "pnpm-lock.yaml", "bun.lock*", "Cargo.toml", "Cargo.lock",
+              "go.mod", "go.sum", "Gemfile*", "*.gemspec", "composer.json",
+              "composer.lock", "pom.xml", "build.gradle*", "gradle.lockfile",
+              "libs.versions.toml", "*.csproj", "*.fsproj", "packages.config",
+              "packages.lock.json", "Directory.Packages.props", "Dockerfile*",
+              "*.dockerfile", "environment*.yml", "environment*.yaml", "conda-lock*",
+              ".gitmodules", ".cnb.yml", "action.yml", "action.yaml",
+          )
+          needs_review = []
+          for path in filter(None, paths):
+              name = PurePosixPath(path).name
+              if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns):
+                  needs_review.append(path)
+              elif path.startswith(".github/workflows/"):
+                  def action_refs(revision):
+                      listing = subprocess.check_output(
+                          ["git", "ls-tree", "--name-only", revision, "--", path],
+                          text=True,
+                      )
+                      if not listing.strip():
+                          return set()
+                      text = subprocess.check_output(
+                          ["git", "show", f"{revision}:{path}"], text=True
+                      )
+                      return set(re.findall(
+                          r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", text, re.MULTILINE
+                      ))
+                  if action_refs(ancestor) != action_refs(head):
+                      needs_review.append(path)
+          required = bool(needs_review)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"required={str(required).lower()}\n")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              if required:
+                  summary.write("Dependency changes detected; external review must pass.\n")
+                  summary.write("\n".join(f"- `{p}`" for p in needs_review) + "\n")
+              else:
+                  summary.write(
+                      "No dependency manifest, lockfile, image declaration, or Action "
+                      "reference changes in the PR diff. Dependency delta review is "
+                      "not applicable. This does not certify existing dependencies "
+                      "as vulnerability-free.\n"
+                  )
+          PY
       - uses: actions/dependency-review-action@v4
+        if: steps.scope.outputs.required == 'true'
 
   workspace-integrity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Validate workspace baseline
         run: python scripts/validate_workspace.py
-      - name: Check whitespace errors
-        run: git show --check --format= HEAD
+      - name: Check whitespace errors in the proposed change
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --check "${PR_BASE_SHA}...${PR_HEAD_SHA}"
+          elif [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$PUSH_BEFORE_SHA" "$GITHUB_SHA"
+          else
+            empty_tree=$(git hash-object -t tree /dev/null)
+            git diff --check "$empty_tree" "$GITHUB_SHA"
+          fi
 
   windows-no-terminal:
     name: Windows no-terminal / Python ${{ matrix.python-version }}
@@ -129,7 +244,7 @@ jobs:
           $reportPath = Join-Path $env:LOCALAPPDATA "StockWatcher\reports\tdxquant-preflight.json"
           if (-not (Test-Path $reportPath)) { throw "Failed preflight did not write a report" }
           $report = Get-Content -Raw -Encoding UTF8 $reportPath | ConvertFrom-Json
-          if ($report.status -ne "FAIL") { throw "Failed preflight report is not FAIL" }
+          if ($report.status -ne "FAIL") { throw "Preflight report is not FAIL" }
           python scripts/check_windows_package.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install Inno Setup

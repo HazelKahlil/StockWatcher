@@ -312,7 +312,9 @@ class SQLiteStore:
 
     @staticmethod
     def _fsync_file(path: Path) -> None:
-        with path.open("rb") as handle:
+        # Windows _commit needs a writable descriptor; do not truncate the snapshot.
+        mode = "r+b" if os.name == "nt" else "rb"
+        with path.open(mode) as handle:
             os.fsync(handle.fileno())
 
     @staticmethod

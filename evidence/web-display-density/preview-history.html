@@ -3,30 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}StockWatcher{% endblock %}</title>
-<link rel="icon" href="/static/favicon.ico?v=1" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=1">
-<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=1">
-<link rel="stylesheet" href="/static/app.css?v=16">
-<link rel="stylesheet" href="/static/refinements.css?v=1">
-{% if user %}<link rel="stylesheet" href="/static/display.css?v=5">{% endif %}
-{% if user %}<link rel="stylesheet" href="/static/motion.css?v=1">{% endif %}
+<title>历史 · StockWatcher（模拟数据预览）</title>
+<link rel="stylesheet" href="/src/stock_watcher/server/static/app.css">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/refinements.css">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css?v=5">
 <meta name="color-scheme" content="light">
-{% if user %}<meta name="csrf-token" content="{{ csrf }}">{% endif %}
-{% if user %}<script src="/static/display.js?v=5"></script>{% endif %}
+<script src="/src/stock_watcher/server/static/display.js?v=5"></script>
 </head>
 <body>
-<a class="skip-link" href="#main">跳到主要内容</a>
 <header class="topbar">
-  <a class="brand" href="/">StockWatcher</a>
-  {% if user %}
+  <a class="brand" href="./preview-dashboard.html">StockWatcher</a>
   <nav aria-label="主导航">
-    <a href="/">当前观察</a>
-    <a href="/alerts">提醒中心</a>
-    <a href="/history">历史</a>
-    <a href="/outcomes">次日复盘</a>
-    <a href="/summary">盘后总结</a>
-    {% if user.role == 'admin' %}<a href="/admin">管理</a>{% endif %}
+    <a href="./preview-dashboard.html">当前观察</a>
+    <a href="./preview-history.html" aria-current="page">历史</a>
+    <a href="./preview-history.html">次日复盘</a>
   </nav>
   <div class="account-cluster">
     <div class="display-control" id="display-control">
@@ -55,23 +45,34 @@
           <button type="button" class="button-secondary" id="display-reset">恢复 100%</button>
           <button type="button" class="display-compact" id="display-compact" aria-pressed="false">仅看三只</button>
         </div>
-        <p class="display-panel-hint" id="display-panel-hint">调整文字与布局大小，页面会根据窗口自动排列。仅看三只会收起次要内容。</p>
+        <p class="display-panel-hint" id="display-panel-hint">拖动即可即时调整。仅看三只会收起说明和复盘，只保留三只候选和必要状态。</p>
       </div>
     </div>
     <div class="account" aria-label="账户">
-      <span class="account-item account-username">{{ user.username }}</span>
+      <span class="account-item account-username">preview</span>
       <button id="logout-btn" type="button" class="account-item account-logout">退出</button>
     </div>
   </div>
-  {% endif %}
 </header>
 <main id="main" tabindex="-1">
-{% block content %}{% endblock %}
+<p class="preview-banner" style="margin:0 0 12px;padding:8px 12px;border-radius:8px;background:#fff7df;color:#7a5a00;font-size:12px;">模拟数据预览 · 历史页应保持完整内容</p>
+<header class="page-heading"><div><p class="page-eyebrow">观察档案</p><h1>历史观察</h1><p class="muted">按日期或代码回看候选，保留每一轮的原始顺序。</p></div></header>
+<form class="filters" aria-label="筛选历史观察">
+  <label>开始日期 <input type="date" value="2026-09-01"></label>
+  <label>结束日期 <input type="date" value="2026-09-10"></label>
+  <button type="button">筛选</button>
+</form>
+<p class="list-status" role="status">已显示 2 条历史观察（模拟）。</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>日期</th><th>排名</th><th>名称</th><th>代码</th></tr></thead>
+    <tbody>
+      <tr><td>2026-09-10</td><td>1</td><td>金丹科技</td><td>300829.SZ</td></tr>
+      <tr><td>2026-09-10</td><td>2</td><td>华宝股份</td><td>300741.SZ</td></tr>
+    </tbody>
+  </table>
+</div>
 </main>
-<footer class="version-note">StockWatcher {{ product_version }}</footer>
-{% if user %}
-<script type="module" src="/static/app.js?v=8"></script>
-{% block scripts %}{% endblock %}
-{% endif %}
+<footer class="version-note">StockWatcher 0.7.0-alpha.3 · 模拟预览</footer>
 </body>
 </html>

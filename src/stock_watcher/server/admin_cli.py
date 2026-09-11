@@ -16,6 +16,7 @@ import argparse
 import getpass
 import hashlib
 import json
+import os
 import shutil
 import sys
 import time
@@ -311,7 +312,7 @@ def _replace_report_directory(source: Path, target: Path) -> None:
     Normal host directories retain the atomic sibling-directory swap.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and target.is_mount():
+    if target.exists() and os.path.ismount(target):
         _replace_mounted_report_directory(source, target)
         return
     staging = target.with_name(f"{target.name}.restore-tmp")

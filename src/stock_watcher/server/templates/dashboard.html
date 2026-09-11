@@ -53,20 +53,21 @@
   <div id="cards" class="cards dashboard-cards" aria-live="polite">
     {% for rank in [1, 2, 3] %}
     <article class="card placeholder-card" aria-label="等待抓取第 {{ rank }} 只候选">
-      <span class="rank rank-{{ rank }}-badge">{{ rank }}</span>
-      <div class="candidate-identity">
-        <h3 class="display-name placeholder-text">等待候选</h3>
-        <span class="display-code placeholder-text">------</span>
+      <div class="candidate-primary">
+        <span class="rank rank-{{ rank }}-badge">{{ rank }}</span>
+        <div class="candidate-identity">
+          <h3 class="display-name placeholder-text">等待候选</h3>
+          <span class="display-code placeholder-text">------</span>
+        </div>
       </div>
       <div class="candidate-quote">
         <span class="ashare-pct placeholder-text">--.--%</span>
         <span class="ashare-price placeholder-text">¥--.--</span>
       </div>
-      <span class="level-tag level-placeholder">待</span>
-      <div class="candidate-sector">
-        <span class="candidate-meta-label">最强板块</span>
+      <div class="candidate-aux">
+        <span class="level-tag level-placeholder">待</span>
         <strong class="placeholder-text">板块待抓取</strong>
-        <small class="placeholder-card-status">正在抓取<span class="placeholder-dots" aria-hidden="true"><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span><span class="placeholder-dot">·</span></span></small>
+        <small class="placeholder-card-status">正在抓取</small>
       </div>
       <span class="card-arrow" aria-hidden="true">›</span>
     </article>
@@ -118,5 +119,5 @@
 </dialog>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/dashboard.js?v=14"></script>
+<script type="module" src="/static/dashboard.js?v=16"></script>
 {% endblock %}

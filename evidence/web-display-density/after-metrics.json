@@ -1,0 +1,135 @@
+[
+  {
+    "label": "100-narrow-430",
+    "viewport": [
+      430,
+      860
+    ],
+    "scale": "100",
+    "layout": "full",
+    "mainW": 415,
+    "card": [
+      383,
+      118
+    ],
+    "minH": "0px",
+    "areas": "\"main quote quote\" \"meta meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 76,
+    "gapNameQuote": 163
+  },
+  {
+    "label": "100-desktop-1280",
+    "viewport": [
+      1280,
+      820
+    ],
+    "scale": "100",
+    "layout": "full",
+    "mainW": 1024,
+    "card": [
+      947,
+      77
+    ],
+    "minH": "0px",
+    "areas": "\"main quote meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 76,
+    "gapNameQuote": 49
+  },
+  {
+    "label": "35-desktop-1280",
+    "viewport": [
+      1280,
+      820
+    ],
+    "scale": "35",
+    "layout": "full",
+    "mainW": 360,
+    "card": [
+      283,
+      113
+    ],
+    "minH": "0px",
+    "areas": "\"main quote quote\" \"meta meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 62,
+    "gapNameQuote": 77
+  },
+  {
+    "label": "35-compact-1280",
+    "viewport": [
+      1280,
+      820
+    ],
+    "scale": "35",
+    "layout": "compact",
+    "mainW": 360,
+    "card": [
+      328,
+      113
+    ],
+    "minH": "0px",
+    "areas": "\"main quote quote\" \"meta meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 62,
+    "gapNameQuote": 122
+  },
+  {
+    "label": "20-compact-1280",
+    "viewport": [
+      1280,
+      820
+    ],
+    "scale": "20",
+    "layout": "compact",
+    "mainW": 360,
+    "card": [
+      328,
+      113
+    ],
+    "minH": "0px",
+    "areas": "\"main quote quote\" \"meta meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 62,
+    "gapNameQuote": 122
+  },
+  {
+    "label": "150-desktop-1280",
+    "viewport": [
+      1280,
+      820
+    ],
+    "scale": "150",
+    "layout": "full",
+    "mainW": 1265,
+    "card": [
+      1188,
+      81
+    ],
+    "minH": "0px",
+    "areas": "\"main quote meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 86,
+    "gapNameQuote": 49
+  },
+  {
+    "label": "100-narrow-longname",
+    "viewport": [
+      430,
+      860
+    ],
+    "scale": "100",
+    "layout": "full",
+    "mainW": 415,
+    "card": [
+      383,
+      131
+    ],
+    "minH": "0px",
+    "areas": "\"main quote quote\" \"meta meta detail\"",
+    "pct": "+6.82%",
+    "quoteW": 76,
+    "gapNameQuote": 49
+  }
+]
