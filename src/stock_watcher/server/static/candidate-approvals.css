@@ -1,0 +1,118 @@
+/* Opt-in addon. No selectors affect the existing dashboard when the flag is off. */
+#cards[data-approvals-enabled="true"] {
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+}
+#cards[data-approvals-enabled="true"] > .card .candidate-actions {
+  grid-column: 4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  justify-self: end;
+}
+.candidate-approval {
+  box-sizing: border-box;
+  width: 6.8rem;
+  flex: 0 0 6.8rem;
+  color: var(--muted, #61748a);
+  font-size: 0.78rem;
+}
+.candidate-approval label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  min-height: 36px;
+  width: 100%;
+  margin: 0;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--line, #d9e1ec);
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.candidate-approval input[type="checkbox"] {
+  appearance: auto;
+  box-sizing: border-box;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--focus, #0866cc);
+}
+.candidate-approval label:focus-within {
+  outline: 2px solid var(--focus, #0866cc);
+  outline-offset: 2px;
+}
+.candidate-approval[data-approval-selected="true"] label {
+  color: var(--focus, #0866cc);
+  background: #eef5ff;
+  border-color: #bdd5f2;
+}
+.candidate-approval[data-approval-pending="true"] label {
+  cursor: wait;
+}
+.candidate-approval [data-approval-retry] {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 0.15rem 0.3rem;
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+}
+.candidate-approval [hidden], .approval-tools [hidden] { display: none; }
+.approval-tools {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted, #61748a);
+  line-height: 1.6;
+}
+.approval-tools p { margin: 0.3rem 0; }
+.approval-tools [role="status"]:empty { display: none; }
+.approval-tools summary { cursor: pointer; width: fit-content; }
+.approval-tools li { margin: 0.4rem 0; overflow-wrap: anywhere; }
+.approval-tools button { font-size: 0.78rem; min-height: 32px; }
+@container page (max-width: 48rem) {
+  #cards[data-approvals-enabled="true"] {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-primary {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-quote {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-aux {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-top: 0.25rem;
+  }
+}
+/* At very small widths, preserve text instead of squeezing it beside a quote. */
+@container page (max-width: 21rem) {
+  #cards[data-approvals-enabled="true"] > .card .candidate-primary {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-quote {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-aux {
+    grid-row: 3;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-actions {
+    grid-row: 4;
+  }
+}

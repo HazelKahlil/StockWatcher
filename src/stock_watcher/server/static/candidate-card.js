@@ -27,6 +27,7 @@ function cardShell({
   articleClass,
   ariaLabel,
   detailCode,
+  approval,
 }) {
   const codeAttr = detailCode ? ` data-detail-code="${esc(detailCode)}"` : '';
   const labelAttr = ariaLabel ? ` aria-label="${esc(ariaLabel)}"` : '';
@@ -44,7 +45,7 @@ function cardShell({
       ${levelHtml}
       ${metaHtml}
     </div>
-    ${detailHtml}
+    ${approval ? approvalActions(approval, detailHtml) : detailHtml}
   </article>`;
 }
 
@@ -68,7 +69,24 @@ export function placeholderCardHTML(rank) {
   });
 }
 
-export function candidateCardHTML(candidate, state) {
+
+function approvalActions(approval, detailHtml) {
+  const { candidate, state } = approval;
+  const snapshotId = Number(state?.snapshot_id);
+  if (!Number.isSafeInteger(snapshotId) || snapshotId <= 0) return detailHtml;
+  return `<div class="candidate-actions">
+    <div class="candidate-approval" data-approval-control
+         data-approval-code="${esc(candidate.code)}"
+         data-approval-name="${esc(candidate.name || candidate.code)}"
+         data-approval-snapshot="${snapshotId}">
+      <label><input type="checkbox" data-approval-checkbox disabled
+        aria-label="认可 ${esc(candidate.name || candidate.code)}">
+        <span data-approval-label>认可</span></label>
+      <button type="button" data-approval-retry hidden>重试保存</button>
+    </div>${detailHtml}</div>`;
+}
+
+export function candidateCardHTML(candidate, state, options = {}) {
   const level = levelMeta(candidate);
   const price = Number(candidate.price).toFixed(2);
   const changePct = Number(candidate.change_pct);
@@ -85,6 +103,7 @@ export function candidateCardHTML(candidate, state) {
   return cardShell({
     rank,
     articleClass: rank === 1 ? 'rank-1-card' : '',
+    approval: options.approvalsEnabled ? { candidate, state } : null,
     detailCode: code,
     nameHtml: esc(name),
     codeHtml: esc(code),

@@ -1,7 +1,9 @@
 import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=8';
 import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
-import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=2';
+import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=3-approvals1';
+import { createApprovalController } from './candidate-approvals.js?v=1';
+let approvalController = null;
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
 const refreshStages = [
@@ -90,7 +92,7 @@ function placeholderCard(rank) {
 }
 
 function cardFor(candidate, state) {
-  return candidateCardHTML(candidate, state);
+  return candidateCardHTML(candidate, state, { approvalsEnabled: approvalController?.enabled });
 }
 
 function compactPrice(value) {
@@ -328,6 +330,7 @@ function renderState(state) {
     } else weak?.remove();
 
   }
+  approvalController?.render(state);
 }
 
 let detailRequest = null;
@@ -396,6 +399,13 @@ function loadState() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const approvalCards = document.getElementById('cards');
+  approvalController = createApprovalController({
+    cards: approvalCards, apiJson, userId: approvalCards?.dataset.approvalUser,
+    status: document.getElementById('approval-status'),
+    history: document.getElementById('approval-history'),
+    pendingRoot: document.getElementById('approval-pending'),
+  });
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
   onEvent((event) => {
@@ -544,6 +554,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (event.key === 'Escape' && activeAutomaticAlert && !document.getElementById('drawer-overlay').open) closeAutomaticAlert();
   });
   document.getElementById('cards').addEventListener('click', event => {
+    if (event.target.closest('[data-approval-control]')) return;
     const card = event.target.closest('[data-detail-code]');
     if (card) void showDetail(card.dataset.detailCode, latestDashboardState);
   });

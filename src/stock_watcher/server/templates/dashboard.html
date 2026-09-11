@@ -50,7 +50,9 @@
     </div>
   </div>
 
-  <div id="cards" class="cards dashboard-cards" aria-live="polite">
+  <div id="cards" class="cards dashboard-cards" aria-live="polite"
+       data-approvals-enabled="{{ 'true' if candidate_approvals_enabled else 'false' }}"
+       data-approval-user="{{ user.user_id }}">
     {% for rank in [1, 2, 3] %}
     <article class="card placeholder-card" aria-label="等待抓取第 {{ rank }} 只候选">
       <div class="candidate-primary">
@@ -73,6 +75,20 @@
     </article>
     {% endfor %}
   </div>
+
+  {% if candidate_approvals_enabled %}
+  <section class="approval-tools" aria-label="个人候选反馈">
+    <p>认可表示值得关注，用于内部复盘；不代表交易。未勾选表示未反馈。标记按候选交易日保留。</p>
+    <p id="approval-status" role="status" aria-live="polite"></p>
+    <div id="approval-pending" aria-label="待确认的反馈"></div>
+    <details id="approval-history">
+      <summary>我的认可记录</summary>
+      <p data-approval-history-status role="status"></p>
+      <ul data-approval-history-list></ul>
+      <button type="button" data-approval-history-more hidden>加载更多</button>
+    </details>
+  </section>
+  {% endif %}
 
   <div class="hero-action-box">
     <button id="manual-refresh" type="button" class="btn-hero hero-action-button btn-refresh">立即获取最新 3 只</button>
@@ -119,5 +135,5 @@
 </dialog>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/dashboard.js?v=16"></script>
+<script type="module" src="/static/dashboard.js?v=17-approvals1"></script>
 {% endblock %}
