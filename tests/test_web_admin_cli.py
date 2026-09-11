@@ -82,7 +82,10 @@ def test_restore_replaces_reports_inside_mounted_directory(
     (target / "stale.pdf").write_bytes(b"stale")
     (target / "stale-dir").mkdir()
     (target / "stale-dir" / "old.pdf").write_bytes(b"old")
-    monkeypatch.setattr("stock_watcher.server.admin_cli.os.path.ismount", lambda path: path == target)
+    monkeypatch.setattr(
+        "stock_watcher.server.admin_cli.os.path.ismount",
+        lambda path: path == target,
+    )
     original_replace = Path.replace
 
     def forbid_mount_rename(path: Path, destination: Path) -> Path:
@@ -114,7 +117,7 @@ def test_create_user_password_cannot_be_passed_on_argv() -> None:
                 "secret-on-argv",
             ]
         )
-    parsed = parser.parse_args(
+    parsed = parser.parse_args().parse_args(
         ["create-user", "--username", "admin", "--role", "admin", "--password-stdin"]
     )
     assert parsed.password_stdin is True
