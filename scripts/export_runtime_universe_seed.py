@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -47,9 +48,18 @@ def main() -> int:
     summary = validate_universe_seed(args.destination, now=now, allow_stale=True)
     if args.destination.name != SEED_FILENAME:
         raise SystemExit(f"seed destination must be named {SEED_FILENAME}")
+    source_commit = args.source_commit
+    if not source_commit:
+        try:
+            source_commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+        except Exception:
+            source_commit = "unknown"
     manifest = write_seed_manifest(
         args.destination.with_name(MANIFEST_FILENAME),
-        source_commit=args.source_commit or "unknown",
+        source_commit=source_commit,
         seed_summary=summary,
         first_run_pack=args.first_run_pack,
     )

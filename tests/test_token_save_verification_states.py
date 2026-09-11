@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 
-from stock_watcher.config import DataSourceSettings
+import pytest
+
+from stock_watcher.config import DataSourceSettings, HttpProfile
 from stock_watcher.providers.tushare.errors import ProviderError, ProviderFailureReason
 from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
 from stock_watcher.security import (
@@ -26,7 +28,7 @@ from stock_watcher.ui.data_source_status import (
 NOW = datetime(2026, 9, 11, 14, 0)
 
 
-def primary_profile():
+def primary_profile() -> HttpProfile:
     return DataSourceSettings().primary_profile
 
 
@@ -50,7 +52,7 @@ def _result(
 
 
 def _tester_with_realtime(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     realtime: CredentialTestResult,
     *,
     budget: ApplicationRequestBudget | None = None,
@@ -71,7 +73,7 @@ def _tester_with_realtime(
     )
 
 
-def test_pro_429_and_realtime_success_is_verified(monkeypatch) -> None:
+def test_pro_429_and_realtime_success_is_verified(monkeypatch: pytest.MonkeyPatch) -> None:
     tester = _tester_with_realtime(
         monkeypatch,
         _result(
@@ -87,7 +89,7 @@ def test_pro_429_and_realtime_success_is_verified(monkeypatch) -> None:
     assert "原生实时可用" in outcome.status_text
 
 
-def test_pro_429_and_realtime_401_is_auth_failure(monkeypatch) -> None:
+def test_pro_429_and_realtime_401_is_auth_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     tester = _tester_with_realtime(
         monkeypatch,
         _result(
@@ -104,7 +106,7 @@ def test_pro_429_and_realtime_401_is_auth_failure(monkeypatch) -> None:
     assert "未被拒绝" not in outcome.status_text
 
 
-def test_pro_429_and_realtime_403_is_permission_failure(monkeypatch) -> None:
+def test_pro_429_and_realtime_403_is_permission_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     tester = _tester_with_realtime(
         monkeypatch,
         _result(
@@ -121,7 +123,7 @@ def test_pro_429_and_realtime_403_is_permission_failure(monkeypatch) -> None:
     assert "全部接口" not in outcome.status_text or "不代表全部接口" in outcome.permission_summary
 
 
-def test_pro_429_and_realtime_timeout_is_pending(monkeypatch) -> None:
+def test_pro_429_and_realtime_timeout_is_pending(monkeypatch: pytest.MonkeyPatch) -> None:
     tester = _tester_with_realtime(
         monkeypatch,
         _result(
@@ -137,7 +139,7 @@ def test_pro_429_and_realtime_timeout_is_pending(monkeypatch) -> None:
     assert "尚未验证通过" in outcome.status_text
 
 
-def test_existing_pro_cooldown_does_not_prove_new_token(monkeypatch) -> None:
+def test_existing_pro_cooldown_does_not_prove_new_token(monkeypatch: pytest.MonkeyPatch) -> None:
     budget = ApplicationRequestBudget()
     budget.pause_for(60.0, lane="pro")
     tester = _tester_with_realtime(
@@ -155,7 +157,7 @@ def test_existing_pro_cooldown_does_not_prove_new_token(monkeypatch) -> None:
     assert "尚未完成基础验证" in outcome.status_text
 
 
-def test_dual_channel_cooldown_does_not_call_realtime(monkeypatch) -> None:
+def test_dual_channel_cooldown_does_not_call_realtime(monkeypatch: pytest.MonkeyPatch) -> None:
     budget = ApplicationRequestBudget()
     budget.pause_for(60.0, lane="pro")
     budget.pause_for(60.0, lane="realtime")
