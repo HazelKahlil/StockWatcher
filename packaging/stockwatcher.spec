@@ -46,7 +46,11 @@ datas = [
 ]
 seed = os.environ.get("STOCKWATCHER_UNIVERSE_SEED_PATH", "").strip()
 if seed and Path(seed).is_file():
-    datas.append((str(Path(seed)), "stock_watcher/data"))
+    seed_path = Path(seed)
+    datas.append((str(seed_path), "stock_watcher/data"))
+    manifest = seed_path.with_name("runtime-universe-seed.manifest.json")
+    if manifest.is_file():
+        datas.append((str(manifest), "stock_watcher/data"))
 
 analysis = Analysis(
     [

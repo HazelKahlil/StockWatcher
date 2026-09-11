@@ -519,6 +519,63 @@ def test_runtime_universe_cache_rejects_checksum_damage_and_stale_context(
     assert stale.value.reason is UniverseCacheFailure.STALE
 
 
+def test_install_seed_copies_only_when_user_cache_is_missing(tmp_path: Path) -> None:
+    seed = tmp_path / "runtime-universe-seed.json"
+    user_cache = tmp_path / "runtime-universe-v1.json"
+    RuntimeUniverseCache(seed, minimum_profile_count=100).save(_universe())
+    cache = RuntimeUniverseCache(user_cache, minimum_profile_count=100)
+
+    assert cache.install_seed(seed, now=NOW) is True
+    loaded = cache.load(now=NOW)
+    assert len(loaded.profiles) == 120
+    assert cache.install_seed(seed, now=NOW) is False
+
+
+def test_validate_universe_seed_rejects_missing_corrupt_and_expired(
+    tmp_path: Path,
+) -> None:
+    from stock_watcher.runtime.universe_seed import (
+        assert_seed_matches_manifest,
+        sha256_file,
+        validate_universe_seed,
+        write_seed_manifest,
+    )
+
+    missing = tmp_path / "runtime-universe-seed.json"
+    with pytest.raises(UniverseCacheError) as missing_error:
+        validate_universe_seed(missing, now=NOW)
+    assert missing_error.value.reason is UniverseCacheFailure.MISSING
+
+    seed = tmp_path / "runtime-universe-seed.json"
+    RuntimeUniverseCache(seed, minimum_profile_count=100).save(_universe())
+    summary = validate_universe_seed(
+        seed,
+        now=NOW,
+        allow_stale=True,
+        minimum_profile_count=100,
+    )
+    manifest = write_seed_manifest(
+        tmp_path / "runtime-universe-seed.manifest.json",
+        source_commit="test",
+        seed_summary=summary,
+        first_run_pack=True,
+    )
+    assert_seed_matches_manifest(seed, manifest)
+    seed.write_text(seed.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    with pytest.raises(UniverseCacheError):
+        assert_seed_matches_manifest(seed, manifest)
+    RuntimeUniverseCache(seed, minimum_profile_count=100).save(_universe())
+    with pytest.raises(UniverseCacheError) as expired:
+        validate_universe_seed(
+            seed,
+            now=datetime(2026, 10, 2, 14, 0, tzinfo=SHANGHAI),
+            allow_stale=True,
+            minimum_profile_count=100,
+        )
+    assert expired.value.reason is UniverseCacheFailure.STALE
+    assert sha256_file(seed)
+
+
 def test_scan_uses_verified_cache_and_never_calls_ordinary_pro(
     tmp_path: Path,
 ) -> None:

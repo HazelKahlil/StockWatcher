@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
 )
@@ -25,6 +27,9 @@ from stock_watcher.domain import SHANGHAI  # noqa: E402
 from stock_watcher.providers.tushare import (  # noqa: E402
     ProviderError,
     ProviderFailureReason,
+)
+from stock_watcher.providers.tushare.rate_limit import (  # noqa: E402
+    ApplicationRequestBudget,
 )
 from stock_watcher.security import (  # noqa: E402
     FAST_CREDENTIAL,
@@ -40,7 +45,9 @@ from stock_watcher.ui.data_source_settings import (  # noqa: E402
     DataSourceSettingsDialog,
 )
 from stock_watcher.ui.data_source_status import (  # noqa: E402
+    PENDING_VERIFICATION,
     CredentialTestResult,
+    LightweightCredentialTester,
     TushareCredentialTester,
 )
 from stock_watcher.ui.main_window import MainWindow  # noqa: E402
@@ -440,3 +447,111 @@ def test_failed_keyring_replacement_preserves_previous_credential() -> None:
     store.reject_writes = True
     assert not controller.commit_candidate("super", confirmed=True)
     assert store.get(SUPER_CREDENTIAL) == "previous-secret"
+
+
+def test_token_save_stays_clickable_during_pro_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = application()
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+    budget = ApplicationRequestBudget()
+    budget.pause_for(60.0, lane="pro")
+    tester = LightweightCredentialTester(
+        request_budget=budget,
+        native_realtime_tester=SimpleNamespace(
+            test=lambda *_args, **_kwargs: CredentialTestResult(
+                success=False,
+                tested_at=datetime.now().astimezone(),
+                status_text="synthetic timeout",
+                permission_summary="synthetic",
+                expires_at="未知",
+                safe_reason="timeout",
+                realtime_status="timeout",
+                verification_state=PENDING_VERIFICATION,
+            )
+        ),
+    )
+    controller = DataSourceSettingsController(
+        store=MemoryCredentialStore(),
+        tester=tester,
+        request_budget=budget,
+    )
+    dialog = DataSourceSettingsDialog(controller, platform="win32")
+    editor = dialog._primary_editor
+    editor.secret.setText("candidate-token")
+    assert editor.save_button.isEnabled()
+    editor.save_button.click()
+    deadline = datetime.now().timestamp() + 1.0
+    while (
+        editor.status.text() == "正在后台测试基础连接；窗口仍可关闭。"
+        and datetime.now().timestamp() < deadline
+    ):
+        app.processEvents()
+    assert editor.save_button.isEnabled()
+    assert "待验证" in editor.status.text()
+    assert "未验证" in editor.permission.text() or "冷却" in editor.permission.text()
+    dialog.close()
+    app.processEvents()
+
+
+def test_token_save_watchdog_reenables_after_hung_test() -> None:
+    app = application()
+
+    class HangTester:
+        def test(self, profile: object, secret: str) -> CredentialTestResult:
+            import time
+
+            time.sleep(0.25)
+            return CredentialTestResult(
+                success=False,
+                tested_at=datetime.now().astimezone(),
+                status_text="should-not-apply",
+                permission_summary="stale",
+                expires_at="未知",
+                safe_reason="timeout",
+            )
+
+    controller = DataSourceSettingsController(
+        store=MemoryCredentialStore(),
+        tester=HangTester(),
+    )
+    dialog = DataSourceSettingsDialog(controller, platform="win32")
+    editor = dialog._primary_editor
+    editor._test_watchdog.setInterval(80)
+    editor.secret.setText("candidate-token")
+    editor.save_button.click()
+    app.processEvents()
+    assert not editor.save_button.isEnabled()
+    deadline = datetime.now().timestamp() + 1.0
+    while not editor.save_button.isEnabled() and datetime.now().timestamp() < deadline:
+        app.processEvents()
+    assert editor.save_button.isEnabled()
+    assert editor.status.text() == "基础连接测试超时，当前 Token 未被替换。"
+    assert "primary" not in editor.controller._pending
+    late = CredentialTestResult(
+        success=True,
+        tested_at=datetime.now().astimezone(),
+        status_text="late-success",
+        permission_summary="stale",
+        expires_at="未知",
+        verification_state="verified",
+    )
+    editor.controller._stage_test_result(
+        "primary",
+        "late-token",
+        late,
+        editor.controller.profile("primary"),
+        pending_epoch=editor.controller._pending_epoch - 1,
+    )
+    assert "primary" not in editor.controller._pending
+    finish = datetime.now().timestamp() + 1.0
+    while datetime.now().timestamp() < finish:
+        app.processEvents()
+        if "stockwatcher-token-test" not in {thread.name for thread in threading.enumerate()}:
+            break
+    dialog.close()
+    app.processEvents()

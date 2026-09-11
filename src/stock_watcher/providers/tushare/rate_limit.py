@@ -15,8 +15,10 @@ class ApplicationRequestBudget:
     their own burst.  This gate is deliberately process-local and injected
     into every product-route transport.
 
-    The lock is held while waiting so two callers cannot reserve the same
-    start slot.  The HTTP/SDK request itself runs outside this lock; the budget
+    Callers serialize on this lock only while computing the next start slot.
+    Waiting out an interval or 429 happens after the lock is released so a
+    Token test can still observe cooldown without sitting behind a sleeper.
+    The HTTP/SDK request itself also runs outside this lock; the budget
     governs request *starts*, while the scan coordinator remains responsible
     for preventing overlapping full-market scans.
     """
@@ -44,29 +46,42 @@ class ApplicationRequestBudget:
         self._not_before_by_lane: dict[str, float] = {}
 
     def acquire(self, lane: str = "shared") -> float:
-        """Reserve the next request start and return any applied wait."""
+        """Reserve the next request start and return any applied wait.
+
+        Sleep happens outside the lock so a Token test or status poll can still
+        read ``cooldown_remaining()`` while another lane is waiting out a 429.
+        """
         if not lane:
             raise ValueError("request budget lane must not be empty")
-        with self._lock:
-            now = self._clock()
-            interval_deadline = (
-                self._last_started + self.min_interval_seconds
-                if self._last_started is not None
-                else now
-            )
-            deadline = max(
-                self._not_before_by_lane.get("shared", 0.0),
-                self._not_before_by_lane.get(lane, 0.0),
-                interval_deadline,
-            )
-            delay = max(0.0, deadline - now)
-            if delay:
-                self._sleeper(delay)
-            # Test clocks are sometimes deliberately passive.  Reserving the
-            # calculated deadline still prevents a second caller from sharing
-            # this slot even when its fake sleeper does not advance time.
-            self._last_started = max(deadline, self._clock())
-            return delay
+        waited = 0.0
+        while True:
+            with self._lock:
+                now = self._clock()
+                interval_deadline = (
+                    self._last_started + self.min_interval_seconds
+                    if self._last_started is not None
+                    else now
+                )
+                deadline = max(
+                    self._not_before_by_lane.get("shared", 0.0),
+                    self._not_before_by_lane.get(lane, 0.0),
+                    interval_deadline,
+                )
+                delay = max(0.0, deadline - now)
+                if delay <= 0:
+                    # Test clocks are sometimes deliberately passive.  Reserving
+                    # the calculated deadline still prevents a second caller
+                    # from sharing this slot even when its fake sleeper does
+                    # not advance time.
+                    self._last_started = max(deadline, self._clock())
+                    return waited
+            before = self._clock()
+            self._sleeper(delay)
+            waited += delay
+            if self._clock() <= before:
+                with self._lock:
+                    self._last_started = max(deadline, self._clock())
+                    return waited
 
     def pause_for(self, seconds: float | None, *, lane: str = "shared") -> float:
         """Apply a 429 cooldown without conflating independent provider routes."""

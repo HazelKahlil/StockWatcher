@@ -159,6 +159,118 @@ def test_lightweight_primary_tester_uses_only_one_base_call(
     assert "后台分项检测" in outcome.permission_summary
 
 
+def test_lightweight_tester_does_not_wait_out_pro_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manual = ManualTime()
+    budget = ApplicationRequestBudget(
+        clock=manual.monotonic,
+        sleeper=manual.sleep,
+    )
+    budget.pause_for(60.0, lane="pro")
+    calls: list[TransportRequest] = []
+
+    class RecordingPro:
+        def execute(self, request: TransportRequest) -> object:
+            calls.append(request)
+            raise AssertionError("candidate Token test must not wait out a 429")
+
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareSdkProTransport",
+        lambda *_args, **_kwargs: RecordingPro(),
+    )
+
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareNativeRealtimeTester",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            test=lambda *_test_args, **_test_kwargs: CredentialTestResult(
+                success=False,
+                tested_at=fixed_now(),
+                status_text="realtime skipped",
+                permission_summary="skipped",
+                expires_at="未知",
+                safe_reason="rate_limited",
+            )
+        ),
+    )
+
+    outcome = LightweightCredentialTester(request_budget=budget).test(
+        primary_profile(),
+        "candidate-token",
+    )
+
+    assert outcome.success
+    assert outcome.safe_reason == "rate_limited"
+    assert outcome.verification_state == "pending_verification"
+    assert "待验证" in outcome.status_text
+    assert "不会被未验证值替换" in outcome.permission_summary
+    assert calls == []
+    assert manual.sleeps == []
+
+
+def test_lightweight_tester_accepts_pro_429_when_realtime_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RateLimitedPro:
+        def execute(self, request: TransportRequest) -> object:
+            raise ProviderError(ProviderFailureReason.RATE_LIMITED, retry_after_seconds=60.0)
+
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareSdkProTransport",
+        lambda *_args, **_kwargs: RateLimitedPro(),
+    )
+    monkeypatch.setattr(
+        data_source_status,
+        "TushareNativeRealtimeTester",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            test=lambda *_test_args, **_test_kwargs: CredentialTestResult(
+                success=True,
+                tested_at=fixed_now(),
+                status_text="realtime ok",
+                permission_summary="ok",
+                expires_at="未知",
+                realtime_status="available",
+                realtime_records=1,
+                realtime_source_timestamp_present=True,
+                realtime_route="native_realtime",
+            )
+        ),
+    )
+
+    outcome = LightweightCredentialTester().test(primary_profile(), "candidate-token")
+
+    assert outcome.success
+    assert outcome.safe_reason == "rate_limited"
+    assert outcome.verification_state == "verified"
+    assert "原生实时可用" in outcome.status_text
+    assert outcome.realtime_records == 1
+
+
+def test_budget_cooldown_remaining_stays_responsive_during_acquire_wait() -> None:
+    budget = ApplicationRequestBudget()
+    budget.acquire()
+    started = threading.Event()
+
+    def waiter() -> None:
+        started.set()
+        budget.acquire()
+
+    thread = threading.Thread(target=waiter, name="budget-acquire-wait")
+    thread.start()
+    assert started.wait(1.0)
+    time.sleep(0.05)
+    began = time.monotonic()
+    remaining = budget.cooldown_remaining()
+    elapsed = time.monotonic() - began
+    assert elapsed < 0.2
+    assert remaining >= 0.0
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
 @pytest.mark.parametrize(
     ("retry_after", "expected"), [(None, 60.0), ("17", 17.0)])
 def test_http_429_sets_pro_lane_cooldown_without_retrying(
