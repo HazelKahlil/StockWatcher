@@ -16,7 +16,8 @@
 
 - 运行环境：macOS / Playwright Chromium / 模拟数据（非真实行情）
 - [x] 自动测试：`node --test tests/test_ui_display.mjs`（9 passed）
-- [x] 同视口前后测量：见 `evidence/web-display-density/before-metrics.json` 与 `after-metrics.json`
+- [x] Python UI：`STOCKWATCHER_REQUIRE_UI=1 uv run pytest tests/test_web_display_layout.py -W error`（几何、正式 dashboard 交互、harness 异常释放、注入 POST 负向断言）
+- [x] 同视口前后测量：见 `evidence/web-display-density/round3-metrics.json`（实现 `029a90d`；round2 的 561/564 是 `quoteLeft`，不是 `nameToQuoteGap`）
 - [ ] Windows / 通达信现场验证（如适用）
 - [x] 未把 Mac/Replay 结果表述为 Windows/通达信已验证
 
