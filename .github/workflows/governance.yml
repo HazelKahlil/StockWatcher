@@ -99,13 +99,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Validate workspace baseline
         run: python scripts/validate_workspace.py
-      - name: Check whitespace errors
-        run: git show --check --format= HEAD
+      - name: Check whitespace errors in the proposed change
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --check "${PR_BASE_SHA}...${PR_HEAD_SHA}"
+          elif [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$PUSH_BEFORE_SHA" "$GITHUB_SHA"
+          else
+            empty_tree=$(git hash-object -t tree /dev/null)
+            git diff --check "$empty_tree" "$GITHUB_SHA"
+          fi
 
   windows-no-terminal:
     name: Windows no-terminal / Python ${{ matrix.python-version }}
@@ -151,7 +167,7 @@ jobs:
           $reportPath = Join-Path $env:LOCALAPPDATA "StockWatcher\reports\tdxquant-preflight.json"
           if (-not (Test-Path $reportPath)) { throw "Failed preflight did not write a report" }
           $report = Get-Content -Raw -Encoding UTF8 $reportPath | ConvertFrom-Json
-          if ($report.status -ne "FAIL") { throw "Failed preflight report is not FAIL" }
+          if ($report.status -ne "FAIL") { throw "Preflight report is not FAIL" }
           python scripts/check_windows_package.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install Inno Setup
