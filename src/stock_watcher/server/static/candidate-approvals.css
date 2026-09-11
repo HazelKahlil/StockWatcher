@@ -116,3 +116,8 @@
     grid-row: 4;
   }
 }
+
+/* Only opt-in feedback cards. Keep dashboard's existing delegated detail handler. */
+#cards[data-approvals-enabled="true"] .card-open-detail::after {
+  pointer-events: none;
+}
