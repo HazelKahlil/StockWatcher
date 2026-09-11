@@ -34,7 +34,7 @@ def test_fsync_uses_non_truncating_platform_handle(
     class TrackedPath:
         def open(self, mode: str) -> BinaryIO:
             assert mode == expected_mode
-            handle = target.open(mode)
+            handle = cast(BinaryIO, target.open(mode))
             opened.append(handle)
             return handle
 
