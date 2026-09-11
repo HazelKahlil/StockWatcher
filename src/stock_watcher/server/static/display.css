@@ -11,7 +11,6 @@ html {
   --ui-card-gap: clamp(0.35rem, calc(0.18rem + 0.7rem * var(--ui-scale)), 1rem);
   --ui-rank-size: clamp(1.45rem, calc(1.2rem + 1.1rem * var(--ui-scale)), 2.4rem);
   --ui-page-pad-x: clamp(8px, min(3vw, calc(2px + 22px * var(--ui-scale))), 40px);
-  --ui-quote-col: clamp(5.5rem, calc(4.6rem + 2rem * var(--ui-scale)), 7.2rem);
 }
 
 #main {
@@ -428,14 +427,18 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 }
 
 .dashboard-cards {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) 1.75rem;
+  column-gap: var(--ui-card-gap);
+  row-gap: var(--ui-card-gap);
   container-type: inline-size;
   container-name: candidates;
 }
 
 .dashboard-cards > .card {
   display: grid;
-  grid-template-columns: minmax(9rem, 1fr) var(--ui-quote-col) minmax(0, 1fr) 1.75rem;
-  grid-template-areas: "primary quote aux detail";
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   align-items: center;
   column-gap: var(--ui-card-gap);
   row-gap: 0.28rem;
@@ -445,7 +448,7 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 
 .dashboard-cards > .card .candidate-primary,
 .dashboard-cards > .card .candidate-main {
-  grid-area: primary;
+  grid-column: 1;
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -463,8 +466,10 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 }
 
 .dashboard-cards > .card .candidate-quote {
-  grid-area: quote;
-  width: var(--ui-quote-col);
+  grid-column: 2;
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
   align-items: flex-end;
   justify-self: end;
   text-align: right;
@@ -472,7 +477,7 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 
 .dashboard-cards > .card .candidate-aux,
 .dashboard-cards > .card .candidate-meta {
-  grid-area: aux;
+  grid-column: 3;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -482,7 +487,7 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
 
 .dashboard-cards > .card .card-open-detail,
 .dashboard-cards > .card .card-arrow {
-  grid-area: detail;
+  grid-column: 4;
   justify-self: end;
 }
 
@@ -543,17 +548,37 @@ html[data-watch-layout="compact"]:has(.dashboard-cards) .status-item:nth-child(n
   font-size: 1.2rem;
 }
 
-@container candidates (max-width: 36rem) {
+@container page (max-width: 36rem) {
+  .dashboard-cards {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
   .dashboard-cards > .card {
-    --ui-quote-col: 5.4rem;
-    grid-template-columns: minmax(0, 1fr) var(--ui-quote-col);
-    grid-template-areas:
-      "primary quote"
-      "aux detail";
+    grid-template-rows: auto auto;
+  }
+
+  .dashboard-cards > .card .candidate-primary,
+  .dashboard-cards > .card .candidate-main {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .dashboard-cards > .card .candidate-quote {
+    grid-column: 2;
+    grid-row: 1;
     justify-self: end;
+  }
+
+  .dashboard-cards > .card .candidate-aux,
+  .dashboard-cards > .card .candidate-meta {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .dashboard-cards > .card .card-open-detail,
+  .dashboard-cards > .card .card-arrow {
+    grid-column: 2;
+    grid-row: 2;
   }
 }
 

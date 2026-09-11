@@ -1,24 +1,31 @@
-"""Run display-density capture checks as a pytest regression."""
+"""Display-density UI regression. Does not overwrite committed evidence."""
 
 from __future__ import annotations
 
-import runpy
 from pathlib import Path
 
 import pytest
+from web_display_harness import (
+    chromium_available,
+    require_ui,
+    run_dashboard_interactions,
+    run_geometry,
+)
 
-ROOT = Path(__file__).resolve().parents[1]
-CAPTURE = ROOT / "evidence" / "web-display-density" / "capture.py"
+
+def _need_chromium() -> None:
+    if chromium_available():
+        return
+    if require_ui():
+        pytest.fail("Playwright Chromium is required in this job")
+    pytest.skip("Playwright Chromium is not installed")
 
 
-def test_web_display_capture_script() -> None:
-    ns = runpy.run_path(str(CAPTURE), run_name="not_main")
-    generate = ns["generate_evidence"]
-    try:
-        code = generate()
-    except Exception as exc:
-        message = str(exc)
-        if "Executable doesn't exist" in message or "playwright install" in message:
-            pytest.skip("Playwright Chromium is not installed in this environment")
-        raise
-    assert code == 0
+def test_web_display_geometry(tmp_path: Path) -> None:
+    _need_chromium()
+    assert run_geometry(out_dir=tmp_path, write_shots=False, prefix="tmp") == 0
+
+
+def test_web_display_dashboard_interactions() -> None:
+    _need_chromium()
+    assert run_dashboard_interactions() == 0

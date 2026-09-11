@@ -47,8 +47,8 @@ test('display entry is labeled and lives next to the account cluster', () => {
   assert.match(baseHtml, /显示大小/);
   assert.match(baseHtml, /id="display-scale"/);
   assert.match(baseHtml, /仅看三只/);
-  assert.match(baseHtml, /display\.js\?v=4/);
-  assert.match(baseHtml, /display\.css\?v=4/);
+  assert.match(baseHtml, /display\.js\?v=5/);
+  assert.match(baseHtml, /display\.css\?v=5/);
   assert.match(baseHtml, /调整文字与布局大小/);
   assert.match(baseHtml, /min="20"/);
   assert.match(baseHtml, /max="150"/);

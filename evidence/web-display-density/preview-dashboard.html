@@ -6,10 +6,10 @@
 <title>当前观察 · StockWatcher（模拟数据预览）</title>
 <link rel="stylesheet" href="/src/stock_watcher/server/static/app.css">
 <link rel="stylesheet" href="/src/stock_watcher/server/static/refinements.css">
-<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css?v=4">
+<link rel="stylesheet" href="/src/stock_watcher/server/static/display.css?v=5">
 <link rel="stylesheet" href="/src/stock_watcher/server/static/motion.css">
 <meta name="color-scheme" content="light">
-<script src="/src/stock_watcher/server/static/display.js?v=4"></script>
+<script src="/src/stock_watcher/server/static/display.js?v=5"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -143,15 +143,22 @@ const cards = document.getElementById('cards');
 if (params.get('empty') === '1') {
   cards.innerHTML = [1, 2, 3].map(placeholderCardHTML).join('');
 } else if (params.get('partial') === '1') {
-  cards.innerHTML = candidateCardHTML(fixtures[0], {}) + [2, 3].map(placeholderCardHTML).join('');
+  cards.innerHTML = candidateCardHTML(fixtures[0], {})
+    + [2, 3].map(placeholderCardHTML).join('');
 } else {
-  const rows = params.get('long') === '1'
-    ? [
-        { ...fixtures[0], name: '内蒙古包钢稀土高科技股份', sector_name: '稀土永磁材料概念' },
-        fixtures[1],
-        fixtures[2],
-      ]
-    : fixtures;
+  let rows = fixtures;
+  if (params.get('long') === '1' || params.get('stress') === '1') {
+    rows = [
+      {
+        ...fixtures[0],
+        name: '内蒙古包钢稀土高科技股份',
+        sector_name: '稀土永磁材料概念',
+        change_pct: params.get('stress') === '1' ? 129.99 : 6.82,
+      },
+      fixtures[1],
+      fixtures[2],
+    ];
+  }
   cards.innerHTML = rows.map((row) => candidateCardHTML(row, {})).join('');
 }
 

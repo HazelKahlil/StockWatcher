@@ -63,6 +63,28 @@ jobs:
             -f deploy/Dockerfile \
             -t stockwatcher-web:"${GITHUB_SHA}" .
 
+  web-display-ui:
+    name: Web display layout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --frozen --python "3.12"
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Run display layout and dashboard UI tests
+        env:
+          STOCKWATCHER_REQUIRE_UI: "1"
+        run: |
+          node --test tests/test_ui_display.mjs
+          uv run pytest tests/test_web_display_layout.py -W error
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
