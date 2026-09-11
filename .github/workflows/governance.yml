@@ -24,11 +24,12 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --all-groups --frozen --python "3.12"
-      - name: Run Web security regression suite
+      - name: Run Web security, durability, and POSIX deployment regression suites
         run: >-
           uv run pytest tests/test_web_auth_api.py tests/test_web_ws.py
           tests/test_web_services.py tests/test_web_worker.py
-          tests/test_web_healthcheck.py -W error
+          tests/test_web_healthcheck.py tests/test_storage_fsync.py
+          tests/test_cnb_registry_snapshot.py -W error
       - name: Check Python, JavaScript, workspace, and security evidence
         run: |
           uv run ruff check .
@@ -93,7 +94,83 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Determine dependency-review applicability from the actual PR diff
+        id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import fnmatch
+          import os
+          import re
+          import subprocess
+          from pathlib import Path, PurePosixPath
+
+          base = os.environ["PR_BASE_SHA"]
+          head = os.environ["PR_HEAD_SHA"]
+          ancestor = subprocess.check_output(
+              ["git", "merge-base", base, head], text=True
+          ).strip()
+          paths = subprocess.check_output(
+              ["git", "diff", "--name-only", "--no-renames", "-z", ancestor, head]
+          ).decode("utf-8").split("\0")
+          patterns = (
+              "pyproject.toml", "uv.lock", "uv.toml", "requirements*.txt",
+              "requirements*.in", "requirements*.json", "constraints*.txt",
+              "constraints*.in", "setup.py", "setup.cfg", "Pipfile*", "poetry.lock",
+              "pdm.lock", "pylock*.toml", "package*.json", "npm-shrinkwrap.json",
+              "yarn.lock", "pnpm-lock.yaml", "bun.lock*", "Cargo.toml", "Cargo.lock",
+              "go.mod", "go.sum", "Gemfile*", "*.gemspec", "composer.json",
+              "composer.lock", "pom.xml", "build.gradle*", "gradle.lockfile",
+              "libs.versions.toml", "*.csproj", "*.fsproj", "packages.config",
+              "packages.lock.json", "Directory.Packages.props", "Dockerfile*",
+              "*.dockerfile", "environment*.yml", "environment*.yaml", "conda-lock*",
+              ".gitmodules", ".cnb.yml", "action.yml", "action.yaml",
+          )
+          needs_review = []
+          for path in filter(None, paths):
+              name = PurePosixPath(path).name
+              if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns):
+                  needs_review.append(path)
+              elif path.startswith(".github/workflows/"):
+                  def action_refs(revision):
+                      listing = subprocess.check_output(
+                          ["git", "ls-tree", "--name-only", revision, "--", path],
+                          text=True,
+                      )
+                      if not listing.strip():
+                          return set()
+                      text = subprocess.check_output(
+                          ["git", "show", f"{revision}:{path}"], text=True
+                      )
+                      return set(re.findall(
+                          r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", text, re.MULTILINE
+                      ))
+                  if action_refs(ancestor) != action_refs(head):
+                      needs_review.append(path)
+          required = bool(needs_review)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"required={str(required).lower()}\n")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              if required:
+                  summary.write("Dependency changes detected; external review must pass.\n")
+                  summary.write("\n".join(f"- `{p}`" for p in needs_review) + "\n")
+              else:
+                  summary.write(
+                      "No dependency manifest, lockfile, image declaration, or Action "
+                      "reference changes in the PR diff. Dependency delta review is "
+                      "not applicable. This does not certify existing dependencies "
+                      "as vulnerability-free.\n"
+                  )
+          PY
       - uses: actions/dependency-review-action@v4
+        if: steps.scope.outputs.required == 'true'
 
   workspace-integrity:
     runs-on: ubuntu-latest
