@@ -58,6 +58,33 @@ def application() -> QApplication:
     return existing if isinstance(existing, QApplication) else QApplication([])
 
 
+def _isolate_qt_lifecycle_on_windows(nodeid: str) -> bool:
+    """Run Mac Qt lifecycle cases in a child process on Windows.
+
+    A later in-process MacApplicationLifecycle can heap-corrupt the shared
+    QApplication after other Windows Qt tests.  The child still has to pass;
+    a crash is reported as a failed return code, not swallowed.
+    """
+    if sys.platform != "win32" or os.environ.get("STOCKWATCHER_QT_ISOLATED") == "1":
+        return True
+    environment = os.environ.copy()
+    environment["STOCKWATCHER_QT_ISOLATED"] = "1"
+    environment["QT_QPA_PLATFORM"] = "offscreen"
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", nodeid, "-q", "--tb=short"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, (
+        f"{nodeid}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    return False
+
+
 def test_macos_application_uses_padded_icon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -508,6 +535,10 @@ class _LifecycleWindow:
 
 
 def test_macos_lifecycle_ignores_focus_changes_but_warms_after_suspend() -> None:
+    if not _isolate_qt_lifecycle_on_windows(
+        "tests/test_macos_port.py::test_macos_lifecycle_ignores_focus_changes_but_warms_after_suspend"
+    ):
+        return
     app = application()
     window = _LifecycleWindow()
     lifecycle = MacApplicationLifecycle(
@@ -538,6 +569,10 @@ def test_macos_lifecycle_ignores_focus_changes_but_warms_after_suspend() -> None
 
 
 def test_macos_lifecycle_detects_sleep_gap_without_focus_false_positive() -> None:
+    if not _isolate_qt_lifecycle_on_windows(
+        "tests/test_macos_port.py::test_macos_lifecycle_detects_sleep_gap_without_focus_false_positive"
+    ):
+        return
     app = application()
     window = _LifecycleWindow()
     clock = [100.0]
@@ -705,6 +740,10 @@ def test_cancelled_scan_response_cannot_form_a_market_snapshot() -> None:
 
 def test_macos_lifecycle_records_graceful_quit_on_system_quit_event() -> None:
     """Cmd+Q / AppleEvent quit must end the runtime session gracefully."""
+    if not _isolate_qt_lifecycle_on_windows(
+        "tests/test_macos_port.py::test_macos_lifecycle_records_graceful_quit_on_system_quit_event"
+    ):
+        return
     app = application()
     window = _LifecycleWindow()
     calls: list[tuple[str, str]] = []
@@ -744,6 +783,10 @@ def test_apple_event_quit_handler_degrades_safely_when_carbon_unavailable(
 def test_macos_lifecycle_external_quit_records_graceful_and_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if not _isolate_qt_lifecycle_on_windows(
+        "tests/test_macos_port.py::test_macos_lifecycle_external_quit_records_graceful_and_exits"
+    ):
+        return
     app = application()
     window = _LifecycleWindow()
     calls: list[tuple[str, str]] = []

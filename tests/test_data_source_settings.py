@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -504,7 +505,7 @@ def test_token_save_watchdog_reenables_after_hung_test() -> None:
         def test(self, profile: object, secret: str) -> CredentialTestResult:
             import time
 
-            time.sleep(1.0)
+            time.sleep(0.25)
             return CredentialTestResult(
                 success=False,
                 tested_at=datetime.now().astimezone(),
@@ -547,5 +548,10 @@ def test_token_save_watchdog_reenables_after_hung_test() -> None:
         pending_epoch=editor.controller._pending_epoch - 1,
     )
     assert "primary" not in editor.controller._pending
+    finish = datetime.now().timestamp() + 1.0
+    while datetime.now().timestamp() < finish:
+        app.processEvents()
+        if "stockwatcher-token-test" not in {thread.name for thread in threading.enumerate()}:
+            break
     dialog.close()
     app.processEvents()
