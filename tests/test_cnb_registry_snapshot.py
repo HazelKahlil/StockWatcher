@@ -7,6 +7,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "registry-snapshot.sh"
 PREVIEW_SCRIPT = PROJECT_ROOT / "deploy" / "cnb" / "run-preview.sh"
@@ -87,6 +89,10 @@ def _run_registry(action: str, env: dict[str, str]) -> subprocess.CompletedProce
     )
 
 
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="CNB Bash and POSIX permission contract is required in the Linux Web CI job",
+)
 def test_cnb_key_escrow_is_private_non_overwriting_and_recoverable(
     tmp_path: Path,
 ) -> None:
