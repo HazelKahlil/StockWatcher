@@ -121,6 +121,8 @@ class SQLiteStore:
             with connection:
                 if immediate or self._write_guard is not None:
                     connection.execute("BEGIN IMMEDIATE")
+                if self._write_guard is not None:
+                    self._write_guard(connection)
                 yield connection
 
     def bind_write_guard(
@@ -2166,7 +2168,7 @@ class SQLiteStore:
         now: datetime,
         days: int = 30,
     ) -> list[dict[str, Any]]:
-        """Read only scheduled alert candidates for safe, idempotentent backfill."""
+        """Read only scheduled alert candidates for safe, idempotent backfill."""
         if days < 1:
             raise ValueError("candidate outcome backfill days must be positive")
         cutoff = (now - timedelta(days=days)).isoformat()
