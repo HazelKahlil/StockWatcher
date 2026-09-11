@@ -1,32 +1,32 @@
 # v0.7 Web 显示大小与紧凑看盘
 
-> 状态：PR #12 返修已推送，等待复审；未合并、未部署。
-> 工作树：`90-Archive/StockWatcher/00-current/app-mac-web-sync`
-> 被测代码：`014e53ef084bcea81af9922636e8a1e43c33ce31`
-> 证据提交：见本文件所在分支最新 docs/evidence 提交
+> 状态：PR #12 定向返修已推送，等待复审；未合并、未部署。
+> 被测实现：`029a90d3e2f7dc9846184c559d77e7fb9adfa255`
+> 证据提交：见其后仅含截图/测量/说明的提交
 
-## 本轮返修（相对已审核 `967a339`）
+## 本轮相对 `3680405`
 
-不再把“调小”主要做成把 `#main` 压到 `16rem` 细柱。显示比例只驱动密度变量（名称/代码/报价字号、卡片内边距、间距、排名尺寸、水平页边距）。列宽跟随窗口，历史/复盘页不再被挤成细条。
+保留页面宽度与显示密度分离。候选卡改用 **subgrid**：身份列为 `max-content`，报价列为内容宽度，剩余给板块等辅助信息。宽屏 35%/20% 名称到报价的空隙从约 560px 收到约 8–17px。报价不再使用固定 `5.4rem`。
 
-卡片主行只放身份和报价；级别、板块、状态进次信息组。窄容器才把次组换到第二行。四字名称 `word-break: keep-all`，代码 `nowrap` 且覆盖旧的 `0.86rem !important` 与 ellipsis。
+几何检查改为三张卡全部测量，用 `Range` 取文本矩形，并做名称/代码与报价的碰撞检查。长名称与等待卡不再跳过溢出和重叠。
 
-## 本轮测量（Chromium，模拟数据 `preview-fixtures-v2`）
+新增正式 `dashboard.html` + `dashboard.js` 模拟接口测试：详情打开/关闭焦点返回、刷新 POST、拖动滑杆不发 manual-refresh。
+
+Linux CI 新增 `Web display layout` 作业，安装 Chromium，`STOCKWATCHER_REQUIRE_UI=1` 时缺浏览器失败。pytest 把测量写到临时目录；只有 `capture.py` 写入 `evidence/web-display-density/`。
+
+## 测量（Chromium，`harness-fixtures-v3`）
 
 `uv run python evidence/web-display-density/capture.py`
 
-| 场景 | 视口 | 主列宽 | 卡高 | 名称高 | 代码裁切 |
-| --- | --- | --- | --- | --- | --- |
-| 100% 完整 | 1280×820 | 1265 | 94 | 28 | 否 |
-| 35% 完整/紧凑 | 1280×820 | 1265 | 64 | 21 | 否 |
-| 20% 紧凑 | 1280×820 | 1265 | 61 | 18 | 否 |
-| 100% 窄窗 | 430×860 | 415 | 126 | 28 | 否 |
-| 320 100% | 320×640 | 305 | 147 | 28 | 否 |
-| 320 20% 紧凑 | 320×640 | 305 | 93 | 18 | 否 |
+| 场景 | 主列宽 | 卡高 | 名称→报价空隙 | 重叠 |
+| --- | --- | --- | --- | --- |
+| 1280 100% | 1280 | 94 | 14–20px | 否 |
+| 1280 35% | 1280 | 64 | 8–12px | 否 |
+| 1280 20% 紧凑 | 1280 | 61 | 14–17px | 否 |
+| 430 100% | 430 | 126–147 | 两行布局 | 否 |
+| 390 150% 长名称 +129.99% | 390 | 197 | 无重叠 | 否 |
 
-20% 与 35% 主列宽相同（都铺满窗口），名称高度 18 vs 21，卡片 61 vs 64。旧 `after-metrics.json` 里 20%/35% 都是 360×328 的记录作废，那是上一轮压列宽实现的产物。
-
-截图：`evidence/web-display-density/round2-*.png`，与 `round2-metrics.json` 同一次 capture 生成。
+截图：`round3-*.png`，与 `round3-metrics.json` 同一次生成。
 
 ## 复现
 
@@ -39,9 +39,17 @@ uv run mypy src tests
 uv run python scripts/validate_workspace.py
 ```
 
-预览：`python3 -m http.server 8765 --bind 127.0.0.1`
-`http://127.0.0.1:8765/evidence/web-display-density/preview-dashboard.html`
+## CI 归属（Governance）
+
+| 项目 | 处理 |
+| --- | --- |
+| Web Ruff/Mypy/工作区校验 | 实现阶段已通过 |
+| secret-scan 证据行过期 | 基线证据，不在本 PR 改 |
+| 工作区空白 | 旧审计 diff，与本轮 UI 文件无关 |
+| Dependency review | 仓库未开 Dependency graph |
+| Windows SQLite / CNB registry | 非本 PR 范围；未在相同 Windows 环境重跑 base |
+| 本轮 UI 回归 | 新增 Ubuntu `web-display-ui` 作业强制执行 |
 
 ## 未验证
 
-Safari、Firefox 手工；真实行情登录；现网。未合并、未部署。
+Safari、Firefox 手工；真实行情；现网。未合并、未部署。

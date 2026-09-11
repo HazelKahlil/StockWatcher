@@ -1,0 +1,494 @@
+{
+  "tested_commit": "029a90d3e2f7dc9846184c559d77e7fb9adfa255",
+  "browser": "chromium",
+  "os": "macOS-27.0-arm64-arm-64bit",
+  "dataset": "harness-fixtures-v3",
+  "source_hashes": {
+    "src/stock_watcher/server/static/display.css": "66c4565544e2",
+    "src/stock_watcher/server/static/display.js": "e7523a59fa03",
+    "src/stock_watcher/server/static/candidate-card.js": "d40e6fe5d5c9",
+    "src/stock_watcher/server/templates/dashboard.html": "f5d0111567cc",
+    "src/stock_watcher/server/templates/base.html": "7514383a2832"
+  },
+  "shots": [
+    "round3-100-desktop",
+    "round3-35-full",
+    "round3-35-compact",
+    "round3-20-compact",
+    "round3-100-narrow",
+    "round3-390-150-stress",
+    "round3-waiting"
+  ],
+  "rows": [
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 1280,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": false,
+          "card": [
+            1232,
+            94
+          ],
+          "primaryW": 135,
+          "nameText": "金丹科技",
+          "nameLines": 1,
+          "codeText": "300829.SZ",
+          "codeClip": false,
+          "pctText": "+6.82%",
+          "quoteLeft": 165,
+          "nameToQuoteGap": 14,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": false,
+          "card": [
+            1232,
+            94
+          ],
+          "primaryW": 135,
+          "nameText": "华宝股份",
+          "nameLines": 1,
+          "codeText": "300741.SZ",
+          "codeClip": false,
+          "pctText": "+4.15%",
+          "quoteLeft": 165,
+          "nameToQuoteGap": 14,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": false,
+          "card": [
+            1232,
+            94
+          ],
+          "primaryW": 135,
+          "nameText": "西部牧业",
+          "nameLines": 1,
+          "codeText": "300106.SZ",
+          "codeClip": false,
+          "pctText": "-1.24%",
+          "quoteLeft": 171,
+          "nameToQuoteGap": 20,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "1280-100-full"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "35",
+      "layout": "full",
+      "mainW": 1280,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": false,
+          "card": [
+            1261,
+            64
+          ],
+          "primaryW": 101,
+          "nameText": "金丹科技",
+          "nameLines": 1,
+          "codeText": "300829.SZ",
+          "codeClip": false,
+          "pctText": "+6.82%",
+          "quoteLeft": 117,
+          "nameToQuoteGap": 8,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": false,
+          "card": [
+            1261,
+            64
+          ],
+          "primaryW": 101,
+          "nameText": "华宝股份",
+          "nameLines": 1,
+          "codeText": "300741.SZ",
+          "codeClip": false,
+          "pctText": "+4.15%",
+          "quoteLeft": 117,
+          "nameToQuoteGap": 8,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": false,
+          "card": [
+            1261,
+            64
+          ],
+          "primaryW": 101,
+          "nameText": "西部牧业",
+          "nameLines": 1,
+          "codeText": "300106.SZ",
+          "codeClip": false,
+          "pctText": "-1.24%",
+          "quoteLeft": 120,
+          "nameToQuoteGap": 12,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "1280-35-full"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "35",
+      "layout": "compact",
+      "mainW": 1280,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": false,
+          "card": [
+            1261,
+            64
+          ],
+          "primaryW": 101,
+          "nameText": "金丹科技",
+          "nameLines": 1,
+          "codeText": "300829.SZ",
+          "codeClip": false,
+          "pctText": "+6.82%",
+          "quoteLeft": 117,
+          "nameToQuoteGap": 8,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": false,
+          "card": [
+            1261,
+            64
+          ],
+          "primaryW": 101,
+          "nameText": "华宝股份",
+          "nameLines": 1,
+          "codeText": "300741.SZ",
+          "codeClip": false,
+          "pctText": "+4.15%",
+          "quoteLeft": 117,
+          "nameToQuoteGap": 8,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": false,
+          "card": [
+            1261,
+            64
+          ],
+          "primaryW": 101,
+          "nameText": "西部牧业",
+          "nameLines": 1,
+          "codeText": "300106.SZ",
+          "codeClip": false,
+          "pctText": "-1.24%",
+          "quoteLeft": 120,
+          "nameToQuoteGap": 12,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "1280-35-compact"
+    },
+    {
+      "viewport": [
+        1280,
+        820
+      ],
+      "scale": "20",
+      "layout": "compact",
+      "mainW": 1280,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": false,
+          "card": [
+            1264,
+            61
+          ],
+          "primaryW": 98,
+          "nameText": "金丹科技",
+          "nameLines": 1,
+          "codeText": "300829.SZ",
+          "codeClip": false,
+          "pctText": "+6.82%",
+          "quoteLeft": 112,
+          "nameToQuoteGap": 14,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": false,
+          "card": [
+            1264,
+            61
+          ],
+          "primaryW": 98,
+          "nameText": "华宝股份",
+          "nameLines": 1,
+          "codeText": "300741.SZ",
+          "codeClip": false,
+          "pctText": "+4.15%",
+          "quoteLeft": 112,
+          "nameToQuoteGap": 14,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": false,
+          "card": [
+            1264,
+            61
+          ],
+          "primaryW": 98,
+          "nameText": "西部牧业",
+          "nameLines": 1,
+          "codeText": "300106.SZ",
+          "codeClip": false,
+          "pctText": "-1.24%",
+          "quoteLeft": 116,
+          "nameToQuoteGap": 17,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "1280-20-compact"
+    },
+    {
+      "viewport": [
+        430,
+        860
+      ],
+      "scale": "100",
+      "layout": "full",
+      "mainW": 430,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": false,
+          "card": [
+            404,
+            126
+          ],
+          "primaryW": 253,
+          "nameText": "金丹科技",
+          "nameLines": 1,
+          "codeText": "300829.SZ",
+          "codeClip": false,
+          "pctText": "+6.82%",
+          "quoteLeft": 284,
+          "nameToQuoteGap": 133,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": false,
+          "card": [
+            404,
+            126
+          ],
+          "primaryW": 253,
+          "nameText": "华宝股份",
+          "nameLines": 1,
+          "codeText": "300741.SZ",
+          "codeClip": false,
+          "pctText": "+4.15%",
+          "quoteLeft": 284,
+          "nameToQuoteGap": 133,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": false,
+          "card": [
+            404,
+            147
+          ],
+          "primaryW": 253,
+          "nameText": "西部牧业",
+          "nameLines": 1,
+          "codeText": "300106.SZ",
+          "codeClip": false,
+          "pctText": "-1.24%",
+          "quoteLeft": 290,
+          "nameToQuoteGap": 138,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "430-100-full"
+    },
+    {
+      "viewport": [
+        390,
+        720
+      ],
+      "scale": "150",
+      "layout": "full",
+      "mainW": 390,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": false,
+          "card": [
+            367,
+            197
+          ],
+          "primaryW": 168,
+          "nameText": "内蒙古包钢稀土高科技股份",
+          "nameLines": 3,
+          "codeText": "300829.SZ",
+          "codeClip": false,
+          "pctText": "+129.99%",
+          "quoteLeft": 205,
+          "nameToQuoteGap": 26,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": false,
+          "card": [
+            367,
+            153
+          ],
+          "primaryW": 168,
+          "nameText": "华宝股份",
+          "nameLines": 1,
+          "codeText": "300741.SZ",
+          "codeClip": false,
+          "pctText": "+4.15%",
+          "quoteLeft": 241,
+          "nameToQuoteGap": 85,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": false,
+          "card": [
+            367,
+            153
+          ],
+          "primaryW": 168,
+          "nameText": "西部牧业",
+          "nameLines": 1,
+          "codeText": "300106.SZ",
+          "codeClip": false,
+          "pctText": "-1.24%",
+          "quoteLeft": 247,
+          "nameToQuoteGap": 90,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "390-150-stress"
+    },
+    {
+      "viewport": [
+        390,
+        720
+      ],
+      "scale": "100",
+      "layout": "compact",
+      "mainW": 390,
+      "overflow": false,
+      "cards": [
+        {
+          "index": 0,
+          "waiting": true,
+          "card": [
+            367,
+            139
+          ],
+          "primaryW": 238,
+          "nameText": "等待候选",
+          "nameLines": 2,
+          "codeText": "------",
+          "codeClip": false,
+          "pctText": "--.--%",
+          "quoteLeft": 269,
+          "nameToQuoteGap": 107,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 1,
+          "waiting": true,
+          "card": [
+            367,
+            139
+          ],
+          "primaryW": 238,
+          "nameText": "等待候选",
+          "nameLines": 2,
+          "codeText": "------",
+          "codeClip": false,
+          "pctText": "--.--%",
+          "quoteLeft": 269,
+          "nameToQuoteGap": 107,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        },
+        {
+          "index": 2,
+          "waiting": true,
+          "card": [
+            367,
+            139
+          ],
+          "primaryW": 238,
+          "nameText": "等待候选",
+          "nameLines": 2,
+          "codeText": "------",
+          "codeClip": false,
+          "pctText": "--.--%",
+          "quoteLeft": 269,
+          "nameToQuoteGap": 107,
+          "nameQuoteOverlap": false,
+          "codeQuoteOverlap": false
+        }
+      ],
+      "label": "390-100-empty-compact"
+    }
+  ],
+  "failures": []
+}
