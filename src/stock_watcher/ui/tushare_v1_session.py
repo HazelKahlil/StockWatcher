@@ -728,7 +728,7 @@ class TushareV1Session:
                 dict.fromkeys(
                     (
                         *self.status_issues,
-                        "基础缓存正在后台刷新；本轮使用最近一次可用行业、概念和三日数据。",
+                        _stale_universe_status_issue(self._runtime),
                     )
                 )
             )
@@ -829,6 +829,7 @@ class TushareV1Session:
         )
         if outcome.batch is not None:
             self.batch = outcome.batch
+        previous_issues = self.status_issues
         if outcome.failure_reason == "rate_limited":
             remaining = self._request_budget.cooldown_remaining(lane="realtime")
             self.data_gate_label = "等待限流恢复"
@@ -855,6 +856,10 @@ class TushareV1Session:
                 self.status_issues = (
                     (fund_issue,) if outcome.batch.fund_module == "unavailable" else ()
                 )
+            self.status_issues = retain_unresolved_data_issues(
+                previous_issues,
+                self.status_issues,
+            )
         elif outcome.health is HealthState.WARMING:
             required_cycles = self._manual_required_scan_cycles()
             self.data_gate_label = "正在准备"
@@ -2694,6 +2699,30 @@ def _realtime_capabilities_ready(
     )
     return bool(statuses) and all(
         statuses[capability].state is ProviderCapabilityState.AVAILABLE for capability in required
+    )
+
+
+def retain_unresolved_data_issues(
+    previous: tuple[str, ...],
+    next_issues: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Keep unresolved cache/trend dates when a HEALTHY scan rewrites status."""
+    retained = tuple(
+        issue
+        for issue in previous
+        if "基础缓存" in issue or "三日" in issue or "名单生成于" in issue
+    )
+    return tuple(dict.fromkeys((*retained, *next_issues)))
+
+
+def _stale_universe_status_issue(runtime: TushareV1Runtime) -> str:
+    universe = runtime.universe
+    if universe is None or universe.generated_at is None or universe.trend_through_date is None:
+        return "基础缓存正在后台刷新；本轮使用最近一次可用行业、概念和三日数据。"
+    return (
+        "基础缓存正在后台刷新；本轮使用最近一次可用行业、概念和三日数据。"
+        f"三日趋势截止 {universe.trend_through_date.isoformat()}，"
+        f"名单生成于 {universe.generated_at.date().isoformat()}，不是最新交易日。"
     )
 
 

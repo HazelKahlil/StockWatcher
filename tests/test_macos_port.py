@@ -766,7 +766,8 @@ def test_macos_lifecycle_external_quit_records_graceful_and_exits(
     assert quit_calls == [True]
     assert lifecycle._quitting
     lifecycle.deleteLater()
-    app.processEvents()
+    if sys.platform != "win32":
+        app.processEvents()
 
 
 def test_macos_close_event_programmatic_close_exits_not_hides(

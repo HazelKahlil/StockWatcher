@@ -41,6 +41,8 @@ from stock_watcher.providers.tushare.rate_limit import ApplicationRequestBudget
 from stock_watcher.security import (
     FAST_CREDENTIAL,
     PRIMARY_CREDENTIAL,
+    PRIMARY_LAST_GOOD_CREDENTIAL,
+    PRIMARY_PENDING_CREDENTIAL,
     SUPER_CREDENTIAL,
     CredentialRef,
     CredentialStore,
@@ -48,10 +50,15 @@ from stock_watcher.security import (
 )
 
 from .data_source_status import (
+    CREDENTIAL_INVALID,
+    PENDING_VERIFICATION,
+    PERMISSION_DENIED,
+    VERIFIED,
     CredentialTester,
     CredentialTestResult,
     LightweightCredentialTester,
     TusharePrimaryCredentialTester,
+    credential_verification_state,
 )
 
 
@@ -80,10 +87,11 @@ class DataSourceSettingsController:
     def __post_init__(self) -> None:
         if self.repository is not None:
             self.settings = self.repository.load()
-        if self.request_budget is not None and isinstance(
-            self.tester, LightweightCredentialTester
-        ):
-            self.tester.request_budget = self.request_budget
+        if isinstance(self.tester, LightweightCredentialTester):
+            if self.request_budget is not None:
+                self.tester.request_budget = self.request_budget
+            if self.tester.realtime_profile is None:
+                self.tester.realtime_profile = self.settings.native_realtime_profile
 
     def profile(self, name: str) -> HttpProfile:
         if name == "primary":
@@ -237,7 +245,8 @@ class DataSourceSettingsController:
             if pending_epoch != self._pending_epoch:
                 return
             self._last_results[name] = result
-            if result.success:
+            state = credential_verification_state(result)
+            if state in {VERIFIED, PENDING_VERIFICATION}:
                 self._pending[name] = PendingCredential(
                     secret=secret,
                     result=result,
@@ -250,13 +259,24 @@ class DataSourceSettingsController:
 
     def commit_candidate(self, name: str, *, confirmed: bool) -> bool:
         pending = self._pending.get(name)
-        if pending is None or not pending.result.success or not confirmed:
+        if pending is None or not confirmed:
+            return False
+        state = credential_verification_state(pending.result)
+        if state in {CREDENTIAL_INVALID, PERMISSION_DENIED} or (
+            state not in {VERIFIED, PENDING_VERIFICATION}
+        ):
             return False
         reference = self.reference(name)
         try:
             previous_secret = self.store.get(reference)
         except Exception:
             return False
+        if (
+            name == "primary"
+            and state == PENDING_VERIFICATION
+            and previous_secret
+        ):
+            return self._stash_unverified_primary(pending)
         profile_field = {
             "primary": "primary_profile",
             "super": "super_profile",
@@ -275,6 +295,9 @@ class DataSourceSettingsController:
         )
         try:
             self.store.set(reference, pending.secret)
+            if name == "primary" and state == VERIFIED:
+                self.store.set(PRIMARY_LAST_GOOD_CREDENTIAL, pending.secret)
+                self.store.delete(PRIMARY_PENDING_CREDENTIAL)
             if self.repository is not None:
                 self.repository.save(next_settings)
         except Exception:
@@ -296,6 +319,30 @@ class DataSourceSettingsController:
             self.capability_checks.start_background()
         if self.on_provider_changed is not None:
             self.on_provider_changed(selected_mode)
+        return True
+
+    def _stash_unverified_primary(self, pending: PendingCredential) -> bool:
+        """Keep the live Token and park an unverified replacement in keyring."""
+        try:
+            self.store.set(PRIMARY_PENDING_CREDENTIAL, pending.secret)
+        except Exception:
+            return False
+        pending.secret = ""
+        self._pending.pop("primary", None)
+        return True
+
+    def restore_last_good_primary(self) -> bool:
+        try:
+            last_good = self.store.get(PRIMARY_LAST_GOOD_CREDENTIAL)
+        except Exception:
+            return False
+        if not last_good:
+            return False
+        try:
+            self.store.set(PRIMARY_CREDENTIAL, last_good)
+            self.store.delete(PRIMARY_PENDING_CREDENTIAL)
+        except Exception:
+            return False
         return True
 
     def migrate_legacy_fast(self, *, confirmed: bool) -> bool:
@@ -324,6 +371,9 @@ class DataSourceSettingsController:
                 pending.secret = ""
         try:
             removed = self.store.delete(self.reference(name))
+            if name == "primary":
+                self.store.delete(PRIMARY_PENDING_CREDENTIAL)
+                self.store.delete(PRIMARY_LAST_GOOD_CREDENTIAL)
         except Exception:
             return False
         if name == "primary" and self.capability_checks is not None:
@@ -612,12 +662,19 @@ class _PrimaryEditor(QGroupBox):
         self.status.setText(result.status_text)
         self.last_test.setText(result.tested_at.strftime("%Y-%m-%d %H:%M:%S"))
         self.permission.setText(result.permission_summary)
-        if result.success:
-            confirm_text = (
-                "基础接口正在限流，但 Token 未被拒绝。确认保存并在后台恢复检测吗？"
-                if result.safe_reason == "rate_limited"
-                else "连接测试通过。确认安全保存并重新预热实时数据吗？"
-            )
+        state = credential_verification_state(result)
+        if state in {VERIFIED, PENDING_VERIFICATION}:
+            if state == PENDING_VERIFICATION:
+                confirm_text = (
+                    "基础接口正在限流，Token 尚未验证通过。"
+                    "确认保存为待验证吗？已有可用 Token 不会被替换。"
+                )
+            elif result.safe_reason == "rate_limited":
+                confirm_text = (
+                    "基础接口正在限流，但原生实时可用。确认保存并在后台恢复检测吗？"
+                )
+            else:
+                confirm_text = "连接测试通过。确认安全保存并重新预热实时数据吗？"
             answer = QMessageBox.question(
                 self,
                 "确认保存 Token",
@@ -628,8 +685,17 @@ class _PrimaryEditor(QGroupBox):
                 confirmed=answer == QMessageBox.StandardButton.Yes,
             ):
                 self.secret.clear()
-                self.status.setText("Token 已保存；正在后台分项检测并重新预热数据")
-                self.controller.start_capability_checks()
+                if state == PENDING_VERIFICATION and self.controller.store.get(
+                    PRIMARY_PENDING_CREDENTIAL
+                ):
+                    self.status.setText(
+                        "未验证 Token 已暂存；正在使用的可用 Token 未被替换。"
+                    )
+                elif state == PENDING_VERIFICATION:
+                    self.status.setText("Token 已保存为待验证，尚未确认可用。")
+                else:
+                    self.status.setText("Token 已保存；正在后台分项检测并重新预热数据")
+                    self.controller.start_capability_checks()
                 self._refresh_capabilities()
             elif answer == QMessageBox.StandardButton.Yes:
                 self.status.setText("保存失败；原 Token 保持不变")
@@ -652,10 +718,11 @@ class _PrimaryEditor(QGroupBox):
         self._test_poll_timer.stop()
         with self._test_result_lock:
             self._test_result = None
+        self.controller.discard_pending()
         self._set_test_busy(False)
         self.status.setText("基础连接测试超时，当前 Token 未被替换。")
         self.last_test.setText(datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S"))
-        self.permission.setText("请求仍在后台结束；可关闭窗口或稍后重试。")
+        self.permission.setText("旧检测已作废；迟到结果不会成为可保存项。")
 
     def cancel_pending_test(self) -> None:
         self._test_generation += 1
@@ -663,6 +730,7 @@ class _PrimaryEditor(QGroupBox):
         self._test_watchdog.stop()
         with self._test_result_lock:
             self._test_result = None
+        self.controller.discard_pending()
         self._set_test_busy(False)
 
     def _recheck(self) -> None:
@@ -879,7 +947,10 @@ def runtime_data_source_controller(
     return DataSourceSettingsController(
         settings=settings,
         store=store,
-        tester=LightweightCredentialTester(request_budget=budget),
+        tester=LightweightCredentialTester(
+            request_budget=budget,
+            realtime_profile=settings.native_realtime_profile,
+        ),
         repository=repository,
         on_provider_changed=on_provider_changed,
         request_budget=budget,

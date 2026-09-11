@@ -203,8 +203,9 @@ def test_lightweight_tester_does_not_wait_out_pro_cooldown(
 
     assert outcome.success
     assert outcome.safe_reason == "rate_limited"
-    assert "可确认保存" in outcome.status_text
-    assert "无需每 60 秒重试" in outcome.permission_summary
+    assert outcome.verification_state == "pending_verification"
+    assert "待验证" in outcome.status_text
+    assert "不会被未验证值替换" in outcome.permission_summary
     assert calls == []
     assert manual.sleeps == []
 
@@ -243,6 +244,7 @@ def test_lightweight_tester_accepts_pro_429_when_realtime_works(
 
     assert outcome.success
     assert outcome.safe_reason == "rate_limited"
+    assert outcome.verification_state == "verified"
     assert "原生实时可用" in outcome.status_text
     assert outcome.realtime_records == 1
 

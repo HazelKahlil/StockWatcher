@@ -107,13 +107,18 @@ def test_hang_fix_source_contracts() -> None:
     )
     assert "self._test_watchdog" in settings
     assert 'cooldown_remaining(lane="pro")' in status
-    assert "_accept_rate_limited_token" in status
+    assert "_resolve_rate_limited_token" in status
+    assert "PENDING_VERIFICATION" in status
     assert "Sleep happens outside the lock" in budget
     spec = Path("packaging/stockwatcher.spec").read_text(encoding="utf-8")
     packager = Path("scripts/windows/stockwatcher.ps1").read_text(encoding="utf-8")
-    assert "runtime-universe-seed.json" in spec
+    assert "runtime-universe-seed.manifest.json" in spec
+    assert "STOCKWATCHER_UNIVERSE_SEED_PATH" in spec
+    assert 'project_root / "build" / "seed"' not in spec
     assert "Export-PackagedUniverseSeed" in packager
     assert "export_runtime_universe_seed.py" in packager
+    assert "verify_bundled_universe_seed.py" in packager
+    assert "STOCKWATCHER_FIRST_RUN_PACK" in packager
 
 
 def test_windows_quit_shortcut_includes_ctrl_q() -> None:
@@ -252,3 +257,15 @@ def test_session_shutdown_request_cancels_scan_and_is_idempotent(tmp_path: Path)
     session.request_shutdown()
     session.shutdown()
     session.shutdown()
+
+
+def test_healthy_status_keeps_unresolved_cache_issue() -> None:
+    from stock_watcher.ui.tushare_v1_session import retain_unresolved_data_issues
+
+    previous = ("基础缓存正在后台刷新；本轮使用最近一次可用行业、概念和三日数据。",)
+    merged = retain_unresolved_data_issues(
+        previous,
+        ("本轮实时扫描完成，但没有形成合规三只。",),
+    )
+    assert previous[0] in merged
+    assert "没有形成合规三只" in merged[1]

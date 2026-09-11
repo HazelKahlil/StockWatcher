@@ -44,14 +44,13 @@ datas = [
     (str(runtime_icon_path), "stock_watcher/ui/assets"),
     (str(source_commit_file), "stock_watcher"),
 ]
-seed_candidates = (
-    os.environ.get("STOCKWATCHER_UNIVERSE_SEED_PATH", "").strip(),
-    str(project_root / "build" / "seed" / "runtime-universe-seed.json"),
-)
-for seed in seed_candidates:
-    if seed and Path(seed).is_file():
-        datas.append((str(Path(seed)), "stock_watcher/data"))
-        break
+seed = os.environ.get("STOCKWATCHER_UNIVERSE_SEED_PATH", "").strip()
+if seed and Path(seed).is_file():
+    seed_path = Path(seed)
+    datas.append((str(seed_path), "stock_watcher/data"))
+    manifest = seed_path.with_name("runtime-universe-seed.manifest.json")
+    if manifest.is_file():
+        datas.append((str(manifest), "stock_watcher/data"))
 
 analysis = Analysis(
     [

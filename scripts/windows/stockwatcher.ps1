@@ -492,25 +492,38 @@ function Invoke-Probe {
 }
 
 function Export-PackagedUniverseSeed {
-    $configured = [string]$env:STOCKWATCHER_UNIVERSE_SEED_PATH
-    if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf)) {
-        Write-Host "使用已配置的冷启动名单种子。"
-        return $configured
-    }
+    $firstRun = [string]$env:STOCKWATCHER_FIRST_RUN_PACK
+    if (-not $firstRun) { $firstRun = "auto" }
+    $requireSeed = $firstRun -in @("1", "true", "TRUE", "yes")
     $destination = Join-Path $ProjectRoot "build\seed\runtime-universe-seed.json"
+    $configured = [string]$env:STOCKWATCHER_UNIVERSE_SEED_PATH
     $localCache = Join-Path $env:LOCALAPPDATA "StockWatcher\data\runtime-universe-v1.json"
-    if (-not (Test-Path -LiteralPath $localCache -PathType Leaf)) {
-        Write-Host "本机没有 runtime-universe-v1.json，安装包将不含冷启动名单种子。"
+    $source = $null
+    if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf)) {
+        $source = $configured
+    } elseif (Test-Path -LiteralPath $localCache -PathType Leaf) {
+        $source = $localCache
+    }
+    if (-not $source) {
+        Remove-Item Env:STOCKWATCHER_UNIVERSE_SEED_PATH -ErrorAction SilentlyContinue
+        if ($requireSeed) {
+            throw "首装发行包缺少经过校验的名单种子。"
+        }
+        Write-Host "没有显式种子或本机名单缓存，本构建不是首装发行包。"
         return $null
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-    Invoke-CheckedNative -Command $PythonPath -Arguments @(
+    $exportArgs = @(
         (Join-Path $ProjectRoot "scripts\export_runtime_universe_seed.py"),
-        $localCache,
+        $source,
         $destination
-    ) -FailureMessage "导出冷启动名单种子失败"
+    )
+    if ($requireSeed -or $firstRun -eq "auto") {
+        $exportArgs += "--first-run-pack"
+    }
+    Invoke-CheckedNative -Command $PythonPath -Arguments $exportArgs -FailureMessage "导出或校验冷启动名单种子失败"
     $env:STOCKWATCHER_UNIVERSE_SEED_PATH = $destination
-    Write-Host "已从本机名单缓存导出冷启动种子。"
+    Write-Host "已校验并规范化冷启动名单种子。"
     return $destination
 }
 
@@ -552,10 +565,19 @@ function Invoke-Build {
             $bundledSeed = @(
                 (Join-Path $bundleRoot "_internal\stock_watcher\data\runtime-universe-seed.json"),
                 (Join-Path $bundleRoot "stock_watcher\data\runtime-universe-seed.json")
-            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
-            if (-not $bundledSeed) {
-                throw "已导出冷启动名单种子，但 PyInstaller bundle 中未找到 runtime-universe-seed.json。"
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+            $bundledManifest = @(
+                (Join-Path $bundleRoot "_internal\stock_watcher\data\runtime-universe-seed.manifest.json"),
+                (Join-Path $bundleRoot "stock_watcher\data\runtime-universe-seed.manifest.json")
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+            if (-not $bundledSeed -or -not $bundledManifest) {
+                throw "已导出冷启动名单种子，但 PyInstaller bundle 中缺少种子或清单。"
             }
+            Invoke-CheckedNative -Command $PythonPath -Arguments @(
+                (Join-Path $ProjectRoot "scripts\verify_bundled_universe_seed.py"),
+                $bundledSeed,
+                $bundledManifest
+            ) -FailureMessage "安装包内种子与清单不一致"
         }
         $iscc = Resolve-Iscc
         $installerScript = Join-Path $mappedRoot "packaging\windows\StockWatcher.iss"

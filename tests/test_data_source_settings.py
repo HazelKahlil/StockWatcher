@@ -44,6 +44,7 @@ from stock_watcher.ui.data_source_settings import (  # noqa: E402
     DataSourceSettingsDialog,
 )
 from stock_watcher.ui.data_source_status import (  # noqa: E402
+    PENDING_VERIFICATION,
     CredentialTestResult,
     LightweightCredentialTester,
     TushareCredentialTester,
@@ -458,9 +459,24 @@ def test_token_save_stays_clickable_during_pro_cooldown(
     )
     budget = ApplicationRequestBudget()
     budget.pause_for(60.0, lane="pro")
+    tester = LightweightCredentialTester(
+        request_budget=budget,
+        native_realtime_tester=SimpleNamespace(
+            test=lambda *_args, **_kwargs: CredentialTestResult(
+                success=False,
+                tested_at=datetime.now().astimezone(),
+                status_text="synthetic timeout",
+                permission_summary="synthetic",
+                expires_at="未知",
+                safe_reason="timeout",
+                realtime_status="timeout",
+                verification_state=PENDING_VERIFICATION,
+            )
+        ),
+    )
     controller = DataSourceSettingsController(
         store=MemoryCredentialStore(),
-        tester=LightweightCredentialTester(request_budget=budget),
+        tester=tester,
         request_budget=budget,
     )
     dialog = DataSourceSettingsDialog(controller, platform="win32")
@@ -475,8 +491,8 @@ def test_token_save_stays_clickable_during_pro_cooldown(
     ):
         app.processEvents()
     assert editor.save_button.isEnabled()
-    assert "可确认保存" in editor.status.text() or "可安全保存" in editor.status.text()
-    assert "限流不是" in editor.permission.text()
+    assert "待验证" in editor.status.text()
+    assert "未验证" in editor.permission.text() or "冷却" in editor.permission.text()
     dialog.close()
     app.processEvents()
 
@@ -514,5 +530,22 @@ def test_token_save_watchdog_reenables_after_hung_test() -> None:
         app.processEvents()
     assert editor.save_button.isEnabled()
     assert editor.status.text() == "基础连接测试超时，当前 Token 未被替换。"
+    assert "primary" not in editor.controller._pending
+    late = CredentialTestResult(
+        success=True,
+        tested_at=datetime.now().astimezone(),
+        status_text="late-success",
+        permission_summary="stale",
+        expires_at="未知",
+        verification_state="verified",
+    )
+    editor.controller._stage_test_result(
+        "primary",
+        "late-token",
+        late,
+        editor.controller.profile("primary"),
+        pending_epoch=editor.controller._pending_epoch - 1,
+    )
+    assert "primary" not in editor.controller._pending
     dialog.close()
     app.processEvents()

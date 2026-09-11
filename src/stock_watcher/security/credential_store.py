@@ -25,6 +25,8 @@ class CredentialRef:
 SUPER_CREDENTIAL = CredentialRef("StockWatcher/Tushare/Super")
 FAST_CREDENTIAL = CredentialRef("StockWatcher/Tushare/Fast")
 PRIMARY_CREDENTIAL = CredentialRef("StockWatcher/Tushare/Primary")
+PRIMARY_PENDING_CREDENTIAL = CredentialRef("StockWatcher/Tushare/PrimaryPending")
+PRIMARY_LAST_GOOD_CREDENTIAL = CredentialRef("StockWatcher/Tushare/PrimaryLastGood")
 
 
 def credential_fingerprint(secret: str) -> str:
