@@ -48,6 +48,7 @@ test('enabled card uses a two-character 选择 label and original detail button'
   assert(html.includes('data-detail="300829.SZ"'));
   assert(html.includes('data-approval-control'));
   assert(html.includes('>选择</span>'));
+  assert(html.includes('candidate-switch'));
   assert(!html.includes('>认可</span>'));
   assert(!html.includes('已认可'));
 });

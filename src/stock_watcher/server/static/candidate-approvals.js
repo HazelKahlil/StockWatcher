@@ -204,6 +204,40 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
     if (key) void submit(key);
   }
 
+  function onPointerDown(event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const control = event.target.closest('[data-approval-control]');
+    if (!control || !cards.contains(control) || event.target.closest('[data-approval-retry]')) {
+      return;
+    }
+    const input = control.querySelector('input[data-approval-checkbox]');
+    if (!input || input.disabled) return;
+    const startX = event.clientX;
+    let dragged = false;
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      if (Math.abs(dx) < 10) return;
+      dragged = true;
+      const next = dx > 0;
+      if (input.checked !== next) {
+        input.checked = next;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (dragged) {
+        control.addEventListener('click', (ev) => ev.preventDefault(), {
+          once: true,
+          capture: true,
+        });
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   async function loadHistory(reset = false) {
     if (!history || historyBusy) return;
     historyBusy = true;
@@ -253,6 +287,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   if (enabled) {
     cards.addEventListener('change', onChange);
     cards.addEventListener('click', onClick);
+    cards.addEventListener('pointerdown', onPointerDown);
     history?.addEventListener('toggle', onToggle);
     history?.querySelector('[data-approval-history-more]')?.addEventListener('click', onMore);
     document.addEventListener('visibilitychange', onVisible);
@@ -288,6 +323,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       for (const work of pending.values()) work.controller?.abort();
       cards?.removeEventListener('change', onChange);
       cards?.removeEventListener('click', onClick);
+      cards?.removeEventListener('pointerdown', onPointerDown);
       history?.removeEventListener('toggle', onToggle);
       history?.querySelector('[data-approval-history-more]')?.removeEventListener('click', onMore);
       document.removeEventListener('visibilitychange', onVisible);

@@ -1,8 +1,8 @@
 import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=8';
 import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
-import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=5-states';
-import { createApprovalController } from './candidate-approvals.js?v=3';
+import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=6-switch';
+import { createApprovalController } from './candidate-approvals.js?v=4';
 let approvalController = null;
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };

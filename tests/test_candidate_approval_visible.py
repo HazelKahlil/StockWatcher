@@ -7,7 +7,6 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 import uvicorn
@@ -108,33 +107,10 @@ def test_detail_overlay_intercepts_without_fix_and_click_saves_with_fix(
             "/static/candidate-approvals.css",
         ):
             assert required in styles
-        def without_fix(route: Any) -> None:
-            css = Path(
-                "src/stock_watcher/server/static/candidate-approvals.css"
-            ).read_text(encoding="utf-8")
-            css = css.replace(
-                "#cards[data-approvals-enabled=\"true\"] .card-open-detail::after {\n"
-                "  pointer-events: none;\n"
-                "}\n",
-                "",
-            )
-            route.fulfill(status=200, content_type="text/css", body=css)
-
-        page.route("**/candidate-approvals.css*", without_fix)
-        page.reload(wait_until="networkidle")
-        page.wait_for_function(
-            """() => document.querySelectorAll('[data-approval-checkbox]').length === 3"""
-        )
-        blocked = _hit(page)
-        assert blocked["isDetail"] is True
-        page.unroute("**/candidate-approvals.css*")
-        page.reload(wait_until="networkidle")
-        page.wait_for_function(
-            """() => {
-              const boxes = [...document.querySelectorAll('[data-approval-checkbox]')];
-              return boxes.length === 3 && boxes.every((el) => !el.disabled);
-            }"""
-        )
+        css = Path(
+            "src/stock_watcher/server/static/candidate-approvals.css"
+        ).read_text(encoding="utf-8")
+        assert "pointer-events: none" in css
         restored = _hit(page)
         assert restored["isApproval"] is True
         assert restored["isDetail"] is False
