@@ -180,19 +180,36 @@ def test_same_snapshot_refresh_keeps_switch_focus(live_origin: str) -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 820})
+        errors: list[str] = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
         _login(page, live_origin)
         page.locator("[data-approval-checkbox]").nth(1).focus()
         assert page.evaluate(
             """() => document.activeElement?.matches('[data-approval-checkbox]')"""
         )
+        marker = "焦点测试标记名"
         page.evaluate(
-            """async () => {
+            """async (marker) => {
               const state = await (await fetch('/api/v1/state')).json();
+              if (state.candidates && state.candidates[0]) {
+                state.candidates[0].name = marker;
+              }
               window.dispatchEvent(new CustomEvent(
                 'stockwatcher:apply-dashboard-state',
                 { detail: state },
               ));
-            }"""
+            }""",
+            marker,
+        )
+        page.wait_for_function(
+            """(marker) => {
+              const name = document.querySelector(
+                '.dashboard-cards > .card .display-name'
+              )?.textContent.trim();
+              return name === marker;
+            }""",
+            arg=marker,
+            timeout=5000,
         )
         page.wait_for_function(
             """() => {
@@ -201,4 +218,5 @@ def test_same_snapshot_refresh_keeps_switch_focus(live_origin: str) -> None:
             }""",
             timeout=5000,
         )
+        assert errors == []
         browser.close()

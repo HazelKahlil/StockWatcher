@@ -30,14 +30,18 @@ export function shouldReadApprovalState(
   shownSnapshotId,
   loadedSnapshotId,
   loadInFlight,
-  loadFailed = false,
+  failedSnapshotId = 0,
 ) {
   if (!Number.isSafeInteger(shownSnapshotId) || shownSnapshotId <= 0 || loadInFlight) {
     return false;
   }
   if (shownSnapshotId === loadedSnapshotId) return false;
-  if (loadFailed) return false;
+  if (failedSnapshotId === shownSnapshotId) return false;
   return true;
+}
+
+export function isCurrentApprovalLoad(myEpoch, loadEpoch, requestedId, shownSnapshotId) {
+  return myEpoch === loadEpoch && requestedId === shownSnapshotId;
 }
 
 export function secureRequestId(cryptoProvider = globalThis.crypto) {

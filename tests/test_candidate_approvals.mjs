@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState } from '../src/stock_watcher/server/static/approval-state.mjs';
+import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState, isCurrentApprovalLoad } from '../src/stock_watcher/server/static/approval-state.mjs';
 
 const cardURL = process.env.STOCKWATCHER_APPROVAL_CARD_MODULE
   ? pathToFileURL(process.env.STOCKWATCHER_APPROVAL_CARD_MODULE)
@@ -78,10 +78,23 @@ test('controller does not install custom pointer drag listeners', () => {
   assert(!source.includes('pointermove'));
   assert(!source.includes('addEventListener(\'pointerdown\''));
 });
+test('dashboard test hook calls renderState, not a missing applyDashboardState', () => {
+  const source = readFileSync(new URL('../src/stock_watcher/server/static/dashboard.js', import.meta.url), 'utf8');
+  assert(source.includes("stockwatcher:apply-dashboard-state"));
+  assert(source.includes('renderState(event.detail)'));
+  assert(!source.includes('applyDashboardState(event.detail)'));
+});
 test('personal state is re-read for a new snapshot even if old cache exists', () => {
-  assert.equal(shouldReadApprovalState(2, 1, false, false), true);
-  assert.equal(shouldReadApprovalState(2, 2, false, false), false);
-  assert.equal(shouldReadApprovalState(2, 1, true, false), false);
-  assert.equal(shouldReadApprovalState(2, 1, false, true), false);
-  assert.equal(shouldReadApprovalState(2, 0, false, true), false);
+  assert.equal(shouldReadApprovalState(2, 1, false, 0), true);
+  assert.equal(shouldReadApprovalState(2, 2, false, 0), false);
+  assert.equal(shouldReadApprovalState(2, 1, true, 0), false);
+  assert.equal(shouldReadApprovalState(2, 1, false, 2), false);
+  assert.equal(shouldReadApprovalState(3, 1, false, 2), true);
+  assert.equal(shouldReadApprovalState(2, 0, false, 2), false);
+});
+test('stale approval loads are ignored after the shown snapshot changes', () => {
+  assert.equal(isCurrentApprovalLoad(1, 1, 2, 2), true);
+  assert.equal(isCurrentApprovalLoad(1, 2, 2, 3), false);
+  assert.equal(isCurrentApprovalLoad(2, 2, 2, 3), false);
+  assert.equal(isCurrentApprovalLoad(2, 2, 3, 3), true);
 });

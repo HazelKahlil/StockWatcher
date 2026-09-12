@@ -2,7 +2,7 @@ import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotification
 import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
 import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=7-review';
-import { createApprovalController } from './candidate-approvals.js?v=5';
+import { createApprovalController } from './candidate-approvals.js?v=6';
 let approvalController = null;
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
@@ -342,8 +342,9 @@ function renderState(state) {
   }
 }
 
+// Official-page tests dispatch this to run the same path as live state updates.
 window.addEventListener('stockwatcher:apply-dashboard-state', (event) => {
-  if (event.detail && typeof event.detail === 'object') applyDashboardState(event.detail);
+  if (event.detail && typeof event.detail === 'object') renderState(event.detail);
 });
 
 let detailRequest = null;

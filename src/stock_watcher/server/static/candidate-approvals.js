@@ -1,4 +1,4 @@
-import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState } from './approval-state.mjs?v=2';
+import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState, isCurrentApprovalLoad } from './approval-state.mjs?v=3';
 
 // apiJson is the existing app.js CSRF-aware transport; this module does not replace auth.
 export function createApprovalController({ cards, apiJson, userId, status, history, pendingRoot }) {
@@ -9,10 +9,11 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   let shownSnapshotId = 0;
   let loadedSnapshotId = 0;
   let loadFailed = false;
+  let failedSnapshotId = 0;
   let loadInFlight = false;
   let loadRetryTimer = null;
   let loadAttempts = 0;
-  let epoch = 0;
+  let loadEpoch = 0;
   let loadController = null;
   let accountInvalid = false;
   let disposed = false;
@@ -33,14 +34,39 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
 
   const reloadButton = () => document.getElementById('approval-reload');
 
+  function invalidateLoad() {
+    loadEpoch += 1;
+    loadController?.abort();
+    loadController = null;
+    if (loadRetryTimer) {
+      clearTimeout(loadRetryTimer);
+      loadRetryTimer = null;
+    }
+    loadFailed = false;
+    failedSnapshotId = 0;
+    loadAttempts = 0;
+    loadInFlight = false;
+  }
+
   function scheduleLoadRetry(snapshotId) {
     if (loadRetryTimer || loadAttempts >= 3 || disposed) return;
+    const scheduledFor = snapshotId;
     loadRetryTimer = setTimeout(() => {
       loadRetryTimer = null;
-      if (!disposed && shownSnapshotId === snapshotId && loadedSnapshotId !== snapshotId) {
-        void readState(snapshotId);
+      if (!disposed && shownSnapshotId === scheduledFor && loadedSnapshotId !== scheduledFor) {
+        void beginLoad(scheduledFor);
       }
     }, 1500 * Math.max(1, loadAttempts));
+  }
+
+  function beginLoad(snapshotId) {
+    if (disposed || !Number.isSafeInteger(snapshotId) || snapshotId <= 0) return;
+    loadEpoch += 1;
+    const myEpoch = loadEpoch;
+    loadController?.abort();
+    loadController = new AbortController();
+    loadInFlight = true;
+    return readState(snapshotId, myEpoch, loadController);
   }
 
   function paintPending() {
@@ -132,19 +158,16 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
     if (acceptsState(cache.get(key), incoming)) cache.set(key, incoming);
   }
 
-  async function readState(snapshotId) {
-    if (loadInFlight || disposed) return;
-    loadInFlight = true;
-    const myEpoch = epoch;
-    loadController = new AbortController();
-    const controller = loadController;
+  async function readState(snapshotId, myEpoch, controller) {
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
       const response = await apiJson(
         `/api/v1/me/candidate-approvals/state?snapshot_id=${snapshotId}`,
         { signal: controller.signal, cache: 'no-store' },
       );
-      if (disposed || myEpoch !== epoch) return;
+      if (disposed || !isCurrentApprovalLoad(myEpoch, loadEpoch, snapshotId, shownSnapshotId)) {
+        return;
+      }
       if (!sameSnapshot(response, snapshotId, userId)) {
         accountInvalid = true;
         cache.clear();
@@ -152,25 +175,31 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
         return;
       }
       current = response;
-      shownSnapshotId = snapshotId;
       loadedSnapshotId = snapshotId;
       loadFailed = false;
+      failedSnapshotId = 0;
       loadAttempts = 0;
       for (const state of response.items) accept(state);
       if (status?.textContent.includes('反馈暂不可用') || status?.textContent.includes('重新读取')) {
         announce('');
       }
     } catch (error) {
-      if (disposed || myEpoch !== epoch) return;
+      if (disposed || !isCurrentApprovalLoad(myEpoch, loadEpoch, snapshotId, shownSnapshotId)) {
+        return;
+      }
+      if (error?.name === 'AbortError') return;
       if (error.status === 401) accountInvalid = true;
       loadFailed = true;
+      failedSnapshotId = snapshotId;
       loadAttempts += 1;
       announce('反馈暂不可用，候选观察不受影响。可点击重新读取。');
       scheduleLoadRetry(snapshotId);
     } finally {
       clearTimeout(timer);
-      loadInFlight = false;
-      if (!disposed && myEpoch === epoch) paint();
+      if (isCurrentApprovalLoad(myEpoch, loadEpoch, snapshotId, shownSnapshotId)) {
+        loadInFlight = false;
+        if (!disposed) paint();
+      }
     }
   }
 
@@ -205,11 +234,11 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       if (error.status === 409) {
         pending.delete(key);
         cache.delete(key);
-        if (current) await readState(current.snapshot_id);
+        if (shownSnapshotId) await beginLoad(shownSnapshotId);
         announce('反馈版本已变化，请核对当前状态后重新选择。');
       } else if ([400, 403, 404, 422].includes(error.status)) {
         pending.delete(key);
-        if (current) await readState(current.snapshot_id);
+        if (shownSnapshotId) await beginLoad(shownSnapshotId);
         announce('此次反馈未保存，请刷新页面并核对候选或登录状态。');
       } else {
         // A timeout can occur AFTER commit. Keep the same UUID/body for retry.
@@ -255,7 +284,8 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
     if (event.target.closest('#approval-reload')) {
       loadAttempts = 0;
       loadFailed = false;
-      if (shownSnapshotId) void readState(shownSnapshotId);
+      failedSnapshotId = 0;
+      if (shownSnapshotId) void beginLoad(shownSnapshotId);
     }
   }
 
@@ -304,7 +334,9 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   const onVisible = () => {
     if (document.hidden || !shownSnapshotId) return;
     loadAttempts = 0;
-    void readState(shownSnapshotId);
+    loadFailed = false;
+    failedSnapshotId = 0;
+    void beginLoad(shownSnapshotId);
   };
   if (enabled) {
     cards.addEventListener('change', onChange);
@@ -330,11 +362,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       const snapshotChanged = shownSnapshotId !== id;
       shownSnapshotId = id;
       if (snapshotChanged) {
-        loadAttempts = 0;
-        if (loadRetryTimer) {
-          clearTimeout(loadRetryTimer);
-          loadRetryTimer = null;
-        }
+        invalidateLoad();
         current = {
           snapshot_id: id,
           trade_date: state.trade_date || '',
@@ -344,16 +372,14 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       }
       paint();
       if (shouldReadApprovalState(
-        shownSnapshotId, loadedSnapshotId, loadInFlight, loadFailed,
+        shownSnapshotId, loadedSnapshotId, loadInFlight, failedSnapshotId,
       )) {
-        void readState(id);
+        void beginLoad(id);
       }
     },
     dispose() {
       disposed = true;
-      ++epoch;
-      if (loadRetryTimer) clearTimeout(loadRetryTimer);
-      loadController?.abort();
+      invalidateLoad();
       for (const work of pending.values()) work.controller?.abort();
       cards?.removeEventListener('change', onChange);
       cards?.removeEventListener('click', onClick);
