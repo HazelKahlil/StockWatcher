@@ -1,4 +1,4 @@
-import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId } from './approval-state.mjs?v=1';
+import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState } from './approval-state.mjs?v=2';
 
 // apiJson is the existing app.js CSRF-aware transport; this module does not replace auth.
 export function createApprovalController({ cards, apiJson, userId, status, history, pendingRoot }) {
@@ -6,6 +6,12 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   const cache = new Map();
   const pending = new Map();
   let current = null;
+  let shownSnapshotId = 0;
+  let loadedSnapshotId = 0;
+  let loadFailed = false;
+  let loadInFlight = false;
+  let loadRetryTimer = null;
+  let loadAttempts = 0;
   let epoch = 0;
   let loadController = null;
   let accountInvalid = false;
@@ -17,9 +23,25 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   const announce = (message) => { if (status) status.textContent = message; };
   const controls = () => [...cards.querySelectorAll('[data-approval-control]')];
   const itemKey = (control) => {
-    if (!current || Number(control.dataset.approvalSnapshot) !== current.snapshot_id) return null;
-    return approvalKey(current.trade_date, control.dataset.approvalCode);
+    if (!shownSnapshotId || Number(control.dataset.approvalSnapshot) !== shownSnapshotId) {
+      return null;
+    }
+    const day = current?.trade_date || '';
+    if (!day) return null;
+    return approvalKey(day, control.dataset.approvalCode);
   };
+
+  const reloadButton = () => document.getElementById('approval-reload');
+
+  function scheduleLoadRetry(snapshotId) {
+    if (loadRetryTimer || loadAttempts >= 3 || disposed) return;
+    loadRetryTimer = setTimeout(() => {
+      loadRetryTimer = null;
+      if (!disposed && shownSnapshotId === snapshotId && loadedSnapshotId !== snapshotId) {
+        void readState(snapshotId);
+      }
+    }, 1500 * Math.max(1, loadAttempts));
+  }
 
   function paintPending() {
     if (!pendingRoot) return;
@@ -55,6 +77,9 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   function paint() {
     if (!enabled || disposed) return;
     paintPending();
+    const reload = reloadButton();
+    if (reload) reload.hidden = !loadFailed || accountInvalid;
+    const loaded = loadedSnapshotId === shownSnapshotId && !loadFailed;
     for (const control of controls()) {
       const input = control.querySelector('input');
       const label = control.querySelector('[data-approval-label]');
@@ -62,8 +87,20 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       const key = itemKey(control);
       const state = key && cache.get(key);
       const work = key && pending.get(key);
+      const known = Boolean(state) || Boolean(work);
+      if (label.textContent !== '选择') label.textContent = '选择';
+      if (!known) {
+        if (!input.disabled) input.disabled = true;
+        if (control.dataset.approvalReady !== 'false') control.dataset.approvalReady = 'false';
+        write(control, 'aria-busy', String(loadInFlight));
+        const syncTitle = loadFailed
+          ? '个人选择暂不可用，可稍后重新读取。'
+          : '正在同步个人选择。';
+        if (control.title !== syncTitle) control.title = syncTitle;
+        continue;
+      }
       const selected = work ? work.body.selected : Boolean(state?.selected);
-      const ready = Boolean(state) && !accountInvalid;
+      const ready = loaded && Boolean(state) && !accountInvalid;
       const failed = Boolean(work?.failed);
       const busy = Boolean(work && !work.failed);
       if (input.checked !== selected) input.checked = selected;
@@ -77,7 +114,6 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       if (control.dataset.approvalSelected !== String(selected)) {
         control.dataset.approvalSelected = String(selected);
       }
-      if (label.textContent !== '选择') label.textContent = '选择';
       retry.hidden = !failed;
       write(control, 'aria-busy', String(busy));
       const day = current?.trade_date || '';
@@ -97,8 +133,9 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   }
 
   async function readState(snapshotId) {
-    const myEpoch = ++epoch;
-    loadController?.abort();
+    if (loadInFlight || disposed) return;
+    loadInFlight = true;
+    const myEpoch = epoch;
     loadController = new AbortController();
     const controller = loadController;
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -115,14 +152,25 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
         return;
       }
       current = response;
+      shownSnapshotId = snapshotId;
+      loadedSnapshotId = snapshotId;
+      loadFailed = false;
+      loadAttempts = 0;
       for (const state of response.items) accept(state);
+      if (status?.textContent.includes('反馈暂不可用') || status?.textContent.includes('重新读取')) {
+        announce('');
+      }
     } catch (error) {
       if (disposed || myEpoch !== epoch) return;
       if (error.status === 401) accountInvalid = true;
-      announce('反馈暂不可用，候选观察不受影响；页面同步后可重试。');
+      loadFailed = true;
+      loadAttempts += 1;
+      announce('反馈暂不可用，候选观察不受影响。可点击重新读取。');
+      scheduleLoadRetry(snapshotId);
     } finally {
       clearTimeout(timer);
-      if (myEpoch === epoch) paint();
+      loadInFlight = false;
+      if (!disposed && myEpoch === epoch) paint();
     }
   }
 
@@ -199,43 +247,16 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
 
   function onClick(event) {
     const retry = event.target.closest('[data-approval-retry]');
-    if (!retry || !cards.contains(retry)) return;
-    const key = itemKey(retry.closest('[data-approval-control]'));
-    if (key) void submit(key);
-  }
-
-  function onPointerDown(event) {
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    const control = event.target.closest('[data-approval-control]');
-    if (!control || !cards.contains(control) || event.target.closest('[data-approval-retry]')) {
+    if (retry && cards.contains(retry)) {
+      const key = itemKey(retry.closest('[data-approval-control]'));
+      if (key) void submit(key);
       return;
     }
-    const input = control.querySelector('input[data-approval-checkbox]');
-    if (!input || input.disabled) return;
-    const startX = event.clientX;
-    let dragged = false;
-    const move = (ev) => {
-      const dx = ev.clientX - startX;
-      if (Math.abs(dx) < 10) return;
-      dragged = true;
-      const next = dx > 0;
-      if (input.checked !== next) {
-        input.checked = next;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (dragged) {
-        control.addEventListener('click', (ev) => ev.preventDefault(), {
-          once: true,
-          capture: true,
-        });
-      }
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    if (event.target.closest('#approval-reload')) {
+      loadAttempts = 0;
+      loadFailed = false;
+      if (shownSnapshotId) void readState(shownSnapshotId);
+    }
   }
 
   async function loadHistory(reset = false) {
@@ -281,13 +302,14 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   const onToggle = () => { if (history.open && !historyLoaded) void loadHistory(true); };
   const onMore = () => { void loadHistory(false); };
   const onVisible = () => {
-    if (document.hidden || !current) return;
-    void readState(current.snapshot_id);
+    if (document.hidden || !shownSnapshotId) return;
+    loadAttempts = 0;
+    void readState(shownSnapshotId);
   };
   if (enabled) {
     cards.addEventListener('change', onChange);
     cards.addEventListener('click', onClick);
-    cards.addEventListener('pointerdown', onPointerDown);
+    reloadButton()?.addEventListener('click', onClick);
     history?.addEventListener('toggle', onToggle);
     history?.querySelector('[data-approval-history-more]')?.addEventListener('click', onMore);
     document.addEventListener('visibilitychange', onVisible);
@@ -298,14 +320,21 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       if (!enabled || disposed) return;
       const id = Number(state?.snapshot_id);
       if (!Number.isSafeInteger(id) || id <= 0) {
+        shownSnapshotId = 0;
         if (current !== null) {
           current = null;
           paint();
         }
         return;
       }
-      const snapshotChanged = current?.snapshot_id !== id;
+      const snapshotChanged = shownSnapshotId !== id;
+      shownSnapshotId = id;
       if (snapshotChanged) {
+        loadAttempts = 0;
+        if (loadRetryTimer) {
+          clearTimeout(loadRetryTimer);
+          loadRetryTimer = null;
+        }
         current = {
           snapshot_id: id,
           trade_date: state.trade_date || '',
@@ -314,16 +343,21 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
         };
       }
       paint();
-      if (snapshotChanged || !cache.size) void readState(id);
+      if (shouldReadApprovalState(
+        shownSnapshotId, loadedSnapshotId, loadInFlight, loadFailed,
+      )) {
+        void readState(id);
+      }
     },
     dispose() {
       disposed = true;
       ++epoch;
+      if (loadRetryTimer) clearTimeout(loadRetryTimer);
       loadController?.abort();
       for (const work of pending.values()) work.controller?.abort();
       cards?.removeEventListener('change', onChange);
       cards?.removeEventListener('click', onClick);
-      cards?.removeEventListener('pointerdown', onPointerDown);
+      reloadButton()?.removeEventListener('click', onClick);
       history?.removeEventListener('toggle', onToggle);
       history?.querySelector('[data-approval-history-more]')?.removeEventListener('click', onMore);
       document.removeEventListener('visibilitychange', onVisible);

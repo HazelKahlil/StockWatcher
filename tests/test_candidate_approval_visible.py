@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, Route, sync_playwright
 from test_candidate_approval_app import make_app
 
 from stock_watcher.feedback.schema import database, install_on_connection
@@ -131,4 +131,74 @@ def test_detail_overlay_intercepts_without_fix_and_click_saves_with_fix(
             }"""
         )
         assert page.evaluate("() => !document.getElementById('drawer-overlay')?.open")
+        browser.close()
+
+
+@pytest.mark.skipif(
+    __import__("os").environ.get("STOCKWATCHER_REQUIRE_UI") != "1"
+    and not Path("/Users/kahlilhazel/Library/Caches/ms-playwright").exists(),
+    reason="Playwright Chromium required for official-page hit tests",
+)
+def test_personal_state_recovers_after_503_without_reload(live_origin: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1280, "height": 820})
+        fails = {"n": 1}
+
+        def flaky(route: Route) -> None:
+            if fails["n"] > 0:
+                fails["n"] -= 1
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body='{"error":{"code":"feedback_unavailable"}}',
+                )
+                return
+            route.continue_()
+
+        page.route("**/api/v1/me/candidate-approvals/state**", flaky)
+        page.goto(live_origin + "/", wait_until="networkidle")
+        page.fill("#username", "approval-a")
+        page.fill("#password", "isolated-approval-test")
+        page.click("#login-form button[type='submit']")
+        page.wait_for_function(
+            """() => {
+              const boxes = [...document.querySelectorAll('[data-approval-checkbox]')];
+              return boxes.length === 3 && boxes.every((el) => !el.disabled);
+            }""",
+            timeout=8000,
+        )
+        browser.close()
+
+
+@pytest.mark.skipif(
+    __import__("os").environ.get("STOCKWATCHER_REQUIRE_UI") != "1"
+    and not Path("/Users/kahlilhazel/Library/Caches/ms-playwright").exists(),
+    reason="Playwright Chromium required for official-page hit tests",
+)
+def test_same_snapshot_refresh_keeps_switch_focus(live_origin: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1280, "height": 820})
+        _login(page, live_origin)
+        page.locator("[data-approval-checkbox]").nth(1).focus()
+        assert page.evaluate(
+            """() => document.activeElement?.matches('[data-approval-checkbox]')"""
+        )
+        page.evaluate(
+            """async () => {
+              const state = await (await fetch('/api/v1/state')).json();
+              window.dispatchEvent(new CustomEvent(
+                'stockwatcher:apply-dashboard-state',
+                { detail: state },
+              ));
+            }"""
+        )
+        page.wait_for_function(
+            """() => {
+              const boxes = [...document.querySelectorAll('[data-approval-checkbox]')];
+              return document.activeElement === boxes[1] && !boxes[1].disabled;
+            }""",
+            timeout=5000,
+        )
         browser.close()

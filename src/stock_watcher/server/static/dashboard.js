@@ -1,8 +1,8 @@
 import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=8';
 import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
-import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=6-switch';
-import { createApprovalController } from './candidate-approvals.js?v=4';
+import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=7-review';
+import { createApprovalController } from './candidate-approvals.js?v=5';
 let approvalController = null;
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
@@ -322,16 +322,29 @@ function renderState(state) {
       if (!previous) enter(card);
     });
     oldCards.forEach(card => { if (!used.has(card)) card.remove(); });
-    if (focused?.isConnected && document.activeElement !== focused) focused.focus({preventScroll:true});
     let weak = cards.querySelector('.weak-note');
     if (state.overall_weak && candidates.length) {
       if (!weak) { weak = document.createElement('p'); weak.className = 'weak-note'; cards.append(weak); }
       weak.textContent = '本轮整体偏弱：正式候选不足三只，近/补位仅供参考';
     } else weak?.remove();
-
+    approvalController?.render(state);
+    if (
+      focused instanceof HTMLElement
+      && focused.isConnected
+      && !focused.disabled
+      && cards.contains(focused)
+      && document.activeElement !== focused
+    ) {
+      focused.focus({preventScroll: true});
+    }
+  } else {
+    approvalController?.render(state);
   }
-  approvalController?.render(state);
 }
+
+window.addEventListener('stockwatcher:apply-dashboard-state', (event) => {
+  if (event.detail && typeof event.detail === 'object') applyDashboardState(event.detail);
+});
 
 let detailRequest = null;
 let detailOriginCode = null;

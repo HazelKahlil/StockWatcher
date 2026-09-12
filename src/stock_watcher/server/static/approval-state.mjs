@@ -26,6 +26,20 @@ export function sameSnapshot(response, snapshotId, userId) {
   return response?.snapshot_id === snapshotId && String(response?.user_id) === String(userId);
 }
 
+export function shouldReadApprovalState(
+  shownSnapshotId,
+  loadedSnapshotId,
+  loadInFlight,
+  loadFailed = false,
+) {
+  if (!Number.isSafeInteger(shownSnapshotId) || shownSnapshotId <= 0 || loadInFlight) {
+    return false;
+  }
+  if (shownSnapshotId === loadedSnapshotId) return false;
+  if (loadFailed) return false;
+  return true;
+}
+
 export function secureRequestId(cryptoProvider = globalThis.crypto) {
   if (typeof cryptoProvider?.randomUUID === 'function') return cryptoProvider.randomUUID();
   // getRandomValues is still cryptographically secure where randomUUID is absent.

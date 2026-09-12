@@ -51,6 +51,10 @@
   outline: none;
   box-shadow: none;
 }
+.candidate-approval:has(input:focus-visible) .candidate-switch {
+  outline: 2px solid #172231;
+  outline-offset: 2px;
+}
 .candidate-switch {
   position: relative;
   box-sizing: border-box;
@@ -115,6 +119,11 @@
   line-height: 1.6;
 }
 .approval-tools p { margin: 0.3rem 0; }
+.approval-tools #approval-reload {
+  min-height: 32px;
+  margin: 0.2rem 0 0.4rem;
+  font-size: 0.78rem;
+}
 .approval-tools [role="status"]:empty { display: none; }
 .approval-tools summary { cursor: pointer; width: fit-content; }
 .approval-tools li { margin: 0.4rem 0; overflow-wrap: anywhere; }

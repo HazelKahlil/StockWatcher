@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
-import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId } from '../src/stock_watcher/server/static/approval-state.mjs';
+import { readFileSync } from 'node:fs';
+import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState } from '../src/stock_watcher/server/static/approval-state.mjs';
 
 const cardURL = process.env.STOCKWATCHER_APPROVAL_CARD_MODULE
   ? pathToFileURL(process.env.STOCKWATCHER_APPROVAL_CARD_MODULE)
@@ -70,4 +71,17 @@ test('secure request IDs use CSPRNG bytes, never Math.random', () => {
   const id = secureRequestId({ getRandomValues: bytes => { bytes.fill(0xab); return bytes; } });
   assert.equal(id, 'ab'.repeat(16));
   assert.throws(() => secureRequestId({}));
+});
+test('controller does not install custom pointer drag listeners', () => {
+  const source = readFileSync(new URL('../src/stock_watcher/server/static/candidate-approvals.js', import.meta.url), 'utf8');
+  assert(!source.includes('onPointerDown'));
+  assert(!source.includes('pointermove'));
+  assert(!source.includes('addEventListener(\'pointerdown\''));
+});
+test('personal state is re-read for a new snapshot even if old cache exists', () => {
+  assert.equal(shouldReadApprovalState(2, 1, false, false), true);
+  assert.equal(shouldReadApprovalState(2, 2, false, false), false);
+  assert.equal(shouldReadApprovalState(2, 1, true, false), false);
+  assert.equal(shouldReadApprovalState(2, 1, false, true), false);
+  assert.equal(shouldReadApprovalState(2, 0, false, true), false);
 });

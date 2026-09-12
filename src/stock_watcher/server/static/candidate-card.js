@@ -81,7 +81,7 @@ function approvalActions(approval, detailHtml) {
          data-approval-snapshot="${snapshotId}"
          data-approval-ready="false"
          data-approval-selected="false">
-      <label><input type="checkbox" data-approval-checkbox disabled
+      <label><input type="checkbox" data-approval-checkbox
         aria-label="选择 ${esc(candidate.name || candidate.code)}">
         <span data-approval-label>选择</span>
         <span class="candidate-switch" aria-hidden="true"></span></label>
