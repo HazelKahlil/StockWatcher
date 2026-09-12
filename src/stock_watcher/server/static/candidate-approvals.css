@@ -20,21 +20,28 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35em;
   box-sizing: border-box;
-  min-width: 3.1em;
-  min-height: 1.9em;
+  min-width: 4.4em;
+  min-height: 2em;
   margin: 0;
-  padding: 0.18em 0.62em 0.16em;
-  border: 1px solid var(--line, #e1e7ef);
+  padding: 0.22em 0.7em 0.2em 0.55em;
+  border: 1.5px solid #8b9aab;
   border-radius: 999px;
-  background: transparent;
-  color: var(--muted, #748296);
+  background: #fff;
+  color: #5c6b7c;
   cursor: pointer;
   font: 650 0.72rem/1 var(--font-sans, inherit);
-  letter-spacing: 0.04em;
   white-space: nowrap;
-  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease,
-    transform 0.16s ease;
+}
+.candidate-approval label::before {
+  content: "";
+  box-sizing: border-box;
+  width: 0.55em;
+  height: 0.55em;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
 }
 .candidate-approval input[type="checkbox"] {
   position: absolute;
@@ -48,20 +55,31 @@
 }
 .candidate-approval label:hover {
   color: var(--fg, #172231);
-  border-color: var(--border-bold, #cbd5e1);
-}
-.candidate-approval label:active {
-  transform: scale(0.96);
+  border-color: var(--fg, #172231);
+  background: #f3f5f8;
 }
 .candidate-approval label:focus-within {
   outline: 2px solid var(--focus, #1679ed);
   outline-offset: 2px;
 }
+.candidate-approval[data-approval-ready="false"] label {
+  cursor: default;
+  color: #9aa8b8;
+  border-color: #d5dde7;
+  background: #f7f8fa;
+}
+.candidate-approval:has(input:checked) label,
 .candidate-approval[data-approval-selected="true"] label {
   color: #fff;
   background: var(--fg, #172231);
   border-color: var(--fg, #172231);
 }
+.candidate-approval:has(input:checked) label::before,
+.candidate-approval[data-approval-selected="true"] label::before {
+  background: #fff;
+  border-color: #fff;
+}
+.candidate-approval:has(input:checked) label:hover,
 .candidate-approval[data-approval-selected="true"] label:hover {
   color: #fff;
   background: #243246;
@@ -69,7 +87,6 @@
 }
 .candidate-approval[data-approval-pending="true"] label {
   cursor: wait;
-  opacity: 0.72;
 }
 .candidate-approval [data-approval-retry] {
   display: block;

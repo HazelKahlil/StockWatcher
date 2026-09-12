@@ -47,6 +47,11 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
     }
   }
 
+  function write(el, name, value) {
+    if (el.getAttribute(name) === value) return;
+    el.setAttribute(name, value);
+  }
+
   function paint() {
     if (!enabled || disposed) return;
     paintPending();
@@ -58,17 +63,31 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       const state = key && cache.get(key);
       const work = key && pending.get(key);
       const selected = work ? work.body.selected : Boolean(state?.selected);
-      input.checked = selected;
-      input.disabled = accountInvalid || !state || Boolean(work);
-      control.dataset.approvalPending = String(Boolean(work));
-      control.dataset.approvalSelected = String(selected);
-      label.textContent = '选择';
-      retry.hidden = !work?.failed || accountInvalid;
-      control.setAttribute('aria-busy', String(Boolean(work && !work.failed)));
+      const ready = Boolean(state) && !accountInvalid;
+      const failed = Boolean(work?.failed);
+      const busy = Boolean(work && !work.failed);
+      if (input.checked !== selected) input.checked = selected;
+      if (input.disabled !== (!ready || Boolean(work))) input.disabled = !ready || Boolean(work);
+      if (control.dataset.approvalReady !== String(ready)) {
+        control.dataset.approvalReady = String(ready);
+      }
+      if (control.dataset.approvalPending !== String(failed)) {
+        control.dataset.approvalPending = String(failed);
+      }
+      if (control.dataset.approvalSelected !== String(selected)) {
+        control.dataset.approvalSelected = String(selected);
+      }
+      if (label.textContent !== '选择') label.textContent = '选择';
+      retry.hidden = !failed;
+      write(control, 'aria-busy', String(busy));
       const day = current?.trade_date || '';
-      input.setAttribute('aria-label', `${control.dataset.approvalName}，${day}候选，选择`);
-      control.title = work?.failed ? '保存状态未确认。重试会复用同一请求，不重复计数。'
-        : `针对 ${day || '此批'} 候选的个人选择；未选表示未反馈。`;
+      write(input, 'aria-label', `${control.dataset.approvalName}，${day}候选，选择`);
+      const nextTitle = failed
+        ? '保存状态未确认。重试会复用同一请求，不重复计数。'
+        : selected
+          ? `已选择 ${day || '此批'} 候选。再次点击可取消。`
+          : `未选择。点击选择 ${day || '此批'} 候选。`;
+      if (control.title !== nextTitle) control.title = nextTitle;
     }
   }
 
@@ -97,7 +116,6 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       }
       current = response;
       for (const state of response.items) accept(state);
-      announce('');
     } catch (error) {
       if (disposed || myEpoch !== epoch) return;
       if (error.status === 401) accountInvalid = true;
@@ -113,7 +131,6 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
     if (!work || work.inFlight || accountInvalid || disposed) return;
     work.inFlight = true;
     work.failed = false;
-    paint();
     const controller = new AbortController();
     work.controller = controller;
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -172,6 +189,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
         known.version, secureRequestId(),
       );
       pending.set(key, { body, code: control.dataset.approvalCode, failed: false, inFlight: false });
+      paint();
       void submit(key);
     } catch {
       announce('此浏览器暂不支持安全保存反馈，请使用受支持的浏览器。');
@@ -228,23 +246,40 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
 
   const onToggle = () => { if (history.open && !historyLoaded) void loadHistory(true); };
   const onMore = () => { void loadHistory(false); };
-  const onFocus = () => { if (current && !document.hidden) void readState(current.snapshot_id); };
+  const onVisible = () => {
+    if (document.hidden || !current) return;
+    void readState(current.snapshot_id);
+  };
   if (enabled) {
     cards.addEventListener('change', onChange);
     cards.addEventListener('click', onClick);
     history?.addEventListener('toggle', onToggle);
     history?.querySelector('[data-approval-history-more]')?.addEventListener('click', onMore);
-    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
   }
   return {
     enabled,
     render(state) {
       if (!enabled || disposed) return;
       const id = Number(state?.snapshot_id);
-      if (!Number.isSafeInteger(id) || id <= 0) { current = null; paint(); return; }
-      if (current?.snapshot_id !== id) current = null;
-      paint(); // Reapply checked DOM properties after dashboard.patchElement.
-      void readState(id);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        if (current !== null) {
+          current = null;
+          paint();
+        }
+        return;
+      }
+      const snapshotChanged = current?.snapshot_id !== id;
+      if (snapshotChanged) {
+        current = {
+          snapshot_id: id,
+          trade_date: state.trade_date || '',
+          user_id: userId,
+          items: [],
+        };
+      }
+      paint();
+      if (snapshotChanged || !cache.size) void readState(id);
     },
     dispose() {
       disposed = true;
@@ -255,7 +290,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       cards?.removeEventListener('click', onClick);
       history?.removeEventListener('toggle', onToggle);
       history?.querySelector('[data-approval-history-more]')?.removeEventListener('click', onMore);
-      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
     },
   };
 }
