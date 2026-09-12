@@ -1,7 +1,9 @@
 import { api, apiJson, connectEvents, esc, fmtTime, onEvent, requestNotificationPermission, notify } from './app.js?v=8';
 import { enter, enhanceDetails, openDrawer, closeDrawer, patchElement } from './motion.js?v=1';
 import { candidateTimestamp, retainedCandidates, displayMarketPhase } from './presentation.js?v=1';
-import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=2';
+import { candidateCardHTML, placeholderCardHTML, levelMeta } from './candidate-card.js?v=7-review';
+import { createApprovalController } from './candidate-approvals.js?v=7';
+let approvalController = null;
 
 const stateLabels = { starting: '启动中', warming: '预热', healthy: '正常', stale: '陈旧', stopped: '停止' };
 const refreshStages = [
@@ -90,7 +92,7 @@ function placeholderCard(rank) {
 }
 
 function cardFor(candidate, state) {
-  return candidateCardHTML(candidate, state);
+  return candidateCardHTML(candidate, state, { approvalsEnabled: approvalController?.enabled });
 }
 
 function compactPrice(value) {
@@ -320,15 +322,30 @@ function renderState(state) {
       if (!previous) enter(card);
     });
     oldCards.forEach(card => { if (!used.has(card)) card.remove(); });
-    if (focused?.isConnected && document.activeElement !== focused) focused.focus({preventScroll:true});
     let weak = cards.querySelector('.weak-note');
     if (state.overall_weak && candidates.length) {
       if (!weak) { weak = document.createElement('p'); weak.className = 'weak-note'; cards.append(weak); }
       weak.textContent = '本轮整体偏弱：正式候选不足三只，近/补位仅供参考';
     } else weak?.remove();
-
+    approvalController?.render(state);
+    if (
+      focused instanceof HTMLElement
+      && focused.isConnected
+      && !focused.disabled
+      && cards.contains(focused)
+      && document.activeElement !== focused
+    ) {
+      focused.focus({preventScroll: true});
+    }
+  } else {
+    approvalController?.render(state);
   }
 }
+
+// Official-page tests dispatch this to run the same path as live state updates.
+window.addEventListener('stockwatcher:apply-dashboard-state', (event) => {
+  if (event.detail && typeof event.detail === 'object') renderState(event.detail);
+});
 
 let detailRequest = null;
 let detailOriginCode = null;
@@ -396,6 +413,13 @@ function loadState() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const approvalCards = document.getElementById('cards');
+  approvalController = createApprovalController({
+    cards: approvalCards, apiJson, userId: approvalCards?.dataset.approvalUser,
+    status: document.getElementById('approval-status'),
+    history: document.getElementById('approval-history'),
+    pendingRoot: document.getElementById('approval-pending'),
+  });
   updateLiveClock();
   setInterval(updateLiveClock, 1000);
   onEvent((event) => {
@@ -544,6 +568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (event.key === 'Escape' && activeAutomaticAlert && !document.getElementById('drawer-overlay').open) closeAutomaticAlert();
   });
   document.getElementById('cards').addEventListener('click', event => {
+    if (event.target.closest('[data-approval-control]')) return;
     const card = event.target.closest('[data-detail-code]');
     if (card) void showDetail(card.dataset.detailCode, latestDashboardState);
   });

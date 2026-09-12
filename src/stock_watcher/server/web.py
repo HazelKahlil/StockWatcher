@@ -253,6 +253,9 @@ def create_app(settings: ServerSettings | None = None) -> FastAPI:
 
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     templates.env.globals["product_version"] = display_version()
+    from stock_watcher.feedback.integration import install_approval_feature
+
+    install_approval_feature(app, templates, app_settings)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # -- exception handling ----------------------------------------------

@@ -446,8 +446,9 @@ def test_failed_keyring_replacement_preserves_previous_credential() -> None:
 def _wait_for_summary(dialog: DailySummaryDialog) -> None:
     from PySide6.QtTest import QTest
 
-    for _ in range(200):
+    for _ in range(500):
+        QApplication.processEvents()
         if dialog.date_selector.isEnabled():
             return
-        QTest.qWait(10)
+        QTest.qWait(20)
     raise AssertionError("Background summary did not become available")

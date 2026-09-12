@@ -1,0 +1,174 @@
+/* Opt-in addon. No selectors affect the existing dashboard when the flag is off. */
+#cards[data-approvals-enabled="true"] {
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+}
+#cards[data-approvals-enabled="true"] > .card .candidate-actions {
+  grid-column: 4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  justify-self: end;
+}
+.candidate-approval {
+  position: relative;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  color: var(--muted, #748296);
+}
+.candidate-approval label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.1em 0;
+  border: 0;
+  background: transparent;
+  color: #5c6b7c;
+  cursor: pointer;
+  font: 650 0.72rem/1 var(--font-sans, inherit);
+  white-space: nowrap;
+}
+.candidate-approval,
+.candidate-approval * {
+  -webkit-tap-highlight-color: transparent;
+}
+.candidate-approval input[type="checkbox"] {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+  outline: none;
+  box-shadow: none;
+}
+.candidate-approval input:focus,
+.candidate-approval input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.candidate-approval:has(input:focus-visible) .candidate-switch {
+  outline: 2px solid #172231;
+  outline-offset: 2px;
+}
+.candidate-switch {
+  position: relative;
+  box-sizing: border-box;
+  width: 2.55em;
+  height: 1.5em;
+  flex: 0 0 2.55em;
+  border-radius: 999px;
+  background: #e5e5ea;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+  transition: background-color 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.candidate-switch::before {
+  content: "";
+  position: absolute;
+  top: 0.12em;
+  left: 0.12em;
+  width: 1.26em;
+  height: 1.26em;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 1px 1px rgba(0, 0, 0, 0.08);
+  transform: translateX(0);
+  transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+#cards[data-approvals-enabled="true"] > .card:has([data-approval-checkbox]:focus) {
+  outline: none;
+}
+.candidate-approval[data-approval-ready="false"] {
+  color: #9aa8b8;
+}
+.candidate-approval[data-approval-ready="false"] .candidate-switch {
+  background: #ececf0;
+}
+.candidate-approval[data-approval-ready="false"] input {
+  cursor: default;
+}
+.candidate-approval:has(input:checked) .candidate-switch,
+.candidate-approval[data-approval-selected="true"] .candidate-switch {
+  background: #34c759;
+}
+.candidate-approval:has(input:checked) .candidate-switch::before,
+.candidate-approval[data-approval-selected="true"] .candidate-switch::before {
+  transform: translateX(1.05em);
+}
+.candidate-approval[data-approval-pending="true"] input,
+.candidate-approval[data-approval-pending="true"] label {
+  cursor: wait;
+}
+.candidate-approval [data-approval-retry] {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 0.15rem 0.3rem;
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+}
+.candidate-approval [hidden], .approval-tools [hidden] { display: none; }
+.approval-tools {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted, #61748a);
+  line-height: 1.6;
+}
+.approval-tools p { margin: 0.3rem 0; }
+.approval-tools #approval-reload {
+  min-height: 32px;
+  margin: 0.2rem 0 0.4rem;
+  font-size: 0.78rem;
+}
+.approval-tools [role="status"]:empty { display: none; }
+.approval-tools summary { cursor: pointer; width: fit-content; }
+.approval-tools li { margin: 0.4rem 0; overflow-wrap: anywhere; }
+.approval-tools button { font-size: 0.78rem; min-height: 32px; }
+@container page (max-width: 48rem) {
+  #cards[data-approvals-enabled="true"] {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-primary {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-quote {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-aux {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-top: 0.25rem;
+  }
+}
+/* At very small widths, preserve text instead of squeezing it beside a quote. */
+@container page (max-width: 21rem) {
+  #cards[data-approvals-enabled="true"] > .card .candidate-primary {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-quote {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-aux {
+    grid-row: 3;
+  }
+  #cards[data-approvals-enabled="true"] > .card .candidate-actions {
+    grid-row: 4;
+  }
+}
+
+/* Only opt-in feedback cards. Keep dashboard's existing delegated detail handler. */
+#cards[data-approvals-enabled="true"] .card-open-detail::after {
+  pointer-events: none;
+}
