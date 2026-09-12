@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState, isCurrentApprovalLoad } from '../src/stock_watcher/server/static/approval-state.mjs';
+import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState, isCurrentApprovalLoad, isStaleApprovalAbort, shouldRetryApprovalLoad } from '../src/stock_watcher/server/static/approval-state.mjs';
 
 const cardURL = process.env.STOCKWATCHER_APPROVAL_CARD_MODULE
   ? pathToFileURL(process.env.STOCKWATCHER_APPROVAL_CARD_MODULE)
@@ -97,4 +97,17 @@ test('stale approval loads are ignored after the shown snapshot changes', () => 
   assert.equal(isCurrentApprovalLoad(1, 2, 2, 3), false);
   assert.equal(isCurrentApprovalLoad(2, 2, 2, 3), false);
   assert.equal(isCurrentApprovalLoad(2, 2, 3, 3), true);
+});
+test('own load timeout is not treated as a stale abort', () => {
+  const abort = { name: 'AbortError' };
+  assert.equal(isStaleApprovalAbort(abort, false), true);
+  assert.equal(isStaleApprovalAbort(abort, true), false);
+  assert.equal(isStaleApprovalAbort({ name: 'TypeError' }, true), false);
+});
+test('retry follows the current target failure, not prior successful loads', () => {
+  assert.equal(shouldRetryApprovalLoad(1, 1, 1, false, false, 1), true);
+  assert.equal(shouldRetryApprovalLoad(1, 1, 1, false, false, 3), false);
+  assert.equal(shouldRetryApprovalLoad(3, 1, 1, false, false, 1), false);
+  assert.equal(shouldRetryApprovalLoad(1, 1, 0, false, false, 1), false);
+  assert.equal(shouldRetryApprovalLoad(1, 1, 1, true, false, 1), false);
 });

@@ -44,6 +44,24 @@ export function isCurrentApprovalLoad(myEpoch, loadEpoch, requestedId, shownSnap
   return myEpoch === loadEpoch && requestedId === shownSnapshotId;
 }
 
+export function isStaleApprovalAbort(error, timedOut) {
+  return error?.name === 'AbortError' && !timedOut;
+}
+
+export function shouldRetryApprovalLoad(
+  shownSnapshotId,
+  scheduledFor,
+  failedSnapshotId,
+  loadInFlight,
+  disposed,
+  loadAttempts,
+  maxAttempts = 3,
+) {
+  if (disposed || loadInFlight || loadAttempts >= maxAttempts) return false;
+  if (shownSnapshotId !== scheduledFor) return false;
+  return failedSnapshotId === scheduledFor;
+}
+
 export function secureRequestId(cryptoProvider = globalThis.crypto) {
   if (typeof cryptoProvider?.randomUUID === 'function') return cryptoProvider.randomUUID();
   // getRandomValues is still cryptographically secure where randomUUID is absent.

@@ -1,4 +1,4 @@
-import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState, isCurrentApprovalLoad } from './approval-state.mjs?v=3';
+import { approvalKey, acceptsState, requestBody, sameSnapshot, secureRequestId, shouldReadApprovalState, isCurrentApprovalLoad, isStaleApprovalAbort, shouldRetryApprovalLoad } from './approval-state.mjs?v=4';
 
 // apiJson is the existing app.js CSRF-aware transport; this module does not replace auth.
 export function createApprovalController({ cards, apiJson, userId, status, history, pendingRoot }) {
@@ -49,11 +49,13 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   }
 
   function scheduleLoadRetry(snapshotId) {
-    if (loadRetryTimer || loadAttempts >= 3 || disposed) return;
+    if (loadRetryTimer || disposed) return;
     const scheduledFor = snapshotId;
     loadRetryTimer = setTimeout(() => {
       loadRetryTimer = null;
-      if (!disposed && shownSnapshotId === scheduledFor && loadedSnapshotId !== scheduledFor) {
+      if (shouldRetryApprovalLoad(
+        shownSnapshotId, scheduledFor, failedSnapshotId, loadInFlight, disposed, loadAttempts,
+      )) {
         void beginLoad(scheduledFor);
       }
     }, 1500 * Math.max(1, loadAttempts));
@@ -61,6 +63,10 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
 
   function beginLoad(snapshotId) {
     if (disposed || !Number.isSafeInteger(snapshotId) || snapshotId <= 0) return;
+    if (loadRetryTimer) {
+      clearTimeout(loadRetryTimer);
+      loadRetryTimer = null;
+    }
     loadEpoch += 1;
     const myEpoch = loadEpoch;
     loadController?.abort();
@@ -159,7 +165,11 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
   }
 
   async function readState(snapshotId, myEpoch, controller) {
-    const timer = setTimeout(() => controller.abort(), 8000);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 8000);
     try {
       const response = await apiJson(
         `/api/v1/me/candidate-approvals/state?snapshot_id=${snapshotId}`,
@@ -187,7 +197,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       if (disposed || !isCurrentApprovalLoad(myEpoch, loadEpoch, snapshotId, shownSnapshotId)) {
         return;
       }
-      if (error?.name === 'AbortError') return;
+      if (isStaleApprovalAbort(error, timedOut)) return;
       if (error.status === 401) accountInvalid = true;
       loadFailed = true;
       failedSnapshotId = snapshotId;

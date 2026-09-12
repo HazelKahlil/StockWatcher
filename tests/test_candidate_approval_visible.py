@@ -220,3 +220,81 @@ def test_same_snapshot_refresh_keeps_switch_focus(live_origin: str) -> None:
         )
         assert errors == []
         browser.close()
+
+
+@pytest.mark.skipif(
+    __import__("os").environ.get("STOCKWATCHER_REQUIRE_UI") != "1"
+    and not Path("/Users/kahlilhazel/Library/Caches/ms-playwright").exists(),
+    reason="Playwright Chromium required for official-page hit tests",
+)
+def test_loaded_snapshot_revalidate_503_retries_without_reload(live_origin: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1280, "height": 820})
+        _login(page, live_origin)
+        fails = {"n": 1}
+
+        def flaky(route: Route) -> None:
+            if fails["n"] > 0:
+                fails["n"] -= 1
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body='{"error":{"code":"feedback_unavailable"}}',
+                )
+                return
+            route.continue_()
+
+        page.route("**/api/v1/me/candidate-approvals/state**", flaky)
+        page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_function(
+            """() => {
+              const boxes = [...document.querySelectorAll('[data-approval-checkbox]')];
+              const reload = document.getElementById('approval-reload');
+              return boxes.length === 3 && boxes.every((el) => !el.disabled)
+                && reload && reload.hidden;
+            }""",
+            timeout=8000,
+        )
+        browser.close()
+
+
+@pytest.mark.skipif(
+    __import__("os").environ.get("STOCKWATCHER_REQUIRE_UI") != "1"
+    and not Path("/Users/kahlilhazel/Library/Caches/ms-playwright").exists(),
+    reason="Playwright Chromium required for official-page hit tests",
+)
+def test_own_load_timeout_shows_retry_and_recovers(live_origin: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1280, "height": 820})
+        hangs = {"n": 1}
+
+        def hang_once(route: Route) -> None:
+            if hangs["n"] > 0:
+                hangs["n"] -= 1
+                return
+            route.continue_()
+
+        page.route("**/api/v1/me/candidate-approvals/state**", hang_once)
+        page.goto(live_origin + "/", wait_until="networkidle")
+        page.fill("#username", "approval-a")
+        page.fill("#password", "isolated-approval-test")
+        page.click("#login-form button[type='submit']")
+        page.wait_for_function(
+            """() => {
+              const reload = document.getElementById('approval-reload');
+              const status = document.getElementById('approval-status');
+              return reload && !reload.hidden
+                && (status?.textContent || '').includes('重新读取');
+            }""",
+            timeout=12000,
+        )
+        page.wait_for_function(
+            """() => {
+              const boxes = [...document.querySelectorAll('[data-approval-checkbox]')];
+              return boxes.length === 3 && boxes.every((el) => !el.disabled);
+            }""",
+            timeout=8000,
+        )
+        browser.close()
