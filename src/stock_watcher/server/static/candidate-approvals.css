@@ -31,6 +31,10 @@
   font: 650 0.72rem/1 var(--font-sans, inherit);
   white-space: nowrap;
 }
+.candidate-approval,
+.candidate-approval * {
+  -webkit-tap-highlight-color: transparent;
+}
 .candidate-approval input[type="checkbox"] {
   position: absolute;
   inset: 0;
@@ -39,6 +43,13 @@
   padding: 0;
   opacity: 0;
   cursor: pointer;
+  outline: none;
+  box-shadow: none;
+}
+.candidate-approval input:focus,
+.candidate-approval input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 .candidate-switch {
   position: relative;
@@ -64,9 +75,8 @@
   transform: translateX(0);
   transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
-.candidate-approval label:focus-within .candidate-switch {
-  outline: 2px solid var(--focus, #1679ed);
-  outline-offset: 2px;
+#cards[data-approvals-enabled="true"] > .card:has([data-approval-checkbox]:focus) {
+  outline: none;
 }
 .candidate-approval[data-approval-ready="false"] {
   color: #9aa8b8;
