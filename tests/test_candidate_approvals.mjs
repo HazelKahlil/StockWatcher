@@ -41,12 +41,15 @@ test('snapshot and account identity both have to match', () => {
 test('feature off preserves baseline card and never adds a checkbox', () => {
   assert(!candidateCardHTML(candidate, { snapshot_id: 1 }).includes('data-approval-checkbox'));
 });
-test('enabled card has independently labelled native checkbox and original detail button', () => {
+test('enabled card uses a two-character 选择 label and original detail button', () => {
   const html = candidateCardHTML(candidate, { snapshot_id: 99 }, { approvalsEnabled: true });
   assert(html.includes('type="checkbox"'));
   assert(html.includes('data-approval-snapshot="99"'));
   assert(html.includes('data-detail="300829.SZ"'));
   assert(html.includes('data-approval-control'));
+  assert(html.includes('>选择</span>'));
+  assert(!html.includes('>认可</span>'));
+  assert(!html.includes('已认可'));
 });
 test('placeholder and invalid snapshots have no selectable feedback', () => {
   assert(!placeholderCardHTML(1).includes('data-approval-checkbox'));

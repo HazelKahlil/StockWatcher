@@ -78,11 +78,11 @@
 
   {% if candidate_approvals_enabled %}
   <section class="approval-tools" aria-label="个人候选反馈">
-    <p>认可表示值得关注，用于内部复盘；不代表交易。未勾选表示未反馈。标记按候选交易日保留。</p>
+    <p>选择表示值得关注，用于内部复盘；不代表交易。未选表示未反馈。标记按候选交易日保留。</p>
     <p id="approval-status" role="status" aria-live="polite"></p>
     <div id="approval-pending" aria-label="待确认的反馈"></div>
     <details id="approval-history">
-      <summary>我的认可记录</summary>
+      <summary>我的选择记录</summary>
       <p data-approval-history-status role="status"></p>
       <ul data-approval-history-list></ul>
       <button type="button" data-approval-history-more hidden>加载更多</button>
@@ -135,5 +135,5 @@
 </dialog>
 {% endblock %}
 {% block scripts %}
-<script type="module" src="/static/dashboard.js?v=17-approvals1"></script>
+<script type="module" src="/static/dashboard.js?v=18-select"></script>
 {% endblock %}

@@ -57,18 +57,18 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       const key = itemKey(control);
       const state = key && cache.get(key);
       const work = key && pending.get(key);
-      input.checked = work ? work.body.selected : Boolean(state?.selected);
+      const selected = work ? work.body.selected : Boolean(state?.selected);
+      input.checked = selected;
       input.disabled = accountInvalid || !state || Boolean(work);
       control.dataset.approvalPending = String(Boolean(work));
-      control.dataset.approvalSelected = String(Boolean(state?.selected));
-      label.textContent = work ? (work.failed ? '待确认' : '保存中')
-        : state?.selected ? '已认可' : '认可';
+      control.dataset.approvalSelected = String(selected);
+      label.textContent = '选择';
       retry.hidden = !work?.failed || accountInvalid;
       control.setAttribute('aria-busy', String(Boolean(work && !work.failed)));
       const day = current?.trade_date || '';
-      input.setAttribute('aria-label', `${control.dataset.approvalName}，${day}候选，认可`);
+      input.setAttribute('aria-label', `${control.dataset.approvalName}，${day}候选，选择`);
       control.title = work?.failed ? '保存状态未确认。重试会复用同一请求，不重复计数。'
-        : `针对 ${day || '此批'} 候选的个人认可；未勾选表示未反馈，不代表不认可。`;
+        : `针对 ${day || '此批'} 候选的个人选择；未选表示未反馈。`;
     }
   }
 
@@ -133,7 +133,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       pending.delete(key);
       historyLoaded = false;
       const visible = current && key === approvalKey(current.trade_date, work.code);
-      announce(visible ? (result.state.selected ? '认可已保存。' : '认可已撤销。')
+      announce(visible ? (result.state.selected ? '选择已保存。' : '选择已取消。')
         : '上一批候选的反馈已保存，当前候选未受影响。');
     } catch (error) {
       if (disposed) return;
@@ -209,7 +209,7 @@ export function createApprovalController({ cards, apiJson, userId, status, histo
       for (const item of response.items) {
         const row = document.createElement('li');
         const name = item.context?.candidate?.name || item.code;
-        const verb = item.action === 'approve' ? '认可' : '撤销认可';
+        const verb = item.action === 'approve' ? '选择' : '取消选择';
         const when = new Date(item.recorded_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
         row.textContent = `${when} · ${verb} ${name}（${item.code}）· 候选日 ${item.trade_date}`;
         list.append(row);

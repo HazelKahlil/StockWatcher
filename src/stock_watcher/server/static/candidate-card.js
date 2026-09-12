@@ -80,8 +80,8 @@ function approvalActions(approval, detailHtml) {
          data-approval-name="${esc(candidate.name || candidate.code)}"
          data-approval-snapshot="${snapshotId}">
       <label><input type="checkbox" data-approval-checkbox disabled
-        aria-label="认可 ${esc(candidate.name || candidate.code)}">
-        <span data-approval-label>认可</span></label>
+        aria-label="选择 ${esc(candidate.name || candidate.code)}">
+        <span data-approval-label>选择</span></label>
       <button type="button" data-approval-retry hidden>重试保存</button>
     </div>${detailHtml}</div>`;
 }

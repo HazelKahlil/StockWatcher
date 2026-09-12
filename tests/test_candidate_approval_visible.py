@@ -147,7 +147,12 @@ def test_detail_overlay_intercepts_without_fix_and_click_saves_with_fix(
         ):
             page.mouse.click(rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2)
         page.wait_for_function(
-            """() => document.querySelector('[data-approval-label]')?.textContent === '已认可'"""
+            """() => {
+              const control = document.querySelector('[data-approval-control]');
+              const label = document.querySelector('[data-approval-label]');
+              return control?.dataset.approvalSelected === 'true'
+                && label?.textContent === '选择';
+            }"""
         )
         assert page.evaluate("() => !document.getElementById('drawer-overlay')?.open")
         browser.close()
