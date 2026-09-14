@@ -29,7 +29,10 @@ jobs:
           uv run pytest tests/test_web_auth_api.py tests/test_web_ws.py
           tests/test_web_services.py tests/test_web_worker.py
           tests/test_web_healthcheck.py tests/test_storage_fsync.py
-          tests/test_cnb_registry_snapshot.py -W error
+          tests/test_cnb_registry_snapshot.py
+          tests/test_candidate_approval_repository.py
+          tests/test_candidate_approval_api.py
+          tests/test_candidate_approval_app.py -W error
       - name: Check Python, JavaScript, workspace, and security evidence
         run: |
           uv run ruff check .
@@ -83,8 +86,8 @@ jobs:
         env:
           STOCKWATCHER_REQUIRE_UI: "1"
         run: |
-          node --test tests/test_ui_display.mjs
-          uv run pytest tests/test_web_display_layout.py -W error
+          node --test tests/test_ui_display.mjs tests/test_candidate_approvals.mjs
+          uv run pytest tests/test_web_display_layout.py tests/test_candidate_approval_visible.py -W error
 
   dependency-review:
     name: Dependency review

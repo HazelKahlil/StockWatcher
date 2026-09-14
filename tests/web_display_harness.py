@@ -164,7 +164,7 @@ def git_head() -> str:
 
 def render_page(name: str) -> bytes:
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
-    user = SimpleNamespace(username="preview", role="user")
+    user = SimpleNamespace(username="preview", role="user", user_id=0)
     html = env.get_template(name).render(
         user=user,
         csrf="test-csrf",
@@ -728,10 +728,10 @@ def run_dashboard_interactions() -> int:
                     failures.append(f"focus did not return to detail button: {active}")
                 before_refresh = refresh_posts_in(server)
                 try:
-                    with page.expect_request(
-                        lambda req: (
-                            req.method == "POST"
-                            and req.url.endswith("/api/v1/commands/manual-refresh")
+                    with page.expect_response(
+                        lambda resp: (
+                            resp.request.method == "POST"
+                            and resp.url.endswith("/api/v1/commands/manual-refresh")
                         ),
                         timeout=5000,
                     ):
